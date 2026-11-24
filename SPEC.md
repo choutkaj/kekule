@@ -271,7 +271,11 @@ instances follows asserted connectivity. Surviving coordinates are preserved;
 new atoms require supplied coordinates, unless the host asks a placement
 operation on a `StructureEditor` draft (`structure::placement`) to derive them
 from ideal local geometry. Placement is part of the host's edit and its one
-publication, never moves an existing atom, and relaxes nothing. Geometry-only
+publication, never moves an existing atom, and relaxes nothing. Settling, the
+builder's completion of an edit, moves only what it reports: an atom's
+hydrogens and the smaller side of a bond or angle, never a side in a ring.
+Builder hydrogen counts follow their own valence table, separate from the
+valence model that reading uses. Geometry-only
 edits retain the exact shared topology.
 
 Append-oriented construction preserves existing IDs and dense order. General

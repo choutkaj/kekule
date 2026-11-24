@@ -63,8 +63,9 @@ pub(crate) struct CollapsedHydrogenSet {
 pub(crate) struct AttachedInInstance {
     pub(crate) atom: EditAtomId,
     pub(crate) bond: EditBondId,
-    /// The deleted hydrogen's atom slot and bond slots.
-    pub(crate) dead: Option<(usize, Vec<usize>)>,
+    /// The deleted hydrogens' atom slots and bond slots.
+    pub(crate) dead_atom_slots: Vec<usize>,
+    pub(crate) dead_bond_slots: Vec<usize>,
 }
 
 /// One atom of the bond a ring fuses onto, in a [`FusionPlan`].
@@ -244,23 +245,25 @@ impl TopologyEditor {
     /// instance. With `replaced`, an explicit hydrogen of the parent, the new
     /// atom takes that hydrogen's place in represented stereo and the
     /// hydrogen is deleted; otherwise a single bond takes the place of an
-    /// implicit hydrogen there.
+    /// implicit hydrogen there. The explicit hydrogens of the parent in
+    /// `removed`, which a multiple bond takes, are deleted too.
     pub(crate) fn attach_in_instance(
         &mut self,
         parent: EditAtomId,
         atom: Atom,
         order: BondOrder,
         replaced: Option<EditAtomId>,
+        removed: &[EditAtomId],
     ) -> Result<AttachedInInstance, TopologyEditError> {
         let loc = self.atom_location(parent)?;
         let replaced_local = replaced
             .map(|hydrogen| self.atom_location(hydrogen).map(|loc| loc.local))
             .transpose()?;
-        // The parent's count follows the new bond and the bond to the
-        // hydrogen it replaces, as edits make it follow.
+        // The parent's count follows the new bond and the bonds to the
+        // hydrogens it takes, as edits make it follow.
         let mut changes = super::ValenceChanges::default();
         changes.change(parent, None, Some(order));
-        if let Some(hydrogen) = replaced {
+        for &hydrogen in replaced.iter().chain(removed) {
             let bond = self
                 .bond_between(parent, hydrogen)?
                 .ok_or(TopologyEditError::InvalidAtom(hydrogen))?;
@@ -278,18 +281,104 @@ impl TopologyEditor {
         )?;
         let (atom, bond) = self.register_bonded_atom(loc.group, local, bond, parent);
         self.record_pruned(loc.group);
-        let mut dead = None;
-        if let Some(hydrogen) = replaced {
-            let atom_slot = self.atom_location(hydrogen)?.slot;
-            let bond_slots = self
-                .incident_bonds(hydrogen)?
-                .map(|bond| self.bond_location(bond).map(|loc| loc.slot))
-                .collect::<Result<Vec<_>, _>>()?;
+        let mut dead_atom_slots = Vec::new();
+        let mut dead_bond_slots = Vec::new();
+        for &hydrogen in replaced.iter().chain(removed) {
+            dead_atom_slots.push(self.atom_location(hydrogen)?.slot);
+            for bond in self.incident_bonds(hydrogen)?.collect::<Vec<_>>() {
+                dead_bond_slots.push(self.bond_location(bond)?.slot);
+            }
             self.remove_atom(hydrogen)?;
-            dead = Some((atom_slot, bond_slots));
         }
         self.set_fixed_counts(counts)?;
-        Ok(AttachedInInstance { atom, bond, dead })
+        Ok(AttachedInInstance {
+            atom,
+            bond,
+            dead_atom_slots,
+            dead_bond_slots,
+        })
+    }
+
+    /// Whether `atom` owes hydrogens: a fixed count that an edit gave more
+    /// bond valence than its element allows.
+    pub(crate) fn owes_hydrogens(&self, atom: EditAtomId) -> bool {
+        self.hydrogen_deficits.contains_key(&atom)
+    }
+
+    /// Checks that `atom` can give up its implicit hydrogens for `added`
+    /// explicit ones: its represented stereo names an implicit hydrogen
+    /// only when exactly one is added to take its place.
+    pub(crate) fn check_settled_stereo(
+        &self,
+        atom: EditAtomId,
+        added: usize,
+    ) -> Result<(), DraftHydrogenError> {
+        self.check_hydrogen_stereo(atom, added)?;
+        if added > 0 {
+            return Ok(());
+        }
+        let loc = self.atom_location(atom)?;
+        let names_implicit = self
+            .molecule(loc.group)
+            .stereo_elements()
+            .any(|(_, value)| match &value.kind {
+                StereoElementKind::Tetrahedral(stereo) => {
+                    stereo.center == loc.local
+                        && stereo.carriers.contains(&StereoCarrier::ImplicitHydrogen)
+                }
+                StereoElementKind::DoubleBond(stereo) => {
+                    (stereo.left == loc.local
+                        && stereo.left_carrier == StereoCarrier::ImplicitHydrogen)
+                        || (stereo.right == loc.local
+                            && stereo.right_carrier == StereoCarrier::ImplicitHydrogen)
+                }
+                StereoElementKind::Axis(_) => false,
+            });
+        if names_implicit {
+            return Err(DraftHydrogenError::Stereo(atom));
+        }
+        Ok(())
+    }
+
+    /// Gives `atom` the explicit hydrogens settling planned: deletes the
+    /// hydrogens in `removed`, pruning stereo that names them, adds `added`
+    /// new ones bonded to it, which take the place of implicit hydrogens in
+    /// its stereo, and leaves it no implicit hydrogen: its count stays
+    /// inferred when inference gives none and is fixed at zero otherwise,
+    /// and it owes none. Returns the new hydrogens. The caller has checked
+    /// [`Self::check_settled_stereo`].
+    pub(crate) fn settle_hydrogens(
+        &mut self,
+        atom: EditAtomId,
+        removed: &[EditAtomId],
+        added: usize,
+    ) -> Result<Vec<EditAtomId>, TopologyEditError> {
+        for &hydrogen in removed {
+            self.remove_atom(hydrogen)?;
+        }
+        let origin = match self.require_atom(atom)?.hydrogens {
+            ImplicitHydrogens::Fixed(_) => AddedHydrogenOrigin::Fixed,
+            ImplicitHydrogens::Inferred => AddedHydrogenOrigin::Inferred,
+        };
+        let new = self
+            .materialize_hydrogens(atom, added, origin)?
+            .into_iter()
+            .map(|(hydrogen, _)| hydrogen)
+            .collect();
+        let (implicit, _) = self.materializable_hydrogens(atom)?;
+        let loc = self.atom_location(atom)?;
+        let fixed = origin == AddedHydrogenOrigin::Fixed || implicit > 0;
+        if fixed && self.require_atom(atom)?.hydrogens != ImplicitHydrogens::Fixed(0) {
+            self.draft_mut(loc.group)
+                .require_atom_mut(loc.local)?
+                .hydrogens = ImplicitHydrogens::Fixed(0);
+        }
+        self.hydrogen_deficits.remove(&atom);
+        self.mark_group_changed(loc.group);
+        self.invalidate_component_classes([atom]);
+        self.invalidate_residue_for_atom(atom);
+        self.changed();
+        Ok(new)
     }
 
     /// Fuses new ring atoms onto the bond `plan.shared` inside its instance's

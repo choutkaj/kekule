@@ -587,7 +587,7 @@ fn attaching_replaces_hydrogens_and_keeps_stereo() {
             AttachmentSite::Hydrogen(alpha_hydrogen),
         )
         .unwrap();
-    assert_eq!(attached.replaced_hydrogen(), Some(alpha_hydrogen));
+    assert_eq!(attached.replaced_hydrogens(), [alpha_hydrogen]);
     assert!(editor.topology().atom(alpha_hydrogen).is_none());
     let direction = point(&editor, attached.atom()) - point(&editor, center);
     assert!((direction.norm() - ideal(element("C"), element("F"), BondOrder::Single)).abs() < 1e-9);
@@ -1030,7 +1030,7 @@ fn fragments_attach_toward_directions_and_through_other_atoms() {
         )
         .unwrap();
     assert_eq!(attached.atoms().len(), 11);
-    assert_eq!(attached.replaced_hydrogen(), None);
+    assert!(attached.replaced_hydrogens().is_empty());
     let direction = point(&editor, attached.attachment()) - point(&editor, carbon);
     assert!((direction.norm() - ideal(element("C"), element("C"), BondOrder::Single)).abs() < 1e-9);
     editor

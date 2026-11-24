@@ -233,6 +233,18 @@ the main branch migrates by the table under "From the SampleSet API".
 - `StructureEditor::fuse_fragment` fuses a ring fragment onto a bond through
   its `Fragment::fusion_bond`, so benzene on benzene gives naphthalene; it
   reports the new atoms in a `FusedFragment`.
+- Builder valences (`structure::placement`): `builder_charges`,
+  `builder_valences`, and `builder_hydrogen_count` give the states a builder
+  makes per element and charge and the hydrogens they take beside an atom's
+  other bonds; `BuilderValenceError` names a state outside them.
+- `StructureEditor::settle_atoms` gives edited atoms their builder hydrogen
+  count, adding and deleting hydrogens and keeping those that stay, places
+  all of an atom's hydrogens at ideal positions, and turns the smaller side
+  of an atom's two neighbors to its shape's angle (`SettledAtomsReport`);
+  `StructureEditor::settle_bonds` gives bonds their ideal length by moving
+  the smaller side (`SettledBondsReport`). Both report ring bonds and angles
+  they leave. `PlacementError::BuilderValence` names an atom outside the
+  builder's states.
 - `kekule-potentials`: `minimize_scoped` and `minimize_scoped_with` take a
   `MinimizationScope` that fixes atoms and adds `PositionRestraint`s.
 - `kekule-openff`: `Error::atoms` lists the atoms a failure concerns, and
@@ -345,6 +357,18 @@ the main branch migrates by the table under "From the SampleSet API".
   acceptor's line, `acceptor_location`.
 
 ### Changed
+
+- **Breaking:** `StructureEditor::free_directions` takes the order of the new
+  bond and counts domains as they would be with it, so a sulfide's sulfur has
+  a free position for a double-bonded oxygen; an atom has none when the bond
+  would pass its largest valence.
+- **Breaking:** `attach_atom` and `attach_fragment` with a multiple bond in
+  place of a hydrogen take as many hydrogens as the order has, so an oxygen
+  double-bonded to methane gives formaldehyde; `AttachedAtom` and
+  `AttachedFragment` list them in `replaced_hydrogens`, which replaces
+  `replaced_hydrogen`.
+- Two opposite neighbors of a trigonal or tetrahedral atom no longer fail
+  placement with `DegenerateGeometry`; new sites take a deterministic plane.
 
 - **Breaking:** A set's columns are the only home of its geometries'
   scalars. `push`, `replace`, `from_geometries`, `from_structures`, and

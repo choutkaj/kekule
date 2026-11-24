@@ -8,8 +8,14 @@
 //!   collapses their explicit hydrogens back into implicit counts, each
 //!   reporting per atom what changed ([`PlacedHydrogensReport`],
 //!   [`RemovedHydrogensReport`]).
+//! - [`StructureEditor::settle_atoms`] gives atoms that an edit changed their
+//!   builder hydrogen count ([`builder_hydrogen_count`]) at ideal positions and
+//!   the angle of their shape between two neighbors, and
+//!   [`StructureEditor::settle_bonds`] gives bonds their ideal length, each
+//!   moving the smaller side ([`SettledAtomsReport`], [`SettledBondsReport`]).
 //! - [`StructureEditor::atom_domains`] perceives an atom's [`AtomDomains`] and
-//!   [`StructureEditor::free_directions`] gives where its next substituents go.
+//!   [`StructureEditor::free_directions`] gives where a new substituent bonded
+//!   with a given order goes.
 //! - [`StructureEditor::attach_atom`] bonds a new atom to an existing one, in place
 //!   of an explicit hydrogen or at the free position nearest a direction
 //!   ([`AttachmentSite`]); [`StructureEditor::place_atom`] starts a new molecule
@@ -24,6 +30,31 @@
 //!   bonds again and reporting a [`FusedFragment`].
 //! - [`ideal_bond_length`] gives the length placement uses for an element pair
 //!   and bond order.
+//!
+//! # Builder valences
+//!
+//! Reading a file infers hydrogens with the valence model, which counts the
+//! hydrogens an atom has. A builder instead gives each atom the hydrogens its
+//! element and charge take beside its other bonds, from a table of the
+//! states it makes ([`builder_charges`], [`builder_valences`]):
+//!
+//! | Element | Charge: valences |
+//! | --- | --- |
+//! | H | 0: 1 |
+//! | B | −1: 4; 0: 3 |
+//! | C | −1: 3; 0: 4; +1: 3 |
+//! | N | −1: 2; 0: 3; +1: 4 |
+//! | O | −1: 1; 0: 2; +1: 3 |
+//! | F, Cl, Br, I | −1: 0; 0: 1 |
+//! | Si | 0: 4 |
+//! | P | 0: 3, 5; +1: 4 |
+//! | S, Se | −1: 1; 0: 2, 4, 6; +1: 3 |
+//!
+//! An atom takes the lowest valence at or above the bond orders to its other
+//! neighbors plus its radical electrons, and the difference in hydrogens, so
+//! a sulfide's sulfur takes none, a sulfonium's one, and a sulfoxide's none.
+//! Every state is one the valence model accepts, so a settled structure
+//! publishes. Elements outside the table follow the valence model.
 //!
 //! # Ideal geometry
 //!
@@ -44,8 +75,14 @@
 //! heavy neighbors, so chains grow anti and substituents stay staggered;
 //! trigonal atoms stay in the plane of that substituent, as across a double
 //! bond. Lone pairs of a trigonal bipyramid are equatorial; those of an
-//! octahedron are trans to each other or to a neighbor. Placement never moves
-//! an existing atom; relaxing the result is a separate step.
+//! octahedron are trans to each other or to a neighbor. Two opposite
+//! neighbors of a trigonal or tetrahedral atom leave the plane of its new
+//! sites to a deterministic perpendicular.
+//!
+//! Placement never moves an existing atom. Settling moves only what it
+//! reports: an atom's hydrogens, and the smaller side of a bond or of an
+//! atom's two neighbors, never a side that lies in a ring with them.
+//! Relaxing the result is a separate step.
 //!
 //! # Names
 //!
@@ -94,6 +131,7 @@ mod lengths;
 mod names;
 mod reports;
 mod sites;
+mod valences;
 
 pub use crate::topology::editor::RemovedHydrogens;
 pub use domains::{ideal_bond_length, AtomDomains, AtomShape};
@@ -105,9 +143,14 @@ pub(crate) use fusion::{
 pub(crate) use names::{fragment_names, name_prefix, residue_names, NameAllocator, ResidueNames};
 pub use reports::{
     AttachedAtom, AttachedFragment, AttachmentSite, FusedFragment, PlacedFragment, PlacedHydrogens,
-    PlacedHydrogensReport, PlacementError, RemovedHydrogensReport,
+    PlacedHydrogensReport, PlacementError, RemovedHydrogensReport, SettledAtom, SettledAtomsReport,
+    SettledBond, SettledBondsReport,
 };
-pub(crate) use sites::{free_sites, unit, Rotation, SiteQuery};
+pub(crate) use sites::{free_sites, perpendicular, unit, Rotation, SiteQuery};
+pub(crate) use valences::builder_max_valence;
+pub use valences::{
+    builder_charges, builder_hydrogen_count, builder_valences, BuilderValenceError,
+};
 
 #[cfg(doc)]
 use crate::structure::StructureEditor;
