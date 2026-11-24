@@ -292,6 +292,12 @@ pub enum PlacementError {
         /// The atom.
         atom: EditAtomId,
     },
+    /// The target bond is a double bond whose represented stereo puts the
+    /// fused ring's two bonds trans, which a small ring cannot be.
+    TransFusionBond {
+        /// The bond.
+        bond: EditBondId,
+    },
 }
 
 impl fmt::Display for PlacementError {
@@ -364,6 +370,10 @@ impl fmt::Display for PlacementError {
             Self::SharedFusionBond { bond } => write!(
                 f,
                 "Cannot fuse a ring onto {bond}. It is already shared by two rings."
+            ),
+            Self::TransFusionBond { bond } => write!(
+                f,
+                "Cannot fuse a ring onto {bond}. Its stereo puts the ring bonds trans."
             ),
             Self::FusionAtomWithoutHydrogen { bond, atom } => write!(
                 f,

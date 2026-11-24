@@ -297,8 +297,10 @@ impl TopologyEditor {
     /// shared bond `plan.shared_order`, and deletes each end's replaced and
     /// removed explicit hydrogens. An end's one new bond takes the replaced
     /// hydrogen's place in represented stereo, or an implicit hydrogen's
-    /// without one; fixed counts follow the whole edit, as edits make them
-    /// follow. The caller has checked the plan.
+    /// without one; stereo of the shared bond is dropped, as the ring fixes
+    /// it, and listed in [`Self::pruned_stereo`]; fixed counts follow the
+    /// whole edit, as edits make them follow. The caller has checked the
+    /// plan, so nothing changes on error.
     pub(crate) fn fuse_in_instance(
         &mut self,
         plan: &FusionPlan,
@@ -320,63 +322,81 @@ impl TopologyEditor {
                 Some(plan.shared_order),
             );
         }
-        let mut doomed = Vec::new();
         for end in &plan.ends {
             for &hydrogen in end.replaced.iter().chain(&end.removed) {
                 let bond = self
                     .bond_between(end.atom, hydrogen)?
                     .ok_or(TopologyEditError::InvalidAtom(hydrogen))?;
                 changes.change(end.atom, Some(self.require_bond(bond)?.order), None);
-                doomed.push(hydrogen);
             }
         }
         let counts = self.fixed_counts_after(&changes)?;
+        self.draft_mut(group).check_room(count, plan.bonds.len())?;
+        self.mark_group_changed(group);
+        self.changed();
         let mut atoms = Vec::with_capacity(count);
         for atom in &plan.atoms {
             let local = self.draft_mut(group).add_atom(atom.clone())?;
             atoms.push(self.register_atom(group, local));
         }
-        self.mark_group_changed(group);
-        self.changed();
+        // The ring fixes the configuration of the double bond it shares, so
+        // the bond's stereo is dropped and reported as pruned.
+        let shared_local = self.bond_location(plan.shared)?.local;
+        let fixed = self
+            .draft_mut(group)
+            .stereo_elements()
+            .filter(|(_, element)| {
+                matches!(&element.kind, StereoElementKind::DoubleBond(stereo) if stereo.bond == shared_local)
+            })
+            .map(|(id, _)| id)
+            .collect::<Vec<_>>();
+        for id in fixed {
+            let element = self.draft_mut(group).remove_stereo_element(id)?;
+            let entry = self.pruned_entry(group, &element);
+            self.pruned_stereo.push(entry);
+        }
         for &(a, b, order) in &plan.bonds {
-            match (end_of(a), end_of(b)) {
-                (None, None) => {
-                    // The fragment's counts already describe its own bonds.
-                    self.connect(atoms[a], atoms[b], order)?;
+            if end_of(a).is_none() && end_of(b).is_none() {
+                // The fragment's counts already describe its own bonds.
+                self.connect(atoms[a], atoms[b], order)?;
+            }
+        }
+        // Each end's hydrogens go as soon as its ring bond is in, so no edit
+        // sees the end over its valence and prunes its stereo.
+        let mut dead_atom_slots = Vec::new();
+        let mut dead_bond_slots = Vec::new();
+        for (end, plan_end) in plan.ends.iter().enumerate() {
+            let &(a, b, order) = plan
+                .bonds
+                .iter()
+                .find(|(a, b, _)| end_of(*a) == Some(end) || end_of(*b) == Some(end))
+                .expect("each end has one new bond");
+            let new = atoms[a.min(b)];
+            let parent_local = self.atom_location(plan_end.atom)?.local;
+            let new_local = self.atom_location(new)?.local;
+            let replaced = plan_end
+                .replaced
+                .map(|hydrogen| self.atom_location(hydrogen).map(|loc| loc.local))
+                .transpose()?;
+            let bond = bond_in_place_of_hydrogen(
+                self.draft_mut(group),
+                parent_local,
+                new_local,
+                order,
+                replaced,
+            )?;
+            self.register_bond(group, bond, plan_end.atom, new);
+            self.record_pruned(group);
+            for &hydrogen in plan_end.replaced.iter().chain(&plan_end.removed) {
+                dead_atom_slots.push(self.atom_location(hydrogen)?.slot);
+                for bond in self.incident_bonds(hydrogen)?.collect::<Vec<_>>() {
+                    dead_bond_slots.push(self.bond_location(bond)?.slot);
                 }
-                (Some(end), None) | (None, Some(end)) => {
-                    let new = atoms[a.min(b)];
-                    let parent = plan.ends[end].atom;
-                    let parent_local = self.atom_location(parent)?.local;
-                    let new_local = self.atom_location(new)?.local;
-                    let replaced = plan.ends[end]
-                        .replaced
-                        .map(|hydrogen| self.atom_location(hydrogen).map(|loc| loc.local))
-                        .transpose()?;
-                    let bond = bond_in_place_of_hydrogen(
-                        self.draft_mut(group),
-                        parent_local,
-                        new_local,
-                        order,
-                        replaced,
-                    )?;
-                    self.register_bond(group, bond, parent, new);
-                    self.record_pruned(group);
-                }
-                (Some(_), Some(_)) => unreachable!("the ends are bonded already"),
+                self.remove_atom(hydrogen)?;
             }
         }
         if shared.order != plan.shared_order {
             self.reorder_bond(plan.shared, plan.shared_order)?;
-        }
-        let mut dead_atom_slots = Vec::with_capacity(doomed.len());
-        let mut dead_bond_slots = Vec::with_capacity(doomed.len());
-        for hydrogen in doomed {
-            dead_atom_slots.push(self.atom_location(hydrogen)?.slot);
-            for bond in self.incident_bonds(hydrogen)?.collect::<Vec<_>>() {
-                dead_bond_slots.push(self.bond_location(bond)?.slot);
-            }
-            self.remove_atom(hydrogen)?;
         }
         self.set_fixed_counts(counts)?;
         Ok(FusedInInstance {

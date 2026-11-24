@@ -84,7 +84,11 @@ impl StructureEditor {
     /// double bonds. A fused benzene ring is therefore aromatic on an
     /// aromatic bond whatever its Kekulé order, and turns a cyclohexane bond
     /// into the aromatic bond of tetralin when both its atoms have two
-    /// hydrogens to give up. No other existing bond changes.
+    /// hydrogens to give up. No other existing bond changes. The ring fixes
+    /// the configuration of a double bond it shares, so the bond's
+    /// represented stereo is dropped and listed in
+    /// [`TopologyEditor::pruned_stereo`]; stereo that puts the ring's two
+    /// bonds trans is refused.
     ///
     /// Each bond atom gives up one hydrogen for each unit of bond valence it
     /// gains: the explicit hydrogen nearest its new ring bond, when that is
@@ -121,7 +125,8 @@ impl StructureEditor {
     /// [`PlacementError::FusionBondOrder`] for a bond neither single nor
     /// double, [`PlacementError::SharedFusionBond`] for a bond already in two
     /// rings of up to eight atoms,
-    /// [`PlacementError::FusionAtomWithoutHydrogen`], and
+    /// [`PlacementError::FusionAtomWithoutHydrogen`],
+    /// [`PlacementError::TransFusionBond`], and
     /// [`PlacementError::DegenerateGeometry`] when the bond's atoms coincide,
     /// with the geometry errors of [`Self::free_directions`].
     pub fn fuse_fragment(
@@ -244,6 +249,17 @@ impl StructureEditor {
             .max()
             .expect("two orientations");
         orientations.retain(|orientation| orientation.orders.rank == best_rank);
+        // A double bond that stays double must have the ring on one side.
+        if orientations[0].orders.shared == BondOrder::Double
+            && self.topology.hydrogen_places_opposite(bond)? == Some(true)
+        {
+            return Err(PlacementError::TransFusionBond { bond });
+        }
+        // The residue the new atoms join, read before anything changes.
+        let residue = match self.residue_of(ends[0])? {
+            Some(residue) => Some(residue),
+            None => self.residue_of(ends[1])?,
+        };
 
         // Geometry.
         let points = ends.map(|atom| self.point(atom));
@@ -323,12 +339,12 @@ impl StructureEditor {
             for atom in &kept {
                 let point = place(atom);
                 // The atom a bond atom's new ring bond reaches is not
-                // measured against that atom's other neighbors.
-                let bonded = side.neighbors.iter().position(|neighbor| neighbor == atom);
+                // measured against that atom's other neighbors; a
+                // three-membered ring's reaches both bond atoms.
                 let near = beside
                     .iter()
                     .enumerate()
-                    .filter(|(end, _)| Some(*end) != bonded)
+                    .filter(|(end, _)| side.neighbors[*end] != *atom)
                     .flat_map(|(_, atoms)| atoms)
                     .filter(|(atom, _)| !removed.contains(&atom))
                     .map(|(_, point)| point);
@@ -435,13 +451,11 @@ impl StructureEditor {
                 middle + chosen.rotation.apply(side.points[atom] - fragment_middle),
             );
         }
-        let parent = match self.topology.atom_site_for_atom(ends[0])? {
-            Some(_) => ends[0],
-            None => ends[1],
-        };
-        let mut names = NameAllocator::default();
-        for atom in &fused.atoms {
-            self.join_residue_of(parent, *atom, &mut names)?;
+        if let Some((residue, metadata)) = &residue {
+            let mut names = NameAllocator::default();
+            for atom in &fused.atoms {
+                self.join_residue(*residue, metadata, *atom, &mut names)?;
+            }
         }
         Ok(FusedFragment {
             atoms: kept

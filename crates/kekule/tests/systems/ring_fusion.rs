@@ -1,12 +1,12 @@
 //! Fusing ring fragments onto bonds of structure drafts.
-use kekule::math::Point3;
+use kekule::math::{Point3, Vector3};
 use kekule::molecule::{BondOrder, ImplicitHydrogens, Molecule};
 use kekule::smiles::{self, SmilesWriteOptions};
 use kekule::structure::placement::{
     fragment, fragments, ideal_bond_length, FragmentKind, PlacementError,
 };
-use kekule::structure::{Structure, StructureEditor};
-use kekule::topology::edit::{EditAtomId, EditBondId};
+use kekule::structure::{Positions, Structure, StructureEditor};
+use kekule::topology::edit::{EditAtomId, EditBondId, PrunedStereo};
 use kekule::units::{Quantity, ANGSTROM, NANOMETER};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -66,7 +66,7 @@ fn torsion([a, b, c, d]: [Point3; 4]) -> f64 {
         .to_degrees()
 }
 
-/// The position of the atom at dense `index`, in Å.
+/// The position of the atom at dense `index`, in Ă….
 fn angstroms(structure: &Structure, index: usize) -> Point3 {
     structure
         .positions()
@@ -124,8 +124,8 @@ fn rings_and_aromatic_atoms(structure: &Structure) -> (Vec<usize>, usize) {
 }
 
 /// Bond lengths lie within 85 % to 112 % of an ideal single bond's, and atoms
-/// three or more bonds apart keep 2.3 Å from each other between heavy atoms and
-/// 1.6 Å otherwise; unrelaxed bay hydrogens, as in phenanthrene, come to 1.75 Å.
+/// three or more bonds apart keep 2.3 Ă… from each other between heavy atoms and
+/// 1.6 Ă… otherwise; unrelaxed bay hydrogens, as in phenanthrene, come to 1.75 Ă….
 fn assert_sensible_geometry(structure: &Structure, label: &str) {
     let topology = structure.topology();
     let points = (0..structure.atom_count())
@@ -180,7 +180,7 @@ fn assert_sensible_geometry(structure: &Structure, label: &str) {
 }
 
 /// The largest distance of a heavy atom from the plane through the first
-/// three heavy atoms, in Å.
+/// three heavy atoms, in Ă….
 fn heavy_atoms_off_plane(structure: &Structure) -> f64 {
     let points = structure
         .topology()
@@ -196,25 +196,29 @@ fn heavy_atoms_off_plane(structure: &Structure) -> f64 {
         .fold(0.0, f64::max)
 }
 
-/// A draft's atoms (element, hydrogen declaration, position, name) and
-/// bonds (dense atoms and order) once published.
+/// A draft's atoms (element, hydrogen declaration, position, name), bonds
+/// (dense atoms and order), and represented stereo once published, with the
+/// stereo the draft pruned.
 type Snapshot = (
-    Vec<(u8, String, Point3, String)>,
+    Vec<(u8, String, Point3, Option<String>)>,
     Vec<(usize, usize, String)>,
+    Vec<String>,
+    Vec<PrunedStereo>,
 );
 
 fn snapshot(editor: StructureEditor) -> Snapshot {
+    let pruned = editor.topology().pruned_stereo().to_vec();
     let structure = editor.finish().unwrap();
     let topology = structure.topology();
     let atoms = topology
         .atoms()
         .map(|atom| {
-            let site = atom.atom_site().unwrap();
             (
                 atom.element().atomic_number(),
                 format!("{:?}", atom.atom().hydrogens()),
                 angstroms(&structure, atom.index().index()),
-                site.metadata().label_atom_id().unwrap().to_owned(),
+                atom.atom_site()
+                    .map(|site| site.metadata().label_atom_id().unwrap().to_owned()),
             )
         })
         .collect();
@@ -225,7 +229,95 @@ fn snapshot(editor: StructureEditor) -> Snapshot {
             (a, b, format!("{:?}", bond.order()))
         })
         .collect();
-    (atoms, bonds)
+    let stereo = topology
+        .definitions()
+        .flat_map(|definition| {
+            definition
+                .molecule()
+                .stereo_elements()
+                .map(|(_, element)| format!("{element:?}"))
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    (atoms, bonds, stereo, pruned)
+}
+
+/// A draft of the molecule `text` with its atoms at `points`, in nm, in
+/// SMILES order.
+fn drafted(text: &str, points: &[Point3]) -> StructureEditor {
+    let topology = smiles::to_topology(text).unwrap();
+    assert_eq!(topology.atom_count(), points.len());
+    Structure::new(
+        topology,
+        Positions::new(Quantity::new(points.to_vec(), NANOMETER)).unwrap(),
+    )
+    .unwrap()
+    .into_editor()
+}
+
+/// The point bonded to `c` at `length` with the angle `b`â€“`c`â€“new and the
+/// torsion `a`â€“`b`â€“`c`â€“new, in degrees.
+fn bonded_point(a: Point3, b: Point3, c: Point3, length: f64, angle: f64, torsion: f64) -> Point3 {
+    let bc = (c - b) / (c - b).norm();
+    let normal = (b - a).cross(bc);
+    let normal = normal / normal.norm();
+    let across = normal.cross(bc);
+    let (angle, torsion) = (angle.to_radians(), torsion.to_radians());
+    c + bc * (-length * angle.cos())
+        + across * (length * angle.sin() * torsion.cos())
+        + normal * (length * angle.sin() * torsion.sin())
+}
+
+/// The ethylene of 2-butene in the xy plane, its methyls on one side
+/// (`cis`) or opposite, in SMILES atom order.
+fn butene(cis: bool) -> StructureEditor {
+    let (text, y) = if cis {
+        (r"C/C=C\C", 0.13)
+    } else {
+        ("C/C=C/C", -0.13)
+    };
+    drafted(
+        text,
+        &[
+            Point3::new(-0.075, 0.13, 0.0),
+            Point3::origin(),
+            Point3::new(0.134, 0.0, 0.0),
+            Point3::new(0.209, y, 0.0),
+        ],
+    )
+}
+
+/// The draft's double bond.
+fn double_bond(editor: &StructureEditor) -> EditBondId {
+    editor
+        .topology()
+        .bonds()
+        .find(|(_, bond)| bond.order == BondOrder::Double)
+        .unwrap()
+        .0
+}
+
+/// The bond between the atoms named `first` and `second`.
+fn named_bond(editor: &StructureEditor, first: &str, second: &str) -> EditBondId {
+    let topology = editor.topology();
+    let name = |atom: EditAtomId| {
+        let site = topology.atom_site_for_atom(atom).unwrap().unwrap();
+        topology
+            .atom_site(site)
+            .unwrap()
+            .metadata()
+            .label_atom_id()
+            .unwrap()
+            .to_owned()
+    };
+    topology
+        .bonds()
+        .find(|(_, bond)| {
+            let names = [name(bond.a()), name(bond.b())];
+            names == [first, second] || names == [second, first]
+        })
+        .unwrap()
+        .0
 }
 
 #[test]
@@ -238,7 +330,7 @@ fn benzene_fused_on_any_benzene_bond_gives_naphthalene() {
         .iter()
         .map(|bond| format!("{:?}", source.topology().bond(*bond).unwrap().order))
         .collect::<BTreeSet<_>>();
-    // Both Kekulé orders of the target bond are covered.
+    // Both KekulĂ© orders of the target bond are covered.
     assert_eq!(orders.len(), 2);
     for bond in bonds {
         let mut editor = source.clone();
@@ -543,6 +635,16 @@ fn fusion_refusals_change_nothing() {
         format!("Cannot fuse a ring onto {shared}. It is already shared by two rings.")
     );
 
+    // (E)-2-butene: the ring would close across a trans double bond.
+    let trans = butene(false);
+    let double = double_bond(&trans);
+    let error = refused(&trans, double, "benzene");
+    assert_eq!(error, PlacementError::TransFusionBond { bond: double });
+    assert_eq!(
+        error.to_string(),
+        format!("Cannot fuse a ring onto {double}. Its stereo puts the ring bonds trans.")
+    );
+
     // Toluene's ring bond at the methyl carbon: the ring carbon there carries
     // no hydrogen.
     let mut toluene = placed("benzene");
@@ -576,4 +678,222 @@ fn fusion_refusals_change_nothing() {
             &ipso.to_string()[1..]
         )
     );
+}
+
+#[test]
+fn a_cis_double_bond_fuses_and_its_stereo_is_dropped() {
+    // (Z)-2-butene with benzene gives o-xylene; the ring fixes the
+    // configuration, so the double bond's stereo goes.
+    let mut editor = butene(true);
+    let bond = double_bond(&editor);
+    assert!(editor.topology().pruned_stereo().is_empty());
+    editor
+        .fuse_fragment(bond, fragment("benzene").unwrap())
+        .unwrap();
+    assert!(matches!(
+        editor.topology().pruned_stereo(),
+        [PrunedStereo::DoubleBond { .. }]
+    ));
+    let structure = editor.finish().unwrap();
+    let stereo = structure
+        .topology()
+        .definitions()
+        .map(|definition| definition.molecule().stereo_elements().count())
+        .sum::<usize>();
+    assert_eq!(stereo, 0);
+    assert_eq!(canonical(&structure), canonical_of("Cc1ccccc1C"));
+    assert_sensible_geometry(&structure, "o-xylene");
+    assert!(heavy_atoms_off_plane(&structure) < 0.05);
+}
+
+#[test]
+fn cyclopropane_on_cyclohexane_aligns_with_the_hydrogens_it_replaces() {
+    let mut editor = placed("cyclohexane");
+    let bond = heavy_bond(&editor);
+    let target = editor.topology().bond(bond).unwrap();
+    let ends = [target.a(), target.b()];
+    let [a, b] = ends.map(|atom| point(&editor, atom));
+    let axis = (b - a) / (b - a).norm();
+    let perpendicular = |v: Vector3| v - axis * v.dot(axis);
+    let hydrogens = ends.map(|end| {
+        editor
+            .topology()
+            .neighbors(end)
+            .unwrap()
+            .filter(|n| !is_heavy(&editor, *n))
+            .map(|hydrogen| point(&editor, hydrogen))
+            .collect::<Vec<_>>()
+    });
+    let reference = perpendicular(hydrogens[0][0] - a);
+    let azimuth = |v: Vector3| {
+        let v = perpendicular(v);
+        axis.dot(reference.cross(v)).atan2(reference.dot(v))
+    };
+    let fused = editor
+        .fuse_fragment(bond, fragment("cyclopropane").unwrap())
+        .unwrap();
+    // The aligned turns lay the ring bond along a hydrogen's place or halfway
+    // between one of each bond atom; a 15Â° step would miss them.
+    let sites = [a, b].map(|from| {
+        hydrogens[usize::from(from != a)]
+            .iter()
+            .map(|hydrogen| azimuth(*hydrogen - from))
+            .collect::<Vec<_>>()
+    });
+    let mut aligned = sites.iter().flatten().copied().collect::<Vec<_>>();
+    for first in &sites[0] {
+        for second in &sites[1] {
+            aligned.push((first.sin() + second.sin()).atan2(first.cos() + second.cos()));
+        }
+    }
+    let apex = fused
+        .atoms()
+        .iter()
+        .map(|(_, atom)| *atom)
+        .find(|atom| is_heavy(&editor, *atom))
+        .unwrap();
+    let found = azimuth(point(&editor, apex) - a);
+    let miss = aligned
+        .iter()
+        .map(|angle| {
+            let difference = found - angle;
+            difference.sin().atan2(difference.cos()).abs().to_degrees()
+        })
+        .fold(f64::INFINITY, f64::min);
+    assert!(miss < 0.5, "{miss:.1} degrees from an aligned turn");
+    let structure = editor.finish().unwrap();
+    assert_eq!(canonical(&structure), canonical_of("C1CCC2CC2C1"));
+    assert_eq!(rings_and_aromatic_atoms(&structure), (vec![3, 6], 0));
+    assert_sensible_geometry(&structure, "norcarane");
+}
+
+#[test]
+fn pyrrole_on_cyclohexane_turns_the_bond_double() {
+    for fixed in [false, true] {
+        let mut editor = placed("cyclohexane");
+        if fixed {
+            let heavy = editor
+                .topology()
+                .atom_ids()
+                .filter(|atom| is_heavy(&editor, *atom))
+                .collect::<Vec<_>>();
+            editor.remove_hydrogens(heavy.clone()).unwrap();
+            for atom in &heavy {
+                let carbon = editor
+                    .topology()
+                    .atom(*atom)
+                    .unwrap()
+                    .clone()
+                    .with_hydrogens(ImplicitHydrogens::Fixed(2));
+                editor.replace_atom(*atom, carbon).unwrap();
+            }
+        }
+        let bond = heavy_bond(&editor);
+        let fused = editor
+            .fuse_fragment(bond, fragment("pyrrole").unwrap())
+            .unwrap();
+        // Each bond atom gives up both hydrogens to the aromatic ring.
+        let removed = if fixed { 0 } else { 4 };
+        assert_eq!(fused.removed_hydrogens().len(), removed);
+        assert_eq!(
+            editor.topology().bond(bond).unwrap().order,
+            BondOrder::Double
+        );
+        if fixed {
+            for (_, atom) in fused.fused_atoms() {
+                assert_eq!(
+                    editor.topology().atom(atom).unwrap().hydrogens(),
+                    ImplicitHydrogens::Fixed(0)
+                );
+            }
+        }
+        let structure = editor.finish().unwrap();
+        // Fixed counts write as bracket atoms, so compare inferred ones.
+        if !fixed {
+            assert_eq!(canonical(&structure), canonical_of("c1cc2c([nH]1)CCCC2"));
+        }
+        assert_eq!(rings_and_aromatic_atoms(&structure), (vec![5, 6], 5));
+        let molecule = perceived_molecule(&structure);
+        let hydrogens = molecule
+            .atoms()
+            .map(|(id, atom)| {
+                usize::from(atom.element().atomic_number() == 1)
+                    + molecule.implicit_hydrogens(id).unwrap()
+            })
+            .sum::<usize>();
+        assert_eq!(hydrogens, 11, "fixed: {fixed}");
+        assert_sensible_geometry(&structure, "tetrahydroindole");
+    }
+}
+
+#[test]
+fn a_ring_atom_takes_the_hydrogen_place_of_a_stereocenter() {
+    // F[C@H](Cl)C(C)C, tetrahedral at both carbons, with the hydrogens of
+    // the bond's atoms gauche.
+    let reference = Point3::new(0.0, 0.1, 0.0);
+    let center = Point3::origin();
+    let next = Point3::new(0.153, 0.0, 0.0);
+    let tetrahedral = 109.471_220_634;
+    let hydrogen = bonded_point(reference, next, center, 0.109, tetrahedral, 120.0);
+    let points = [
+        bonded_point(reference, next, center, 0.135, tetrahedral, 0.0),
+        center,
+        bonded_point(reference, next, center, 0.177, tetrahedral, 240.0),
+        next,
+        bonded_point(hydrogen, center, next, 0.153, tetrahedral, 180.0),
+        bonded_point(hydrogen, center, next, 0.153, tetrahedral, 300.0),
+    ];
+    let expected = canonical_of("F[C@]1(Cl)C(C)(C)CCCC1");
+    assert_ne!(expected, canonical_of("F[C@@]1(Cl)C(C)(C)CCCC1"));
+    for explicit in [false, true] {
+        let mut editor = drafted("F[C@H](Cl)C(C)C", &points);
+        let ids = editor.topology().atom_ids().collect::<Vec<_>>();
+        if explicit {
+            editor
+                .add_hydrogens(ids.clone(), Default::default())
+                .unwrap();
+        }
+        let bond = editor
+            .topology()
+            .bonds()
+            .find(|(_, bond)| [bond.a(), bond.b()] == [ids[1], ids[3]])
+            .unwrap()
+            .0;
+        let fused = editor
+            .fuse_fragment(bond, fragment("cyclohexane").unwrap())
+            .unwrap();
+        let removed = if explicit { 2 } else { 0 };
+        assert_eq!(fused.removed_hydrogens().len(), removed);
+        // The ring bond lies along the hydrogen it replaces.
+        let ring = editor
+            .topology()
+            .neighbors(ids[1])
+            .unwrap()
+            .find(|atom| fused.atoms().iter().any(|(_, new)| new == atom))
+            .unwrap();
+        let along = point(&editor, ring) - point(&editor, ids[1]);
+        let toward = hydrogen - center;
+        let angle = (along.dot(toward) / along.norm() / toward.norm())
+            .acos()
+            .to_degrees();
+        assert!(angle < 15.0, "explicit: {explicit}, {angle:.1} degrees");
+        let structure = editor.finish().unwrap();
+        assert_eq!(canonical(&structure), expected, "explicit: {explicit}");
+    }
+}
+
+#[test]
+fn benzene_on_the_nh_bond_of_imidazole_gives_imidazopyridine() {
+    let mut editor = placed("imidazole");
+    let bond = named_bond(&editor, "N1", "C2");
+    let fused = editor
+        .fuse_fragment(bond, fragment("benzene").unwrap())
+        .unwrap();
+    // The nitrogen and the carbon each give up their hydrogen.
+    assert_eq!(fused.removed_hydrogens().len(), 2);
+    let structure = editor.finish().unwrap();
+    assert_eq!(canonical(&structure), canonical_of("c1ccn2ccnc2c1"));
+    assert_eq!(rings_and_aromatic_atoms(&structure), (vec![5, 6], 9));
+    assert_sensible_geometry(&structure, "imidazo[1,2-a]pyridine");
+    assert!(heavy_atoms_off_plane(&structure) < 0.05);
 }

@@ -78,3 +78,58 @@ fn a_flat_ring_has_no_mirror_image_and_a_chair_has_one() {
     assert!((normal.norm() - 1.0).abs() < 1e-12);
     assert!(normal.dot(axis).abs() < 1e-12);
 }
+
+/// (E)-2-butene in the xy plane, its methyls opposite.
+fn trans_butene() -> StructureEditor {
+    crate::structure::Structure::new(
+        crate::smiles::to_topology("C/C=C/C").unwrap(),
+        crate::structure::Positions::new(crate::units::Quantity::new(
+            vec![
+                Point3::new(-0.075, 0.13, 0.0),
+                Point3::origin(),
+                Point3::new(0.134, 0.0, 0.0),
+                Point3::new(0.209, -0.13, 0.0),
+            ],
+            crate::units::NANOMETER,
+        ))
+        .unwrap(),
+    )
+    .unwrap()
+    .into_editor()
+}
+
+#[test]
+fn a_refused_fusion_leaves_the_revision_and_stereo_alone() {
+    let mut editor = trans_butene();
+    let bond = editor
+        .topology
+        .bonds()
+        .find(|(_, bond)| bond.order == BondOrder::Double)
+        .unwrap()
+        .0;
+    let revision = editor.topology.structural_revision;
+    let stereo = |editor: &StructureEditor| {
+        editor
+            .clone()
+            .finish()
+            .unwrap()
+            .topology()
+            .definitions()
+            .flat_map(|definition| {
+                definition
+                    .molecule()
+                    .stereo_elements()
+                    .map(|(_, element)| element.clone())
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>()
+    };
+    let before = stereo(&editor);
+    assert_eq!(before.len(), 1);
+    for name in ["benzene", "methyl"] {
+        assert!(editor.fuse_fragment(bond, fragment(name).unwrap()).is_err());
+        assert_eq!(editor.topology.structural_revision, revision, "{name}");
+        assert!(editor.topology.pruned_stereo().is_empty(), "{name}");
+        assert_eq!(stereo(&editor), before, "{name}");
+    }
+}
