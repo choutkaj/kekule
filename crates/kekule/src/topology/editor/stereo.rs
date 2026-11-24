@@ -4,7 +4,7 @@
 use super::{EditAtomId, EditBondId, TopologyEditError, TopologyEditor};
 use crate::algorithms::collapse_stereo_hydrogen_carrier;
 use crate::molecule::BondOrder;
-use crate::stereo::{StereoCarrier, StereoElement, StereoElementKind};
+use crate::stereo::{DoubleBondOrientation, StereoCarrier, StereoElement, StereoElementKind};
 use std::collections::BTreeSet;
 
 /// A represented stereo element an edit removed because it no longer
@@ -49,6 +49,41 @@ impl TopologyEditor {
         std::mem::take(&mut self.pruned_stereo)
     }
 
+    /// Whether the represented configuration of the double bond `bond` puts
+    /// the bonds that take a hydrogen's place at its two atoms on opposite
+    /// sides; `None` when the bond has no specified configuration.
+    pub(crate) fn hydrogen_places_opposite(
+        &self,
+        bond: EditBondId,
+    ) -> Result<Option<bool>, TopologyEditError> {
+        let loc = self.bond_location(bond)?;
+        let molecule = self.molecule(loc.group);
+        let is_hydrogen = |carrier: StereoCarrier| match carrier {
+            StereoCarrier::ImplicitHydrogen => true,
+            StereoCarrier::Atom(atom) => molecule
+                .atom(atom)
+                .is_some_and(|atom| atom.element.atomic_number() == 1),
+            _ => false,
+        };
+        for (_, element) in molecule.stereo_elements() {
+            let StereoElementKind::DoubleBond(stereo) = &element.kind else {
+                continue;
+            };
+            if stereo.bond != loc.local {
+                continue;
+            }
+            let Some(orientation) = stereo.orientation else {
+                return Ok(None);
+            };
+            // A carrier other than a hydrogen stands opposite the hydrogen's
+            // place at its atom.
+            let flipped = is_hydrogen(stereo.left_carrier) != is_hydrogen(stereo.right_carrier);
+            let opposite = orientation == DoubleBondOrientation::Opposite;
+            return Ok(Some(opposite != flipped));
+        }
+        Ok(None)
+    }
+
     /// Records the elements the draft of `group` pruned, while the group still
     /// maps every local ID the edit touched to its handle.
     pub(super) fn record_pruned(&mut self, group: usize) {
@@ -65,7 +100,7 @@ impl TopologyEditor {
         }
     }
 
-    fn pruned_entry(&self, group: usize, element: &StereoElement) -> PrunedStereo {
+    pub(super) fn pruned_entry(&self, group: usize, element: &StereoElement) -> PrunedStereo {
         match &element.kind {
             StereoElementKind::Tetrahedral(stereo) => PrunedStereo::Tetrahedral {
                 center: self.group_atom(group, stereo.center),

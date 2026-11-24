@@ -230,6 +230,9 @@ the main branch migrates by the table under "From the SampleSet API".
 - `structure::placement::fragments` has 48 ring and group fragments that
   `StructureEditor::attach_fragment` and `place_fragment` add, naming ring
   atoms by IUPAC locant (`Fragment::locant`).
+- `StructureEditor::fuse_fragment` fuses a ring fragment onto a bond through
+  its `Fragment::fusion_bond`, so benzene on benzene gives naphthalene; it
+  reports the new atoms in a `FusedFragment`.
 - `kekule-potentials`: `minimize_scoped` and `minimize_scoped_with` take a
   `MinimizationScope` that fixes atoms and adds `PositionRestraint`s.
 - `kekule-openff`: `Error::atoms` lists the atoms a failure concerns, and

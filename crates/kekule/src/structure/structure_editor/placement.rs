@@ -19,6 +19,8 @@ use crate::topology::DraftHydrogenError;
 use crate::units::{Quantity, CANONICAL_LENGTH_UNIT};
 use std::collections::{BTreeMap, BTreeSet};
 
+mod fusion;
+
 /// The residue a new molecule's atoms join.
 const NEW_RESIDUE: &str = "UNL";
 
@@ -729,15 +731,37 @@ impl StructureEditor {
         atom: EditAtomId,
         names: &mut NameAllocator,
     ) -> Result<(), PlacementError> {
+        match self.residue_of(parent)? {
+            Some((residue, metadata)) => self.join_residue(residue, &metadata, atom, names),
+            None => Ok(()),
+        }
+    }
+
+    /// The residue of `parent` and its site's metadata, or `None` when it has
+    /// no site.
+    fn residue_of(
+        &self,
+        parent: EditAtomId,
+    ) -> Result<Option<(EditResidueId, AtomSiteMetadata)>, PlacementError> {
         let Some(site) = self.topology.atom_site_for_atom(parent)? else {
-            return Ok(());
+            return Ok(None);
         };
-        let parent_site = self.topology.require_atom_site(site)?;
-        let residue = parent_site.residue();
+        let site = self.topology.require_atom_site(site)?;
+        Ok(Some((site.residue(), site.metadata().clone())))
+    }
+
+    /// Places `atom` in `residue` under the next free name for its element,
+    /// with the rest of `metadata`, a site's of that residue.
+    fn join_residue(
+        &mut self,
+        residue: EditResidueId,
+        metadata: &AtomSiteMetadata,
+        atom: EditAtomId,
+        names: &mut NameAllocator,
+    ) -> Result<(), PlacementError> {
         let element = self.element(atom);
         let name = names.allocate(&self.topology, residue, atom, element);
-        let metadata = parent_site
-            .metadata()
+        let metadata = metadata
             .clone()
             .with_type_symbol(Some(name_prefix(element)))
             .with_label_atom_id(Some(name.clone()))

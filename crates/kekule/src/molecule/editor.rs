@@ -390,6 +390,24 @@ impl MoleculeEditor {
         self.add_atom_at_slot(atom, self.graph.atom_slot_count())
     }
 
+    /// Checks that `atoms` more atoms and `bonds` more bonds fit, so an edit
+    /// that adds them can fail before it changes anything.
+    ///
+    /// # Errors
+    ///
+    /// [`MoleculeError::CapacityExceeded`] when they do not.
+    pub(crate) fn check_room(&self, atoms: usize, bonds: usize) -> Result<(), MoleculeError> {
+        if let Some(last) = atoms.checked_sub(1) {
+            checked_id::<AtomId>(self.graph.atom_slot_count() + last, Countable::Atom)
+                .map_err(MoleculeError::CapacityExceeded)?;
+        }
+        if let Some(last) = bonds.checked_sub(1) {
+            checked_id::<BondId>(self.graph.bond_slot_count() + last, Countable::Bond)
+                .map_err(MoleculeError::CapacityExceeded)?;
+        }
+        Ok(())
+    }
+
     /// [`Self::add_atom`] into slot `slot`, which must be the next one; tests
     /// pass a larger slot to reach the capacity bound without allocating it.
     fn add_atom_at_slot(&mut self, atom: Atom, slot: usize) -> Result<AtomId, MoleculeError> {

@@ -55,7 +55,7 @@ pub use hierarchy::{EditAtomSite, EditChain, EditResidue};
 pub use identity::{EditAtomId, EditAtomSiteId, EditBondId, EditChainId, EditResidueId};
 use overlay::{HandleBlock, Overlay};
 pub use placement::RemovedHydrogens;
-pub(crate) use placement::{AttachedInInstance, DraftHydrogenError};
+pub(crate) use placement::{AttachedInInstance, DraftHydrogenError, FusionEndPlan, FusionPlan};
 pub use properties::{EditProperties, EditPropertiesMut, EditPropertyTable};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;

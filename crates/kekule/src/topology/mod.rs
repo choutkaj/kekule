@@ -81,7 +81,9 @@ use crate::properties::{
 };
 pub use builder::{TopologyBuildError, TopologyBuilder};
 use dense_order::DenseOrder;
-pub(crate) use editor::{AppendMapping, AttachedInInstance, ChainIds, DraftHydrogenError};
+pub(crate) use editor::{
+    AppendMapping, AttachedInInstance, ChainIds, DraftHydrogenError, FusionEndPlan, FusionPlan,
+};
 pub use entity_views::{AtomView, BondView};
 pub use hierarchy::{
     AtomSiteId, AtomSiteMetadata, ChainId, HierarchyBuilder, HierarchyError, HierarchyIdKind,

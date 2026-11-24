@@ -13,6 +13,7 @@ mod ownership;
 mod perception;
 mod placement;
 mod properties;
+mod ring_fusion;
 mod sampling;
 mod scientific_selection;
 mod selection;

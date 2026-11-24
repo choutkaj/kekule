@@ -19,6 +19,9 @@
 //!   clearest of a few staggered torsions about the new bond, and
 //!   [`StructureEditor::place_fragment`] places one as a new capped molecule at a
 //!   point.
+//! - [`StructureEditor::fuse_fragment`] fuses a ring fragment onto a bond
+//!   through its [fusion bond](Fragment::fusion_bond), pairing the double
+//!   bonds again and reporting a [`FusedFragment`].
 //! - [`ideal_bond_length`] gives the length placement uses for an element pair
 //!   and bond order.
 //!
@@ -86,6 +89,7 @@
 
 mod domains;
 mod fragments;
+mod fusion;
 mod lengths;
 mod names;
 mod reports;
@@ -95,9 +99,12 @@ pub use crate::topology::editor::RemovedHydrogens;
 pub use domains::{ideal_bond_length, AtomDomains, AtomShape};
 pub(crate) use domains::{perceive_domains, DomainInput};
 pub use fragments::{fragment, fragments, Fragment, FragmentKind};
+pub(crate) use fusion::{
+    fusion_dropped, fusion_orders, single_heavy_neighbor, FusionEnd, FusionOrders,
+};
 pub(crate) use names::{fragment_names, name_prefix, residue_names, NameAllocator, ResidueNames};
 pub use reports::{
-    AttachedAtom, AttachedFragment, AttachmentSite, PlacedFragment, PlacedHydrogens,
+    AttachedAtom, AttachedFragment, AttachmentSite, FusedFragment, PlacedFragment, PlacedHydrogens,
     PlacedHydrogensReport, PlacementError, RemovedHydrogensReport,
 };
 pub(crate) use sites::{free_sites, unit, Rotation, SiteQuery};
