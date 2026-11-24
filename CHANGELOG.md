@@ -366,10 +366,11 @@ the main branch migrates by the table under "From the SampleSet API".
   place of a hydrogen take as many hydrogens as the order has, so an oxygen
   double-bonded to methane gives formaldehyde; `AttachedAtom` and
   `AttachedFragment` list them in `replaced_hydrogens`, which replaces
-  `replaced_hydrogen`.
+  `replaced_hydrogen`; `AttachedAtom` is no longer `Copy`. A multiple bond
+  with too few hydrogens fails with `NoFreePosition` past the parent's
+  largest valence.
 - Two opposite neighbors of a trigonal or tetrahedral atom no longer fail
   placement with `DegenerateGeometry`; new sites take a deterministic plane.
-
 - **Breaking:** A set's columns are the only home of its geometries'
   scalars. `push`, `replace`, `from_geometries`, `from_structures`, and
   `from_reader` move a geometry's owner values into its row, failing with

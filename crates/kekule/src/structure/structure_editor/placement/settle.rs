@@ -90,7 +90,8 @@ impl StructureEditor {
     /// an atom outside them over its valence,
     /// [`PlacementError::UnsupportedGeometry`] for more than six domains,
     /// [`PlacementError::DegenerateGeometry`] when a neighbor coincides with
-    /// the atom, [`PlacementError::StereoHydrogen`] when its stereo names an
+    /// the atom, [`PlacementError::NoFreePosition`] when its shape has fewer
+    /// free sites than hydrogens, [`PlacementError::StereoHydrogen`] when its stereo names an
     /// implicit hydrogen that does not become exactly one new atom, and
     /// [`PlacementError::UnknownBondLength`].
     pub fn settle_atoms(
@@ -126,9 +127,11 @@ impl StructureEditor {
         }
 
         let total = hydrogens.iter().map(|plan| plan.new.len()).sum();
-        self.slots
-            .try_reserve_atoms(total)
-            .map_err(super::super::StructureEditError::from)?;
+        if total > 0 {
+            self.slots
+                .try_reserve_atoms(total)
+                .map_err(super::super::StructureEditError::from)?;
+        }
         let mut names = NameAllocator::default();
         let mut report = Vec::with_capacity(plans.len());
         for ((plan, hydrogen_plan), (turned, angle_in_ring)) in
@@ -163,6 +166,12 @@ impl StructureEditor {
                 turned,
                 angle_in_ring,
             });
+        }
+        // A side may hold hydrogens that a later atom deleted.
+        for entry in &mut report {
+            entry
+                .turned
+                .retain(|turned| self.topology.atom(*turned).is_some());
         }
         self.apply_moves(moves);
         Ok(SettledAtomsReport { atoms: report })
@@ -377,21 +386,45 @@ impl StructureEditor {
             [neighbor] => self.settled_reference(*neighbor, atom, moves, centers, placed)?,
             _ => None,
         };
-        let mut sites = free_sites(SiteQuery {
-            center,
-            neighbors: &neighbors,
-            reference,
-            shape,
-            lone_pairs: plan.lone_pairs,
-        })
-        .map_err(|_| PlacementError::DegenerateGeometry { atom })?;
+        // Up to four domains, lone pairs and bonds take alike sites, so kept
+        // hydrogens choose among all free sites and a pyramid keeps its
+        // face; the lone pairs of a hypervalent atom keep their own sites.
+        // With no other neighbor, the first hydrogen orients the shape.
+        let alike = shape.domains() <= 4;
+        let anchor = match neighbors.as_slice() {
+            [] => plan
+                .hydrogens
+                .first()
+                .and_then(|hydrogen| unit(at(self, moves, *hydrogen) - center)),
+            _ => None,
+        };
+        let mut frame = neighbors.clone();
+        let mut sites = Vec::new();
+        if let Some(direction) = anchor {
+            sites.push(direction);
+            frame.push(center + direction);
+        }
+        sites.extend(
+            free_sites(SiteQuery {
+                center,
+                neighbors: &frame,
+                reference: reference.filter(|_| anchor.is_none()),
+                shape,
+                lone_pairs: if alike { 0 } else { plan.lone_pairs },
+            })
+            .map_err(|_| PlacementError::DegenerateGeometry { atom })?,
+        );
         if sites.len() < plan.target {
             return Err(PlacementError::NoFreePosition { atom });
         }
-        sites.truncate(plan.target);
+        if !alike {
+            sites.truncate(plan.target);
+        }
 
-        // Each kept hydrogen takes the free site nearest it, best matches
-        // first; the hydrogens matched to none are deleted.
+        // Kept hydrogens take the free sites nearest them, best matches
+        // first, as many as the atom takes; the rest are deleted. New
+        // hydrogens take the free sites left, in order of preference, and
+        // lone pairs any beyond them.
         let mut pairs = Vec::with_capacity(plan.hydrogens.len() * sites.len());
         for (index, hydrogen) in plan.hydrogens.iter().enumerate() {
             let toward = unit(at(self, moves, *hydrogen) - center);
@@ -403,31 +436,33 @@ impl StructureEditor {
         pairs.sort_by(|a, b| b.0.total_cmp(&a.0).then((a.1, a.2).cmp(&(b.1, b.2))));
         let mut hydrogen_site = vec![None; plan.hydrogens.len()];
         let mut site_taken = vec![false; sites.len()];
+        let mut kept = 0;
         for (_, index, site_index) in pairs {
+            if kept == plan.target {
+                break;
+            }
             if hydrogen_site[index].is_none() && !site_taken[site_index] {
                 hydrogen_site[index] = Some(site_index);
                 site_taken[site_index] = true;
+                kept += 1;
             }
         }
-        let points = sites
-            .iter()
-            .map(|site| center + *site * plan.length)
-            .collect::<Vec<_>>();
-        let mut result = HydrogenPlan {
-            points: points.clone(),
-            ..HydrogenPlan::default()
-        };
+        let point = |site: usize| center + sites[site] * plan.length;
+        let mut result = HydrogenPlan::default();
         for (hydrogen, site) in plan.hydrogens.iter().zip(hydrogen_site) {
             match site {
-                Some(site) => result.kept.push((*hydrogen, points[site])),
+                Some(site) => result.kept.push((*hydrogen, point(site))),
                 None => result.removed.push(*hydrogen),
             }
         }
-        result.new = site_taken
-            .iter()
-            .zip(&points)
-            .filter(|(taken, _)| !**taken)
-            .map(|(_, point)| *point)
+        let fresh = (0..sites.len())
+            .filter(|site| !site_taken[*site])
+            .take(plan.target - kept)
+            .collect::<Vec<_>>();
+        result.new = fresh.iter().map(|site| point(*site)).collect();
+        result.points = (0..sites.len())
+            .filter(|site| site_taken[*site] || fresh.contains(site))
+            .map(point)
             .collect();
         Ok(result)
     }

@@ -270,7 +270,8 @@ impl StructureEditor {
     /// A multiple bond in place of a hydrogen takes as many hydrogens as its
     /// order has: implicit ones first, then the explicit hydrogens nearest
     /// the replaced one, so an oxygen double-bonded to methane gives
-    /// formaldehyde; what the parent lacks comes from its lone pairs. The new
+    /// formaldehyde; what the parent lacks comes from its lone pairs, within
+    /// its largest valence as for [`Self::free_directions`]. The new
     /// atom takes the replaced hydrogen's place in the parent's represented
     /// stereo, as a single bond takes an implicit hydrogen's; a fixed implicit
     /// count on the parent follows the bond as [`Self::add_bond`] makes it
@@ -637,6 +638,19 @@ impl StructureEditor {
                 others.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1)));
                 let mut replaced = vec![hydrogen];
                 replaced.extend(others.into_iter().take(further).map(|(_, other)| other));
+                // What the hydrogens do not cover comes from lone pairs, as
+                // far as the parent's valence allows.
+                let units = usize::from(order.valence());
+                if units > replaced.len() + implicit {
+                    let mut valence = units - replaced.len();
+                    for bond in self.topology.incident_bonds(parent)? {
+                        valence += usize::from(self.topology.require_bond(bond)?.order.valence());
+                    }
+                    let value = self.topology.require_atom(parent)?;
+                    if !has_valence_room(value, valence) {
+                        return Err(PlacementError::NoFreePosition { atom: parent });
+                    }
+                }
                 Ok((direction, replaced))
             }
             AttachmentSite::Toward(toward) => {

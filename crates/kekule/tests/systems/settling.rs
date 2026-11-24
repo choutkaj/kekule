@@ -252,6 +252,35 @@ fn builder_valences_list_charges_and_hydrogen_counts() {
 }
 
 #[test]
+fn errors_name_the_state_and_what_it_takes() {
+    let oxygen = builder_hydrogen_count(Element::O, 2, 0).unwrap_err();
+    assert_eq!(
+        oxygen.to_string(),
+        "The atom is O with charge +2. O takes charge -1, 0 or +1."
+    );
+    let carbon = builder_hydrogen_count(Element::C, 0, 5).unwrap_err();
+    assert_eq!(
+        carbon.to_string(),
+        "The atom has valence 5. C takes valence 4."
+    );
+    let sulfur = builder_hydrogen_count(Element::S, 1, 4).unwrap_err();
+    assert_eq!(
+        sulfur.to_string(),
+        "The atom has valence 4. S with charge +1 takes valence 3."
+    );
+    let sulfur = builder_hydrogen_count(Element::S, 0, 7).unwrap_err();
+    assert_eq!(
+        sulfur.to_string(),
+        "The atom has valence 7. S takes valence 2, 4 or 6."
+    );
+    let iron = builder_hydrogen_count(Element::from_symbol("Fe").unwrap(), 0, 0).unwrap_err();
+    assert_eq!(
+        iron.to_string(),
+        "The atom is Fe. Fe has no builder valences."
+    );
+}
+
+#[test]
 fn methane_charged_and_back_keeps_its_shape() {
     let (mut editor, carbon) = built("C");
     assert_settled(&editor, carbon, 4, &[TETRAHEDRAL]);
@@ -498,6 +527,53 @@ fn a_double_bond_in_place_of_a_hydrogen_takes_two() {
     assert_settled(&editor, carbon, 1, &[180.0]);
     assert_settled(&editor, nitrogen, 0, &[]);
     editor.finish().unwrap();
+}
+
+#[test]
+fn a_multiple_bond_past_the_valence_has_no_position() {
+    let (mut editor, carbon) = built("C");
+    let oxygen = grow(&mut editor, carbon, "O");
+    let hydrogen = hydrogens(&editor, oxygen)[0];
+    let before = editor.positions();
+    let error = editor
+        .attach_atom(
+            oxygen,
+            Atom::new(Element::C),
+            BondOrder::Double,
+            AttachmentSite::Hydrogen(hydrogen),
+        )
+        .unwrap_err();
+    assert!(matches!(error, PlacementError::NoFreePosition { atom } if atom == oxygen));
+    assert_eq!(editor.positions(), before);
+}
+
+#[test]
+fn pyramids_keep_their_face_and_lone_atoms_their_frame() {
+    let (mut editor, nitrogen) = built("N");
+    let first = grow(&mut editor, nitrogen, "C");
+    let second = grow(&mut editor, nitrogen, "C");
+    let hydrogen = hydrogens(&editor, nitrogen)[0];
+    // Mirror the hydrogen through the plane of the nitrogen and carbons.
+    let center = point(&editor, nitrogen);
+    let normal = (point(&editor, first) - center).cross(point(&editor, second) - center);
+    let normal = normal / normal.norm();
+    let offset = point(&editor, hydrogen) - center;
+    let mirrored = center + (offset - normal * (2.0 * offset.dot(normal)));
+    editor
+        .set_position(hydrogen, Quantity::new(mirrored, ANGSTROM))
+        .unwrap();
+    let report = editor.settle_atoms([nitrogen]).unwrap();
+    assert!(report.atoms()[0].moved_hydrogens().is_empty());
+    assert!((point(&editor, hydrogen) - mirrored).norm() < 1e-6);
+
+    let (mut editor, oxygen) = built("O");
+    let hydrogen = hydrogens(&editor, oxygen)[0];
+    let direction = point(&editor, hydrogen) - point(&editor, oxygen);
+    let direction = direction / direction.norm();
+    charge(&mut editor, oxygen, 1);
+    let after = point(&editor, hydrogen) - point(&editor, oxygen);
+    let after = after / after.norm();
+    assert!((after - direction).norm() < 1e-9);
 }
 
 #[test]

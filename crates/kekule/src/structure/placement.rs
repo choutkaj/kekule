@@ -8,11 +8,12 @@
 //!   collapses their explicit hydrogens back into implicit counts, each
 //!   reporting per atom what changed ([`PlacedHydrogensReport`],
 //!   [`RemovedHydrogensReport`]).
-//! - [`StructureEditor::settle_atoms`] gives atoms that an edit changed their
-//!   builder hydrogen count ([`builder_hydrogen_count`]) at ideal positions and
-//!   the angle of their shape between two neighbors, and
-//!   [`StructureEditor::settle_bonds`] gives bonds their ideal length, each
-//!   moving the smaller side ([`SettledAtomsReport`], [`SettledBondsReport`]).
+//! - After an edit, [`StructureEditor::settle_atoms`] gives each changed atom
+//!   its builder hydrogen count ([`builder_hydrogen_count`]) at ideal
+//!   positions and its shape's angle between two neighbors, and
+//!   [`StructureEditor::settle_bonds`] gives each changed bond its ideal
+//!   length, each moving the smaller side ([`SettledAtomsReport`],
+//!   [`SettledBondsReport`]).
 //! - [`StructureEditor::atom_domains`] perceives an atom's [`AtomDomains`] and
 //!   [`StructureEditor::free_directions`] gives where a new substituent bonded
 //!   with a given order goes.
