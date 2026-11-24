@@ -8,7 +8,7 @@ PubChem data are in the public domain.
 
 `build_fragments.py` writes the file from the records as served by
 `https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/<name>/SDF?record_type=3d`
-(retrieved 2026-10-26):
+(retrieved 2026-10-26; cyclopentadiene 2026-11-24):
 
 ```
 python -I tools/fragments/build_fragments.py <directory of downloaded records> crates/kekule/src/structure/placement/fragments.sdf
