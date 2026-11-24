@@ -2,8 +2,10 @@
 use crate::molecule::{BondOrder, Element};
 
 /// Typical lengths in Å of common bonds in organic and biological molecules,
-/// rounded from the mean values of Allen et al. (1987) and standard
-/// compilations; pairs are ordered by atomic number.
+/// rounded from the mean values of F. H. Allen, O. Kennard, D. G. Watson,
+/// L. Brammer, A. G. Orpen, and R. Taylor, J. Chem. Soc., Perkin Trans. 2
+/// 1987, S1–S19, and standard compilations; pairs are ordered by atomic
+/// number.
 const TABLE: &[(u8, u8, BondOrder, f64)] = {
     use BondOrder::{Double, Single, Triple};
     &[

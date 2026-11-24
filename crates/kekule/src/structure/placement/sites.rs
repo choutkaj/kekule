@@ -65,13 +65,19 @@ pub(crate) fn free_sites(query: SiteQuery<'_>) -> Result<Vec<Vector3>, Degenerat
                 .collect();
             (sites, vec![0])
         }
+        // Opposite neighbors, as of an atom bent from linear, leave the
+        // plane of the new sites to a deterministic perpendicular.
         (2, AtomShape::TrigonalPlanar) => {
-            let site = unit(-(directions[0] + directions[1])).ok_or(DegenerateSites)?;
+            let site = unit(-(directions[0] + directions[1]))
+                .unwrap_or_else(|| perpendicular(directions[0]));
             return Ok(vec![site]);
         }
         (2, AtomShape::Tetrahedral) => {
-            let bisector = unit(-(directions[0] + directions[1])).ok_or(DegenerateSites)?;
-            let normal = unit(directions[0].cross(directions[1])).ok_or(DegenerateSites)?;
+            let bisector = unit(-(directions[0] + directions[1]))
+                .unwrap_or_else(|| perpendicular(directions[0]));
+            let normal = unit(directions[0].cross(directions[1])).unwrap_or_else(|| {
+                unit(directions[0].cross(bisector)).unwrap_or_else(|| perpendicular(bisector))
+            });
             let (sin, cos) = HALF_TETRAHEDRAL.sin_cos();
             let sites = [bisector * cos + normal * sin, bisector * cos - normal * sin];
             return Ok(sites[..wanted].to_vec());
@@ -276,7 +282,7 @@ fn frame_rotation(
 }
 
 /// A deterministic unit vector perpendicular to the unit vector `v`.
-fn perpendicular(v: Vector3) -> Vector3 {
+pub(crate) fn perpendicular(v: Vector3) -> Vector3 {
     let axis = if v.x.abs() <= v.y.abs() && v.x.abs() <= v.z.abs() {
         Vector3::new(1.0, 0.0, 0.0)
     } else if v.y.abs() <= v.z.abs() {

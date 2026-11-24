@@ -274,7 +274,7 @@ impl StructureEditor {
                 }
             }
             if implicit[end] > 0 {
-                let free = self.free_directions(ends[end])?;
+                let free = self.free_directions(ends[end], BondOrder::Single)?;
                 sites[end].extend(free.into_iter().map(|direction| (direction, None)));
             }
         }
@@ -297,7 +297,6 @@ impl StructureEditor {
             .iter()
             .copied()
             .chain(beside.iter().flatten().map(|(atom, _)| *atom))
-            .map(Some)
             .collect::<Vec<_>>();
         let environment = self.environment(middle, reach, &excluded);
         let hydrogen_points = explicit

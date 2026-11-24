@@ -1,5 +1,6 @@
 //! Builder placement on a structure draft; see [`crate::structure::placement`].
 use super::{checked_point, StructureEditor};
+use crate::algorithms::rdkit_hydrogens_at_valence;
 use crate::algorithms::{
     AddHydrogensOptions, AddHydrogensScope, AddedHydrogenOrigin, RetainedHydrogenReason,
 };
@@ -7,10 +8,10 @@ use crate::diagnostics::{LimitExceeded, Resource};
 use crate::math::{Point3, Vector3};
 use crate::molecule::{Atom, AtomId, BondOrder, Element};
 use crate::structure::placement::{
-    fragment_names, free_sites, ideal_bond_length, name_prefix, perceive_domains, residue_names,
-    unit, AtomDomains, AtomShape, AttachedAtom, AttachedFragment, AttachmentSite, DomainInput,
-    Fragment, NameAllocator, PlacedFragment, PlacedHydrogens, PlacedHydrogensReport,
-    PlacementError, RemovedHydrogensReport, Rotation, SiteQuery,
+    builder_max_valence, fragment_names, free_sites, ideal_bond_length, name_prefix,
+    perceive_domains, residue_names, unit, AtomDomains, AtomShape, AttachedAtom, AttachedFragment,
+    AttachmentSite, DomainInput, Fragment, NameAllocator, PlacedFragment, PlacedHydrogens,
+    PlacedHydrogensReport, PlacementError, RemovedHydrogensReport, Rotation, SiteQuery,
 };
 use crate::structure::Positions;
 use crate::topology::edit::{EditAtomId, EditResidueId};
@@ -20,6 +21,7 @@ use crate::units::{Quantity, CANONICAL_LENGTH_UNIT};
 use std::collections::{BTreeMap, BTreeSet};
 
 mod fusion;
+mod settle;
 
 /// The residue a new molecule's atoms join.
 const NEW_RESIDUE: &str = "UNL";
@@ -50,22 +52,55 @@ impl StructureEditor {
         })
     }
 
-    /// Unit directions from `atom` to where its next substituents go, as for
-    /// its hydrogens: the free sites of its [`AtomDomains`], those of its
-    /// implicit hydrogens included, in order of preference (anti to its
-    /// neighbor's main substituent first).
+    /// Unit directions from `atom` to where a new substituent bonded with
+    /// `order` goes, in order of preference (anti to its neighbor's main
+    /// substituent first). Domains are counted as they would be with the new
+    /// bond: it takes the place of as many implicit hydrogens as its order
+    /// has, and beyond them of a lone pair, so a sulfide's sulfur has a free
+    /// position for a double-bonded oxygen. With a single bond on an atom
+    /// with implicit hydrogens, these are the free sites of its
+    /// [`AtomDomains`], those of its implicit hydrogens included. Explicit
+    /// hydrogens keep their sites, and an atom has no free position when the
+    /// new bond would take it past its largest valence: its largest
+    /// [builder valence](crate::structure::placement::builder_valences), or
+    /// the valence model's outside the builder's states.
     ///
     /// # Errors
     ///
     /// [`PlacementError::Edit`] for an invalid handle,
     /// [`PlacementError::UnsupportedGeometry`] for more than six domains, and
-    /// [`PlacementError::DegenerateGeometry`] when its neighbors give no
-    /// orientation.
-    pub fn free_directions(&self, atom: EditAtomId) -> Result<Vec<Vector3>, PlacementError> {
-        let geometry = self.atom_domains(atom)?;
-        let Some(shape) = geometry.shape else {
-            return Ok(Vec::new());
-        };
+    /// [`PlacementError::DegenerateGeometry`] when its neighbors coincide with
+    /// it.
+    pub fn free_directions(
+        &self,
+        atom: EditAtomId,
+        order: BondOrder,
+    ) -> Result<Vec<Vector3>, PlacementError> {
+        let value = self.topology.require_atom(atom)?;
+        let (implicit, _) = self.topology.materializable_hydrogens(atom)?;
+        let units = usize::from(order.valence());
+        let left = implicit - units.min(implicit);
+        if units > implicit {
+            let mut valence = left + units;
+            for bond in self.topology.incident_bonds(atom)? {
+                valence += usize::from(self.topology.require_bond(bond)?.order.valence());
+            }
+            if !has_valence_room(value, valence) {
+                return Ok(Vec::new());
+            }
+        }
+        let (domains, lone_pairs) = self.domains_with(
+            atom,
+            DomainChange {
+                without: &[],
+                substituents: 1 + left,
+                valence: units + left,
+                coordinate: usize::from(units == 0),
+                multiple: units > 1,
+            },
+        )?;
+        let shape = AtomShape::from_domains(domains)
+            .ok_or(PlacementError::UnsupportedGeometry { atom, domains })?;
         let neighbors = self.topology.neighbors(atom)?.collect::<Vec<_>>();
         let points = neighbors
             .iter()
@@ -80,7 +115,7 @@ impl StructureEditor {
             neighbors: &points,
             reference,
             shape,
-            lone_pairs: geometry.lone_pairs,
+            lone_pairs,
         })
         .map_err(|_| PlacementError::DegenerateGeometry { atom })
     }
@@ -131,7 +166,7 @@ impl StructureEditor {
                 .map_err(|error| draft_error(error, atom))?;
             let mut points = Vec::with_capacity(count);
             if count > 0 {
-                let directions = self.free_directions(atom)?;
+                let directions = self.free_directions(atom, BondOrder::Single)?;
                 if directions.len() < count {
                     return Err(PlacementError::NoFreePosition { atom });
                 }
@@ -231,13 +266,19 @@ impl StructureEditor {
     /// Bonds a new atom to `parent` with `order`, at the ideal length for
     /// their elements and that order, at `site`: in place of one of the
     /// parent's explicit hydrogens, which is deleted, or at the parent's free
-    /// position nearest a direction. The new atom takes the replaced
-    /// hydrogen's place in the parent's represented stereo, as a single bond
-    /// takes an implicit hydrogen's; a fixed implicit count on the parent
-    /// follows the bond as [`Self::add_bond`] makes it follow. The atom joins the
-    /// parent's residue under the next free name. Its own hydrogens are not
-    /// added; [`Self::add_hydrogens`] completes them. Closing a ring is a
-    /// plain [`Self::add_bond`].
+    /// position nearest a direction ([`Self::free_directions`] for `order`).
+    /// A multiple bond in place of a hydrogen takes as many hydrogens as its
+    /// order has: implicit ones first, then the explicit hydrogens nearest
+    /// the replaced one, so an oxygen double-bonded to methane gives
+    /// formaldehyde; what the parent lacks comes from its lone pairs, within
+    /// its largest valence as for [`Self::free_directions`]. The new
+    /// atom takes the replaced hydrogen's place in the parent's represented
+    /// stereo, as a single bond takes an implicit hydrogen's; a fixed implicit
+    /// count on the parent follows the bond as [`Self::add_bond`] makes it
+    /// follow. The atom joins the parent's residue under the next free name.
+    /// Its own hydrogens are not added, and the parent's stay where they are;
+    /// [`Self::settle_atoms`] gives both their builder count at ideal
+    /// positions. Closing a ring is a plain [`Self::add_bond`].
     ///
     /// # Errors
     ///
@@ -258,11 +299,11 @@ impl StructureEditor {
         let parent_atom = self.topology.require_atom(parent)?.clone();
         let length = bond_length(parent_atom.element, atom.element, order)?;
         let center = self.point(parent);
-        let (direction, replaced) = self.attachment_direction(parent, site)?;
+        let (direction, replaced) = self.attachment_direction(parent, site, order)?;
         self.slots
             .try_reserve_atoms(1)
             .map_err(super::StructureEditError::from)?;
-        let attached = self.attach_first(parent, atom, order, replaced, revision)?;
+        let attached = self.attach_first(parent, atom, order, &replaced, revision)?;
         self.place_row(attached.atom, center + direction * length);
         self.join_residue_of(parent, attached.atom, &mut NameAllocator::default())?;
         Ok(AttachedAtom {
@@ -371,7 +412,7 @@ impl StructureEditor {
         let attachment_atom = molecule.atom(attachment).expect("live").clone();
         let order = fragment.attachment_order();
         let length = bond_length(parent_atom.element, attachment_atom.element, order)?;
-        let (direction, replaced) = self.attachment_direction(parent, site)?;
+        let (direction, replaced) = self.attachment_direction(parent, site, order)?;
         let center = self.point(parent);
         let anchor = center + direction * length;
         let origin = fragment_point(fragment, attachment);
@@ -382,7 +423,7 @@ impl StructureEditor {
 
         // Turn the fragment's main substituent anti to the parent's, then
         // try the staggered torsions from there.
-        let parent_reference = self.main_substituent(parent, replaced)?;
+        let parent_reference = self.main_substituent(parent, &replaced)?;
         let fragment_reference = main_fragment_substituent(fragment, &kept);
         let base = match (parent_reference, fragment_reference) {
             (Some(parent_reference), Some(fragment_reference)) => {
@@ -418,7 +459,9 @@ impl StructureEditor {
             .map(|(_, point)| (*point - origin).norm())
             .fold(0.0, f64::max)
             + CLEARANCE_REACH;
-        let environment = self.environment(anchor, reach, &[Some(parent), replaced]);
+        let mut excluded = replaced.clone();
+        excluded.push(parent);
+        let environment = self.environment(anchor, reach, &excluded);
         let clearance = |rotation: &Rotation| {
             kept.iter()
                 .filter(|(atom, _)| *atom != attachment)
@@ -453,7 +496,7 @@ impl StructureEditor {
         self.slots
             .try_reserve_atoms(kept.len())
             .map_err(super::StructureEditError::from)?;
-        let first = self.attach_first(parent, attachment_atom, order, replaced, revision)?;
+        let first = self.attach_first(parent, attachment_atom, order, &replaced, revision)?;
         let mut atoms = Vec::with_capacity(kept.len());
         for (local, point) in &kept {
             let id = if *local == attachment {
@@ -540,15 +583,9 @@ impl StructureEditor {
     /// `excluded`. Reads the position rows once, without allocating per row;
     /// liveness is checked only for nearby rows, against the draft's deleted
     /// slots.
-    fn environment(
-        &self,
-        center: Point3,
-        reach: f64,
-        excluded: &[Option<EditAtomId>],
-    ) -> Vec<Point3> {
+    fn environment(&self, center: Point3, reach: f64, excluded: &[EditAtomId]) -> Vec<Point3> {
         let excluded = excluded
             .iter()
-            .flatten()
             .filter_map(|atom| self.topology.atom_slot(*atom).ok())
             .collect::<Vec<_>>();
         let rows = self.slots.positions.values();
@@ -565,13 +602,16 @@ impl StructureEditor {
             .collect()
     }
 
-    /// The direction from `parent` to a new substituent at `site`, and the
-    /// hydrogen it replaces.
+    /// The direction from `parent` to a new substituent bonded with `order`
+    /// at `site`, and the explicit hydrogens it takes: the one it replaces
+    /// first, then those its order takes beyond the parent's implicit ones,
+    /// nearest the replaced one first.
     fn attachment_direction(
         &self,
         parent: EditAtomId,
         site: AttachmentSite,
-    ) -> Result<(Vector3, Option<EditAtomId>), PlacementError> {
+        order: BondOrder,
+    ) -> Result<(Vector3, Vec<EditAtomId>), PlacementError> {
         let center = self.point(parent);
         match site {
             AttachmentSite::Hydrogen(hydrogen) => {
@@ -583,54 +623,84 @@ impl StructureEditor {
                 }
                 let direction = unit(self.point(hydrogen) - center)
                     .ok_or(PlacementError::DegenerateGeometry { atom: parent })?;
-                Ok((direction, Some(hydrogen)))
+                let (implicit, _) = self.topology.materializable_hydrogens(parent)?;
+                let further = usize::from(order.valence())
+                    .saturating_sub(1)
+                    .saturating_sub(implicit);
+                let mut others = Vec::new();
+                for other in self.topology.neighbors(parent)?.collect::<Vec<_>>() {
+                    if other != hydrogen && self.is_replaceable_hydrogen(parent, other)? {
+                        let alignment = unit(self.point(other) - center)
+                            .map_or(-2.0, |toward| toward.dot(direction));
+                        others.push((alignment, other));
+                    }
+                }
+                others.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1)));
+                let mut replaced = vec![hydrogen];
+                replaced.extend(others.into_iter().take(further).map(|(_, other)| other));
+                // What the hydrogens do not cover comes from lone pairs, as
+                // far as the parent's valence allows.
+                let units = usize::from(order.valence());
+                if units > replaced.len() + implicit {
+                    let mut valence = units - replaced.len();
+                    for bond in self.topology.incident_bonds(parent)? {
+                        valence += usize::from(self.topology.require_bond(bond)?.order.valence());
+                    }
+                    let value = self.topology.require_atom(parent)?;
+                    if !has_valence_room(value, valence) {
+                        return Err(PlacementError::NoFreePosition { atom: parent });
+                    }
+                }
+                Ok((direction, replaced))
             }
             AttachmentSite::Toward(toward) => {
                 let toward = unit(toward)
                     .filter(|toward| toward.is_finite())
                     .ok_or(PlacementError::InvalidDirection)?;
                 let direction = self
-                    .free_directions(parent)?
+                    .free_directions(parent, order)?
                     .into_iter()
                     .max_by(|a, b| a.dot(toward).total_cmp(&b.dot(toward)))
                     .ok_or(PlacementError::NoFreePosition { atom: parent })?;
-                Ok((direction, None))
+                Ok((direction, Vec::new()))
             }
         }
     }
 
-    /// Bonds `atom` to `parent` in its instance, replacing `replaced`; the
-    /// parent's fixed count follows the bonds as edits make it. Its position
-    /// is the caller's.
+    /// Bonds `atom` to `parent` in its instance, replacing the first of
+    /// `replaced` and deleting the rest; the parent's fixed count follows the
+    /// bonds as edits make it. Its position is the caller's.
     fn attach_first(
         &mut self,
         parent: EditAtomId,
         atom: Atom,
         order: BondOrder,
-        replaced: Option<EditAtomId>,
+        replaced: &[EditAtomId],
         revision: u64,
     ) -> Result<crate::topology::AttachedInInstance, PlacementError> {
+        let (first, removed) = match replaced {
+            [first, removed @ ..] => (Some(*first), removed),
+            [] => (None, replaced),
+        };
         let attached = self
             .topology
-            .attach_in_instance(parent, atom, order, replaced)?;
+            .attach_in_instance(parent, atom, order, first, removed)?;
         self.sync_slots(revision);
-        if let Some((atom_slot, bond_slots)) = &attached.dead {
-            self.slots.clear_atom_rows(&[*atom_slot]);
-            self.slots.clear_bond_rows(bond_slots);
-        }
+        self.slots.clear_atom_rows(&attached.dead_atom_slots);
+        self.slots.clear_bond_rows(&attached.dead_bond_slots);
         Ok(attached)
     }
 
-    /// The position of `atom`'s main substituent other than `except`: a
-    /// heavy atom with the most heavy neighbors first.
+    /// The position of `atom`'s main substituent other than those in
+    /// `except`: a heavy atom with the most heavy neighbors first.
     fn main_substituent(
         &self,
         atom: EditAtomId,
-        except: Option<EditAtomId>,
+        except: &[EditAtomId],
     ) -> Result<Option<Point3>, PlacementError> {
         let mut best: Option<(usize, EditAtomId)> = None;
         for candidate in self.topology.neighbors(atom)? {
-            if Some(candidate) == except {
+            if except.contains(&candidate) {
                 continue;
             }
             let rank = if self.element(candidate).atomic_number() == 1 {
@@ -652,22 +722,46 @@ impl StructureEditor {
     /// The domain count, site-taking lone pairs, neighbor count, and implicit
     /// hydrogens of `atom`.
     fn domains(&self, atom: EditAtomId) -> Result<(usize, usize, usize, usize), PlacementError> {
-        let value = self.topology.require_atom(atom)?;
         let (implicit, _) = self.topology.materializable_hydrogens(atom)?;
-        let mut neighbors = 0;
-        let mut bond_valence = implicit;
-        let mut coordinate_bonds = 0;
-        let mut multiple = false;
+        let neighbors = self.topology.neighbors(atom)?.count();
+        let (domains, lone_pairs) = self.domains_with(
+            atom,
+            DomainChange {
+                without: &[],
+                substituents: implicit,
+                valence: implicit,
+                coordinate: 0,
+                multiple: false,
+            },
+        )?;
+        Ok((domains, lone_pairs, neighbors, implicit))
+    }
+
+    /// The domain count and site-taking lone pairs of `atom` with its bonds
+    /// changed by `change`.
+    fn domains_with(
+        &self,
+        atom: EditAtomId,
+        change: DomainChange<'_>,
+    ) -> Result<(usize, usize), PlacementError> {
+        let value = self.topology.require_atom(atom)?;
+        let mut substituents = change.substituents;
+        let mut bond_valence = change.valence;
+        let mut coordinate_bonds = change.coordinate;
+        let mut multiple = change.multiple;
         let mut conjugated = false;
         for bond in self.topology.incident_bonds(atom)? {
             let bond = self.topology.require_bond(bond)?;
-            neighbors += 1;
+            let other = if bond.a() == atom { bond.b() } else { bond.a() };
+            if change.without.contains(&other) {
+                continue;
+            }
+            substituents += 1;
             bond_valence += bond_valence_of(bond.order);
             if matches!(bond.order, BondOrder::Zero | BondOrder::Dative) {
                 coordinate_bonds += 1;
             }
             multiple |= bond_valence_of(bond.order) > 1;
-            let other = if bond.a() == atom { bond.b() } else { bond.a() };
             if !conjugated
                 && value.element.atomic_number() == 7
                 && (5..=8).contains(&self.element(other).atomic_number())
@@ -679,18 +773,17 @@ impl StructureEditor {
                     .any(|bond| bond_valence_of(bond.order) > 1);
             }
         }
-        let (domains, lone_pairs) = perceive_domains(DomainInput {
+        Ok(perceive_domains(DomainInput {
             element: value.element,
             formal_charge: value.formal_charge,
             radical_electrons: value
                 .radical
                 .map_or(0, |radical| usize::from(radical.electron_count())),
-            substituents: neighbors + implicit,
+            substituents,
             bond_valence,
             coordinate_bonds,
             conjugated_nitrogen: conjugated && !multiple && value.formal_charge == 0,
-        });
-        Ok((domains, lone_pairs, neighbors, implicit))
+        }))
     }
 
     /// The substituent of `neighbor` (other than `atom`) that new sites of
@@ -700,7 +793,7 @@ impl StructureEditor {
         neighbor: EditAtomId,
         atom: EditAtomId,
     ) -> Result<Option<Point3>, PlacementError> {
-        self.main_substituent(neighbor, Some(atom))
+        self.main_substituent(neighbor, &[atom])
     }
 
     fn is_replaceable_hydrogen(
@@ -880,6 +973,31 @@ impl StructureEditor {
         if self.topology.structural_revision != revision {
             self.slots.properties.owner_mut().clear();
         }
+    }
+}
+
+/// How an atom's bonds change for perceiving its domains: neighbors left
+/// out, and substituents, bond valence, coordinate bonds, and a multiple
+/// bond added.
+#[derive(Debug, Clone, Copy)]
+struct DomainChange<'a> {
+    without: &'a [EditAtomId],
+    substituents: usize,
+    valence: usize,
+    coordinate: usize,
+    multiple: bool,
+}
+
+/// Whether `atom` takes `valence`, from bonds and hydrogens: at most its
+/// largest builder valence in a builder state, and otherwise within the
+/// valence model's strict rules. Radical electrons count against it.
+fn has_valence_room(atom: &Atom, valence: usize) -> bool {
+    let radical = atom
+        .radical
+        .map_or(0, |radical| usize::from(radical.electron_count()));
+    match builder_max_valence(atom.element, atom.formal_charge) {
+        Some(largest) => valence + radical <= largest,
+        None => rdkit_hydrogens_at_valence(atom, valence, true).is_some(),
     }
 }
 

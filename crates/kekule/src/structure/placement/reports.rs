@@ -1,6 +1,7 @@
 //! What placement edits report: attachment sites, placed and removed atoms
 //! and hydrogens, and the placement error type.
 
+use super::BuilderValenceError;
 use crate::algorithms::AddedHydrogenOrigin;
 use crate::diagnostics::LimitExceeded;
 use crate::molecule::Element;
@@ -25,11 +26,11 @@ pub enum AttachmentSite {
 }
 
 /// The atom [`StructureEditor::attach_atom`] added.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AttachedAtom {
     pub(crate) atom: EditAtomId,
     pub(crate) bond: EditBondId,
-    pub(crate) replaced: Option<EditAtomId>,
+    pub(crate) replaced: Vec<EditAtomId>,
 }
 
 impl AttachedAtom {
@@ -41,10 +42,11 @@ impl AttachedAtom {
     pub const fn bond(&self) -> EditBondId {
         self.bond
     }
-    /// The explicit hydrogen deleted for it, under
-    /// [`AttachmentSite::Hydrogen`].
-    pub const fn replaced_hydrogen(&self) -> Option<EditAtomId> {
-        self.replaced
+    /// The explicit hydrogens of the parent deleted for it, which no longer
+    /// name draft atoms: under [`AttachmentSite::Hydrogen`] that hydrogen
+    /// first, then those a multiple bond takes.
+    pub fn replaced_hydrogens(&self) -> &[EditAtomId] {
+        &self.replaced
     }
 }
 
@@ -54,7 +56,7 @@ pub struct AttachedFragment {
     pub(crate) atoms: Vec<(crate::molecule::AtomId, EditAtomId)>,
     pub(crate) attachment: EditAtomId,
     pub(crate) bond: EditBondId,
-    pub(crate) replaced: Option<EditAtomId>,
+    pub(crate) replaced: Vec<EditAtomId>,
 }
 
 impl AttachedFragment {
@@ -71,10 +73,11 @@ impl AttachedFragment {
     pub const fn bond(&self) -> EditBondId {
         self.bond
     }
-    /// The explicit hydrogen deleted for it, under
-    /// [`AttachmentSite::Hydrogen`].
-    pub const fn replaced_hydrogen(&self) -> Option<EditAtomId> {
-        self.replaced
+    /// The explicit hydrogens of the parent deleted for it, which no longer
+    /// name draft atoms: under [`AttachmentSite::Hydrogen`] that hydrogen
+    /// first, then those a multiple bond takes.
+    pub fn replaced_hydrogens(&self) -> &[EditAtomId] {
+        &self.replaced
     }
 }
 
@@ -184,6 +187,109 @@ impl RemovedHydrogensReport {
     }
 }
 
+/// What [`StructureEditor::settle_atoms`] did to one atom.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SettledAtom {
+    pub(crate) atom: EditAtomId,
+    pub(crate) added: Vec<EditAtomId>,
+    pub(crate) removed: Vec<EditAtomId>,
+    pub(crate) moved: Vec<EditAtomId>,
+    pub(crate) turned: Vec<EditAtomId>,
+    pub(crate) angle_in_ring: bool,
+}
+
+impl SettledAtom {
+    /// The settled atom.
+    pub const fn atom(&self) -> EditAtomId {
+        self.atom
+    }
+    /// Its new hydrogens.
+    pub fn added_hydrogens(&self) -> &[EditAtomId] {
+        &self.added
+    }
+    /// Its deleted hydrogens, which no longer name draft atoms.
+    pub fn removed_hydrogens(&self) -> &[EditAtomId] {
+        &self.removed
+    }
+    /// Its kept hydrogens that moved to ideal positions.
+    pub fn moved_hydrogens(&self) -> &[EditAtomId] {
+        &self.moved
+    }
+    /// The atoms of the side that turned about the atom to give its two
+    /// neighbors the angle of its shape; empty when none turned.
+    pub fn turned_atoms(&self) -> &[EditAtomId] {
+        &self.turned
+    }
+    /// Whether the angle between the atom's two neighbors is off its shape's
+    /// but both lie in a ring with the atom, so no side turned; cleaning up
+    /// the geometry fixes it.
+    pub const fn angle_in_ring(&self) -> bool {
+        self.angle_in_ring
+    }
+}
+
+/// What [`StructureEditor::settle_atoms`] did: one entry per distinct atom
+/// asked for, in request order, except hydrogens that belong to another
+/// atom.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SettledAtomsReport {
+    pub(crate) atoms: Vec<SettledAtom>,
+}
+
+impl SettledAtomsReport {
+    /// Per-atom outcomes.
+    pub fn atoms(&self) -> &[SettledAtom] {
+        &self.atoms
+    }
+    /// The number of hydrogens added.
+    pub fn added_count(&self) -> usize {
+        self.atoms.iter().map(|atom| atom.added.len()).sum()
+    }
+    /// The number of hydrogens deleted.
+    pub fn removed_count(&self) -> usize {
+        self.atoms.iter().map(|atom| atom.removed.len()).sum()
+    }
+}
+
+/// What [`StructureEditor::settle_bonds`] did to one bond.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SettledBond {
+    pub(crate) bond: EditBondId,
+    pub(crate) moved: Vec<EditAtomId>,
+    pub(crate) in_ring: bool,
+}
+
+impl SettledBond {
+    /// The settled bond.
+    pub const fn bond(&self) -> EditBondId {
+        self.bond
+    }
+    /// The atoms of the side that moved along the bond to give it its ideal
+    /// length; empty when none moved.
+    pub fn moved_atoms(&self) -> &[EditAtomId] {
+        &self.moved
+    }
+    /// Whether the bond's length is off its ideal one but the bond lies in a
+    /// ring, so no side moved; cleaning up the geometry fixes it.
+    pub const fn in_ring(&self) -> bool {
+        self.in_ring
+    }
+}
+
+/// What [`StructureEditor::settle_bonds`] did: one entry per distinct bond
+/// asked for, in request order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SettledBondsReport {
+    pub(crate) bonds: Vec<SettledBond>,
+}
+
+impl SettledBondsReport {
+    /// Per-bond outcomes.
+    pub fn bonds(&self) -> &[SettledBond] {
+        &self.bonds
+    }
+}
+
 /// A placement was rejected; the draft is unchanged.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
@@ -191,6 +297,15 @@ pub enum PlacementError {
     /// Editing the draft failed, for example on a deleted handle; see the
     /// source.
     Edit(StructureEditError),
+    /// The atom's element, charge, or valence is outside the builder's
+    /// states, so [`StructureEditor::settle_atoms`] cannot give it hydrogens;
+    /// see [`builder_hydrogen_count`](super::builder_hydrogen_count).
+    BuilderValence {
+        /// The atom.
+        atom: EditAtomId,
+        /// What is outside the builder's states.
+        error: BuilderValenceError,
+    },
     /// The atom's represented valence exceeds what its element allows, so its
     /// hydrogens cannot be completed.
     InvalidValence {
@@ -305,6 +420,7 @@ impl fmt::Display for PlacementError {
         use crate::diagnostics::Capitalized;
         match self {
             Self::Edit(error) => error.fmt(f),
+            Self::BuilderValence { atom, error } => error.write_about(f, Capitalized(atom)),
             Self::InvalidValence { atom } => {
                 write!(f, "{} exceeds its valence.", Capitalized(atom))
             }

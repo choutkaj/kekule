@@ -216,6 +216,23 @@ pub(crate) fn rdkit_inferred_hydrogen_count<L: SlotLiveness>(
     rdkit_atom_inferred_hydrogen_count(mol, atom_id, atom, false).unwrap_or(0)
 }
 
+/// The hydrogens the model infers on an atom like `atom`, with its
+/// hydrogens inferred, at represented valence `valence` (bond orders, not
+/// counting radical electrons); `bonded` says whether it has bonds of any
+/// order. `None` when that valence breaks the model's strict rules.
+pub(crate) fn rdkit_hydrogens_at_valence(atom: &Atom, valence: usize, bonded: bool) -> Option<u8> {
+    let inferred = atom.clone().with_hydrogens(ImplicitHydrogens::Inferred);
+    hydrogens_at_valence(
+        AtomId::new(0),
+        &inferred,
+        valence,
+        bonded,
+        true,
+        Hydrides::Model,
+    )
+    .ok()
+}
+
 /// The violation strict valence perception would report for one atom, if any.
 pub(crate) fn rdkit_valence_violation<L: SlotLiveness>(
     mol: &Graph<L>,
