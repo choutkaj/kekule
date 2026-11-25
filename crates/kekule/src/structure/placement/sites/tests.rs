@@ -194,3 +194,17 @@ fn clearest_sites_leave_planar_neighbors_alike() {
     assert!((clearest[0].y + clearest[1].y).abs() < 1e-3);
     assert!(clearance(&plane[1..], &clearest) > 106.0);
 }
+
+#[test]
+fn clearest_sites_leave_a_symmetric_start() {
+    // Two neighbors 175° apart and four sites: the fitted octahedron's
+    // sites hold still near the neighbors, and a square across them is
+    // clearer.
+    let (sin, cos) = 87.5_f64.to_radians().sin_cos();
+    let neighbors = [Vector3::new(sin, 0.0, cos), Vector3::new(-sin, 0.0, cos)];
+    let start = fit_shape(AtomShape::Octahedral, 0, &neighbors, 2)
+        .unwrap()
+        .free();
+    let clearest = clearest_sites(&neighbors, &start);
+    assert!(clearance(&neighbors, &clearest) > 88.0);
+}

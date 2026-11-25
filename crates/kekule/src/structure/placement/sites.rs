@@ -442,9 +442,49 @@ pub(crate) fn clearance(neighbors: &[Vector3], sites: &[Vector3]) -> f64 {
 /// the smallest angle between any of them and the unit `neighbors`, which
 /// stay, or another site is about as large as it gets: three neighbors in
 /// a plane leave one site normal to it, and two leave two sites symmetric
-/// about their plane. Each stage relaxes a sharper repulsion, so the last
-/// is nearly the clearest arrangement.
+/// about their plane. The search runs from `start` and from a few nudged
+/// copies of it, which leave a symmetric arrangement that holds still
+/// without being the clearest, and keeps the clearest result, the first on
+/// a tie.
 pub(crate) fn clearest_sites(neighbors: &[Vector3], start: &[Vector3]) -> Vec<Vector3> {
+    /// Nudged copies of the start.
+    const NUDGES: usize = 4;
+    /// How far a nudge moves a site, in radians.
+    const NUDGE: f64 = 0.15;
+    let mut best = relax_sites(neighbors, start);
+    let mut least = clearance(neighbors, &best);
+    for nudge in 1..=NUDGES {
+        let nudged = start
+            .iter()
+            .enumerate()
+            .map(|(index, site)| {
+                // A fixed spread of directions, different for each site and
+                // nudge.
+                let seed = (index + 1) as f64 * nudge as f64;
+                let push = Vector3::new(
+                    (1.7 * seed).sin(),
+                    (2.3 * seed + 0.5).cos(),
+                    (0.9 * seed + 1.1).sin(),
+                );
+                unit(push - *site * push.dot(*site))
+                    .and_then(|along| unit(*site + along * NUDGE))
+                    .unwrap_or(*site)
+            })
+            .collect::<Vec<_>>();
+        let relaxed = relax_sites(neighbors, &nudged);
+        let found = clearance(neighbors, &relaxed);
+        if found > least + 1.0e-9 {
+            best = relaxed;
+            least = found;
+        }
+    }
+    best
+}
+
+/// Relaxes the unit `sites` from where they start under a repulsion from
+/// the unit `neighbors` and each other that sharpens in stages, so the last
+/// stage nearly maximizes their smallest angle.
+fn relax_sites(neighbors: &[Vector3], start: &[Vector3]) -> Vec<Vector3> {
     /// The repulsion exponents of the stages.
     const POWERS: [f64; 3] = [4.0, 16.0, 64.0];
     /// Steps per stage.
