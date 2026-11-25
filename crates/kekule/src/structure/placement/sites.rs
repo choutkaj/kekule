@@ -273,6 +273,8 @@ pub(crate) struct ShapeFit {
     pub(crate) sites: Vec<Vector3>,
     /// The site of each neighbor direction, in their order.
     pub(crate) taken: Vec<usize>,
+    /// The sites of the lone pairs, unit vectors.
+    pub(crate) lone_pairs: Vec<Vector3>,
 }
 
 impl ShapeFit {
@@ -305,6 +307,10 @@ pub(crate) fn fit_shape(
     let sites = all
         .into_iter()
         .filter(|index| !lone.contains(index))
+        .map(|index| template[index])
+        .collect::<Vec<_>>();
+    let lone = lone
+        .into_iter()
         .map(|index| template[index])
         .collect::<Vec<_>>();
     let Some(&first) = directions.first() else {
@@ -355,10 +361,8 @@ pub(crate) fn fit_shape(
             );
         }
         for (frame, second) in frames {
-            let oriented = sites
-                .iter()
-                .map(|site| frame[0] * site.x + frame[1] * site.y + frame[2] * site.z)
-                .collect::<Vec<_>>();
+            let turn = |site: &Vector3| frame[0] * site.x + frame[1] * site.y + frame[2] * site.z;
+            let oriented = sites.iter().map(turn).collect::<Vec<_>>();
             let mut taken = vec![usize::MAX; directions.len()];
             let mut used = vec![false; sites.len()];
             taken[0] = a;
@@ -403,6 +407,7 @@ pub(crate) fn fit_shape(
                     ShapeFit {
                         sites: oriented,
                         taken,
+                        lone_pairs: lone.iter().map(turn).collect(),
                     },
                 ));
             }
@@ -419,6 +424,178 @@ pub(crate) fn smallest_angle(shape: AtomShape) -> f64 {
         AtomShape::Tetrahedral => TETRAHEDRAL.to_degrees(),
         AtomShape::TrigonalBipyramidal | AtomShape::Octahedral => 90.0,
     }
+}
+
+/// The smallest angle, in degrees, between any of the unit `sites` and the
+/// unit `neighbors` or another site; 180° with nothing to compare.
+pub(crate) fn clearance(neighbors: &[Vector3], sites: &[Vector3]) -> f64 {
+    let mut least = 180.0_f64;
+    for (index, site) in sites.iter().enumerate() {
+        for other in neighbors.iter().chain(&sites[index + 1..]) {
+            least = least.min(angle_degrees(*site, *other));
+        }
+    }
+    least
+}
+
+/// Moves the unit `sites` on the sphere, from where they start, to where
+/// the smallest angle between any of them and the unit `neighbors`, which
+/// stay, or another site is about as large as it gets: three neighbors in
+/// a plane leave one site normal to it, and two leave two sites symmetric
+/// about their plane. The search runs from `start` and from a few nudged
+/// copies of it, which leave a symmetric arrangement that holds still
+/// without being the clearest, and keeps the clearest result, the first on
+/// a tie.
+pub(crate) fn clearest_sites(neighbors: &[Vector3], start: &[Vector3]) -> Vec<Vector3> {
+    /// Nudged copies of the start.
+    const NUDGES: usize = 4;
+    /// How far a nudge moves a site, in radians.
+    const NUDGE: f64 = 0.15;
+    let mut best = relax_sites(neighbors, start);
+    let mut least = clearance(neighbors, &best);
+    for nudge in 1..=NUDGES {
+        let nudged = start
+            .iter()
+            .enumerate()
+            .map(|(index, site)| {
+                // A fixed spread of directions, different for each site and
+                // nudge.
+                let seed = (index + 1) as f64 * nudge as f64;
+                let push = Vector3::new(
+                    (1.7 * seed).sin(),
+                    (2.3 * seed + 0.5).cos(),
+                    (0.9 * seed + 1.1).sin(),
+                );
+                unit(push - *site * push.dot(*site))
+                    .and_then(|along| unit(*site + along * NUDGE))
+                    .unwrap_or(*site)
+            })
+            .collect::<Vec<_>>();
+        let relaxed = relax_sites(neighbors, &nudged);
+        let found = clearance(neighbors, &relaxed);
+        if found > least + 1.0e-9 {
+            best = relaxed;
+            least = found;
+        }
+    }
+    best
+}
+
+/// Relaxes the unit `sites` from where they start under a repulsion from
+/// the unit `neighbors` and each other that sharpens in stages, so the last
+/// stage nearly maximizes their smallest angle.
+fn relax_sites(neighbors: &[Vector3], start: &[Vector3]) -> Vec<Vector3> {
+    /// The repulsion exponents of the stages.
+    const POWERS: [f64; 3] = [4.0, 16.0, 64.0];
+    /// Steps per stage.
+    const STEPS: usize = 120;
+    let mut sites = start
+        .iter()
+        .map(|site| {
+            // A site on a neighbor has no direction away from it.
+            match neighbors
+                .iter()
+                .find(|neighbor| site.dot(**neighbor) > 1.0 - 1.0e-9)
+            {
+                Some(neighbor) => perpendicular(*neighbor),
+                None => *site,
+            }
+        })
+        .collect::<Vec<_>>();
+    for power in POWERS {
+        let mut energy = repulsion(neighbors, &sites, power);
+        let mut step = 0.2_f64;
+        for _ in 0..STEPS {
+            let forces = repulsion_forces(neighbors, &sites, power);
+            let largest = forces.iter().map(|force| force.norm()).fold(0.0, f64::max);
+            if largest < 1.0e-12 {
+                break;
+            }
+            let trial = sites
+                .iter()
+                .zip(&forces)
+                .map(|(site, force)| match unit(*force) {
+                    Some(along) => {
+                        let (sin, cos) = (step * force.norm() / largest).sin_cos();
+                        unit(*site * cos + along * sin).unwrap_or(*site)
+                    }
+                    None => *site,
+                })
+                .collect::<Vec<_>>();
+            let next = repulsion(neighbors, &trial, power);
+            if next < energy {
+                sites = trial;
+                energy = next;
+                step = (step * 1.5).min(0.5);
+            } else {
+                step *= 0.5;
+                if step < 1.0e-9 {
+                    break;
+                }
+            }
+        }
+    }
+    sites
+}
+
+/// The logarithm of the repulsion `Σ (1 − cos θ)^−power` over the pairs of
+/// a site with a neighbor or another site, computed relative to its largest
+/// term so that sharp powers do not overflow.
+fn repulsion(neighbors: &[Vector3], sites: &[Vector3], power: f64) -> f64 {
+    let gaps = gaps(neighbors, sites);
+    let least = gaps.iter().copied().fold(f64::INFINITY, f64::min);
+    if !least.is_finite() {
+        return f64::NEG_INFINITY;
+    }
+    let sum = gaps
+        .iter()
+        .map(|gap| (gap / least).powf(-power))
+        .sum::<f64>();
+    -power * least.ln() + sum.ln()
+}
+
+/// The `1 − cos θ` of each pair of a site with a neighbor or another site,
+/// kept above zero.
+fn gaps(neighbors: &[Vector3], sites: &[Vector3]) -> Vec<f64> {
+    let mut gaps = Vec::new();
+    for (index, site) in sites.iter().enumerate() {
+        for other in neighbors.iter().chain(&sites[index + 1..]) {
+            gaps.push((1.0 - site.dot(*other)).max(1.0e-15));
+        }
+    }
+    gaps
+}
+
+/// The tangent push on each site away from the neighbors and the other
+/// sites, scaled so the strongest pair weighs one.
+fn repulsion_forces(neighbors: &[Vector3], sites: &[Vector3], power: f64) -> Vec<Vector3> {
+    let least = gaps(neighbors, sites)
+        .into_iter()
+        .fold(f64::INFINITY, f64::min);
+    sites
+        .iter()
+        .enumerate()
+        .map(|(index, site)| {
+            let others = neighbors.iter().chain(
+                sites
+                    .iter()
+                    .enumerate()
+                    .filter(|(other, _)| *other != index)
+                    .map(|(_, other)| other),
+            );
+            others.fold(Vector3::zero(), |force, other| {
+                let gap = (1.0 - site.dot(*other)).max(1.0e-15);
+                let weight = (gap / least).powf(-power - 1.0);
+                let away = *site * site.dot(*other) - *other;
+                force + away * weight
+            })
+        })
+        .collect()
+}
+
+/// The angle between two unit vectors, in degrees.
+fn angle_degrees(a: Vector3, b: Vector3) -> f64 {
+    a.cross(b).norm().atan2(a.dot(b)).to_degrees()
 }
 
 /// The rotation, as the images of the unit axes, that takes `from` onto `to`

@@ -6,9 +6,10 @@ use crate::algorithms::rdkit_hydrogens_at_valence;
 use crate::math::{Point3, Vector3};
 use crate::molecule::{BondOrder, Element};
 use crate::structure::placement::{
-    builder_charges, builder_hydrogen_count, fit_shape, free_sites, models_lone_pairs,
-    perpendicular, smallest_angle, unit, AtomShape, NameAllocator, PlacementError, Rotation,
-    SettledAtom, SettledAtomsReport, SettledBond, SettledBondsReport, SiteQuery,
+    builder_charges, builder_hydrogen_count, clearance, clearest_sites, fit_shape, free_sites,
+    models_lone_pairs, perpendicular, smallest_angle, unit, AtomShape, NameAllocator,
+    PlacementError, Rotation, SettledAtom, SettledAtomsReport, SettledBond, SettledBondsReport,
+    SiteQuery,
 };
 use crate::topology::edit::{EditAtomId, EditBondId};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -20,6 +21,9 @@ const TETRAHEDRAL: f64 = 109.471_220_634_490_7;
 const ANGLE_TOLERANCE: f64 = 5.0;
 /// Bond lengths within this, in nm, of their ideal ones stay as they are.
 const LENGTH_TOLERANCE: f64 = 1.0e-4;
+/// Where a ring holds an atom's angles, a neighbor within this many degrees
+/// of its clearest direction stays.
+const CLEAR_TOLERANCE: f64 = 1.0;
 /// A position within this, in nm, of where an atom is does not move it.
 const MOVE_TOLERANCE: f64 = 1.0e-9;
 
@@ -114,14 +118,23 @@ impl StructureEditor {
     ///   that takes a chlorine and a hydrogen becomes a seesaw, and
     ///   trimethylphosphine with a chlorine a trigonal bipyramid. Neighbors
     ///   whose sides lie in a ring with it stay, and when one is off its
-    ///   site the entry reports it.
+    ///   site the entry reports it; the other neighbors then turn to within
+    ///   1° of the directions clearest of the held ones, of each other, and
+    ///   of the hydrogens and lone pairs.
     /// - All its hydrogens move to the free sites of its shape, at the
     ///   element pair's bond length, from its other neighbors and lone pairs
     ///   alone ([`placement`](crate::structure::placement)): methyl anion
     ///   pyramidal, methyl cation and borane planar, ammonium tetrahedral.
-    ///   No hydrogen comes nearer another neighbor than the shape's smallest
-    ///   angle (90° on a trigonal bipyramid or an octahedron) less 5°,
-    ///   unless a ring holds the atom's angles.
+    ///   No hydrogen comes nearer another neighbor or hydrogen than the
+    ///   shape's smallest angle (90° on a trigonal bipyramid or an
+    ///   octahedron) less 5°. When its sites would, as beside neighbors a
+    ///   ring holds off them, the hydrogens move with the lone pairs to the
+    ///   directions clearest of the neighbors and of each other, and past
+    ///   what the lone pairs leave, of the neighbors alone; a ring may hold
+    ///   the neighbors where no direction keeps that angle, and the
+    ///   hydrogens then take the clearest there are. Three neighbors a ring
+    ///   holds in a plane leave a hydrogen normal to it, and two leave two
+    ///   hydrogens mirrored about it.
     ///
     /// The hydrogens of an atom are explicit hydrogens singly bonded to it
     /// alone; a hydrogen that is another atom's is left to it. New hydrogens
@@ -137,8 +150,9 @@ impl StructureEditor {
     /// [`PlacementError::UnsupportedGeometry`] for more than six domains,
     /// [`PlacementError::DegenerateGeometry`] when a neighbor coincides with
     /// the atom, [`PlacementError::NoFreePosition`] when its shape has fewer
-    /// free sites than hydrogens or a hydrogen would come nearer a neighbor
-    /// than that, [`PlacementError::StereoHydrogen`] when its stereo names an
+    /// free sites than hydrogens or, with no ring holding its angles, a
+    /// hydrogen would come nearer a neighbor than that,
+    /// [`PlacementError::StereoHydrogen`] when its stereo names an
     /// implicit hydrogen that does not become exactly one new atom, and
     /// [`PlacementError::UnknownBondLength`].
     pub fn settle_atoms(
@@ -411,18 +425,35 @@ impl StructureEditor {
         };
         let fit = fit_shape(shape, plan.lone_pairs, &directions, held)
             .map_err(|_| PlacementError::DegenerateGeometry { atom })?;
-        let mut settlement = AngleSettlement::default();
-        for (position, direction) in directions.iter().enumerate() {
-            let site = fit.sites[fit.taken[position]];
-            if angle_between(*direction, site) <= ANGLE_TOLERANCE {
+        let site = |position: usize| fit.sites[fit.taken[position]];
+        let mut settlement = AngleSettlement {
+            in_ring: (0..held).any(|position| {
+                angle_between(directions[position], site(position)) > ANGLE_TOLERANCE
+            }),
+            ..AngleSettlement::default()
+        };
+        // Held neighbors off their sites leave the others the directions
+        // clearest of them and of each other, beside the free sites and
+        // lone pairs.
+        let (targets, tolerance) = if settlement.in_ring {
+            let mut start = (held..directions.len()).map(site).collect::<Vec<_>>();
+            start.extend(fit.free());
+            start.extend(&fit.lone_pairs);
+            let mut clearest = clearest_sites(&directions[..held], &start);
+            clearest.truncate(directions.len() - held);
+            (clearest, CLEAR_TOLERANCE)
+        } else {
+            (
+                (held..directions.len()).map(site).collect(),
+                ANGLE_TOLERANCE,
+            )
+        };
+        for (side, (direction, target)) in alone.iter().zip(directions[held..].iter().zip(targets))
+        {
+            if angle_between(*direction, target) <= tolerance {
                 continue;
             }
-            if position < held {
-                settlement.in_ring = true;
-                continue;
-            }
-            let side = alone[position - held];
-            let rotation = Rotation::between(*direction, site);
+            let rotation = Rotation::between(*direction, target);
             for moved in &side.atoms {
                 let point = center + rotation.apply(at(self, moves, *moved) - center);
                 moves.insert(*moved, point);
@@ -518,6 +549,7 @@ impl StructureEditor {
         // face; the lone pairs of a hypervalent atom keep their own sites,
         // as do those of a shape fitted whole.
         let alike = shape.domains() <= 4 && settlement.fit.is_none();
+        let mut lone_pairs = Vec::new();
         let mut sites = match &settlement.fit {
             Some(fit) => {
                 let directions = fit
@@ -526,9 +558,10 @@ impl StructureEditor {
                     .map(|index| unit(neighbors[*index] - center))
                     .collect::<Option<Vec<_>>>()
                     .ok_or(PlacementError::DegenerateGeometry { atom })?;
-                fit_shape(shape, plan.lone_pairs, &directions, fit.held)
-                    .map_err(|_| PlacementError::DegenerateGeometry { atom })?
-                    .free()
+                let fit = fit_shape(shape, plan.lone_pairs, &directions, fit.held)
+                    .map_err(|_| PlacementError::DegenerateGeometry { atom })?;
+                lone_pairs.clone_from(&fit.lone_pairs);
+                fit.free()
             }
             None => {
                 // With no other neighbor, the first hydrogen orients the shape.
@@ -571,10 +604,73 @@ impl StructureEditor {
             sites.truncate(plan.target);
         }
 
-        // Kept hydrogens take the free sites nearest them, best matches
-        // first, as many as the atom takes; the rest are deleted. New
-        // hydrogens take the free sites left, in order of preference, and
-        // lone pairs any beyond them.
+        let mut result = self.assign_hydrogens(plan, center, &sites, moves);
+
+        // Held neighbors off their sites can leave a site too near one;
+        // the hydrogens then go where they are clearest.
+        let least = smallest_angle(shape) - ANGLE_TOLERANCE - 1.0e-6;
+        let directions = neighbors
+            .iter()
+            .map(|neighbor| unit(*neighbor - center))
+            .collect::<Option<Vec<_>>>()
+            .ok_or(PlacementError::DegenerateGeometry { atom })?;
+        let toward = |points: &[Point3]| {
+            points
+                .iter()
+                .filter_map(|point| unit(*point - center))
+                .collect::<Vec<_>>()
+        };
+        let placed = toward(&result.points);
+        let mut best = (clearance(&directions, &placed), None);
+        if best.0 < least {
+            // The lone pairs move with the hydrogens and keep their room:
+            // those of the fit, or the alike sites no hydrogen took.
+            if alike {
+                lone_pairs = sites
+                    .iter()
+                    .copied()
+                    .filter(|site| placed.iter().all(|other| site.dot(*other) < 1.0 - 1.0e-9))
+                    .collect();
+            }
+            let mut start = placed.clone();
+            start.extend(&lone_pairs);
+            let mut clearest = clearest_sites(&directions, &start);
+            clearest.truncate(placed.len());
+            let found = clearance(&directions, &clearest);
+            if found > best.0 {
+                best = (found, Some(clearest));
+            }
+            // Past what the lone pairs leave, the clearest of the hydrogens
+            // alone.
+            if best.0 < least && !lone_pairs.is_empty() {
+                let clearest = clearest_sites(&directions, &placed);
+                let found = clearance(&directions, &clearest);
+                if found > best.0 {
+                    best = (found, Some(clearest));
+                }
+            }
+            if !settlement.in_ring && best.0 < least {
+                return Err(PlacementError::NoFreePosition { atom });
+            }
+        }
+        if let (_, Some(clearest)) = best {
+            result = self.assign_hydrogens(plan, center, &clearest, moves);
+        }
+        Ok(result)
+    }
+
+    /// The hydrogens of the atom of `plan` on `sites`, unit directions from
+    /// `center`: kept hydrogens on the sites nearest them, best matches
+    /// first, as many as the atom takes, and the rest deleted; new
+    /// hydrogens on the sites left, in order of preference, and lone pairs
+    /// on any beyond them.
+    fn assign_hydrogens(
+        &self,
+        plan: &AtomPlan,
+        center: Point3,
+        sites: &[Vector3],
+        moves: &Moves,
+    ) -> HydrogenPlan {
         let mut pairs = Vec::with_capacity(plan.hydrogens.len() * sites.len());
         for (index, hydrogen) in plan.hydrogens.iter().enumerate() {
             let toward = unit(at(self, moves, *hydrogen) - center);
@@ -614,24 +710,7 @@ impl StructureEditor {
             .filter(|site| site_taken[*site] || fresh.contains(site))
             .map(point)
             .collect();
-        if !settlement.in_ring {
-            let least = smallest_angle(shape) - ANGLE_TOLERANCE - 1.0e-6;
-            for (index, hydrogen) in result.points.iter().enumerate() {
-                let toward = *hydrogen - center;
-                let mut others = neighbors.iter().chain(
-                    result
-                        .points
-                        .iter()
-                        .enumerate()
-                        .filter(|(other, _)| *other != index)
-                        .map(|(_, point)| point),
-                );
-                if others.any(|other| angle_between(toward, *other - center) < least) {
-                    return Err(PlacementError::NoFreePosition { atom });
-                }
-            }
-        }
-        Ok(result)
+        result
     }
 
     /// The substituent of `neighbor` other than `atom` that the hydrogens of

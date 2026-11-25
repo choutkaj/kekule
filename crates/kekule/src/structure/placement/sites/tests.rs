@@ -178,3 +178,33 @@ fn nearly_opposite_neighbors_leave_the_frame_to_another() {
         assert!(angle(*direction, fit.sites[*site]) < 1.0 + 1e-6);
     }
 }
+
+#[test]
+fn clearest_sites_leave_planar_neighbors_alike() {
+    // Three neighbors in a plane: one site goes normal to it.
+    let plane = free_sites(query(AtomShape::TrigonalPlanar, &[], 0)).unwrap();
+    let start = [unit(plane[0] + Vector3::new(0.0, 1.0, 0.0) * 0.7).unwrap()];
+    assert!(clearance(&plane, &start) < 60.0);
+    let clearest = clearest_sites(&plane, &start);
+    assert!((clearance(&plane, &clearest) - 90.0).abs() < 1e-3);
+    // Two at 120°: two sites straddle their plane alike.
+    let start = [Vector3::new(0.3, 1.0, -1.0), Vector3::new(0.1, -1.0, -0.6)]
+        .map(|site| unit(site).unwrap());
+    let clearest = clearest_sites(&plane[1..], &start);
+    assert!((clearest[0].y + clearest[1].y).abs() < 1e-3);
+    assert!(clearance(&plane[1..], &clearest) > 106.0);
+}
+
+#[test]
+fn clearest_sites_leave_a_symmetric_start() {
+    // Two neighbors 175° apart and four sites: the fitted octahedron's
+    // sites hold still near the neighbors, and a square across them is
+    // clearer.
+    let (sin, cos) = 87.5_f64.to_radians().sin_cos();
+    let neighbors = [Vector3::new(sin, 0.0, cos), Vector3::new(-sin, 0.0, cos)];
+    let start = fit_shape(AtomShape::Octahedral, 0, &neighbors, 2)
+        .unwrap()
+        .free();
+    let clearest = clearest_sites(&neighbors, &start);
+    assert!(clearance(&neighbors, &clearest) > 88.0);
+}
