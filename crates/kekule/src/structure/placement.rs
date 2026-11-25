@@ -49,7 +49,7 @@
 //! | F, Cl, Br, I | −1: 0; 0: 1 |
 //! | Si | 0: 4 |
 //! | P | 0: 3, 5; +1: 4 |
-//! | S, Se | −1: 1; 0: 2, 4, 6; +1: 3 |
+//! | S, Se | −1: 1; 0: 2, 4, 6; +1: 3; +2: 4 |
 //!
 //! An atom takes the lowest valence at or above the bond orders to its other
 //! neighbors plus its radical electrons, and the difference in hydrogens, so

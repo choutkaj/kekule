@@ -13,16 +13,17 @@ const CHARGES: &[(u8, &[i8])] = &[
     (9, &[-1, 0]),
     (14, &[0]),
     (15, &[0, 1]),
-    (16, &[-1, 0, 1]),
+    (16, &[-1, 0, 1, 2]),
     (17, &[-1, 0]),
-    (34, &[-1, 0, 1]),
+    (34, &[-1, 0, 1, 2]),
     (35, &[-1, 0]),
     (53, &[-1, 0]),
 ];
 
 /// The valences of each builder state, ascending: the octet's for second-row
 /// elements, the expanded ones of phosphorus, sulfur, and selenium in their
-/// neutral states, and none for a halide.
+/// neutral states, four for the sulfur and selenium dications of a
+/// charge-separated sulfone, and none for a halide.
 const VALENCES: &[(u8, i8, &[u8])] = &[
     (1, 0, &[1]),
     (5, -1, &[4]),
@@ -44,11 +45,13 @@ const VALENCES: &[(u8, i8, &[u8])] = &[
     (16, -1, &[1]),
     (16, 0, &[2, 4, 6]),
     (16, 1, &[3]),
+    (16, 2, &[4]),
     (17, -1, &[0]),
     (17, 0, &[1]),
     (34, -1, &[1]),
     (34, 0, &[2, 4, 6]),
     (34, 1, &[3]),
+    (34, 2, &[4]),
     (35, -1, &[0]),
     (35, 0, &[1]),
     (53, -1, &[0]),
@@ -56,8 +59,9 @@ const VALENCES: &[(u8, i8, &[u8])] = &[
 ];
 
 /// The formal charges a builder gives atoms of `element`, ascending, or
-/// `None` for an element outside the builder's table: H 0; B −1, 0; C, N, O,
-/// S, and Se −1, 0, +1; F, Cl, Br, and I −1, 0; Si 0; P 0, +1. A host steps an
+/// `None` for an element outside the builder's table: H 0; B −1, 0; C, N,
+/// and O −1, 0, +1; S and Se −1, 0, +1, +2; F, Cl, Br, and I −1, 0; Si 0;
+/// P 0, +1. A host steps an
 /// atom's charge through these and names them when it refuses another.
 ///
 /// ```
@@ -74,7 +78,8 @@ pub fn builder_charges(element: Element) -> Option<&'static [i8]> {
 
 /// The valences, ascending, of an atom of `element` with `formal_charge` in
 /// a builder, or `None` when that is not a builder state: C 4, C⁺ and C⁻ 3,
-/// N 3, N⁺ 4, O 2, O⁺ 3, B 3, B⁻ 4, P 3 and 5, S 2, 4, and 6, a halide 0.
+/// N 3, N⁺ 4, O 2, O⁺ 3, B 3, B⁻ 4, P 3 and 5, S 2, 4, and 6, S²⁺ 4, a
+/// halide 0.
 ///
 /// ```
 /// use kekule::{molecule::Element, structure::placement::builder_valences};
