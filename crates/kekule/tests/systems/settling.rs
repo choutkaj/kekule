@@ -203,7 +203,7 @@ fn builder_valences_list_charges_and_hydrogen_counts() {
     assert_eq!(builder_charges(Element::C), Some(&[-1, 0, 1][..]));
     assert_eq!(builder_charges(Element::H), Some(&[0][..]));
     assert_eq!(builder_charges(element("Si")), Some(&[0][..]));
-    assert_eq!(builder_charges(element("Se")), Some(&[-1, 0, 1][..]));
+    assert_eq!(builder_charges(element("Se")), Some(&[-1, 0, 1, 2][..]));
     assert_eq!(builder_charges(element("Cl")), Some(&[-1, 0][..]));
     assert_eq!(builder_charges(element("Na")), None);
     assert_eq!(builder_valences(Element::P, 0), Some(&[3, 5][..]));
@@ -224,6 +224,8 @@ fn builder_valences_list_charges_and_hydrogen_counts() {
         (Element::S, 0, 3, 1),
         (Element::S, 0, 5, 1),
         (Element::S, 1, 2, 1),
+        (Element::S, 2, 4, 0),
+        (Element::S, 2, 2, 2),
         (Element::P, 0, 4, 1),
         (Element::P, 1, 0, 4),
         (Element::F, -1, 0, 0),
@@ -424,7 +426,9 @@ fn sulfide_charged_and_back_is_a_sulfide() {
     }
     charge(&mut editor, sulfur, 1);
     assert_settled(&editor, sulfur, 1, &[TETRAHEDRAL]);
-    let value = atom_of(&editor, sulfur).with_formal_charge(2);
+    charge(&mut editor, sulfur, 2);
+    assert_settled(&editor, sulfur, 2, &[TETRAHEDRAL]);
+    let value = atom_of(&editor, sulfur).with_formal_charge(3);
     editor.replace_atom(sulfur, value).unwrap();
     assert!(editor.settle_atoms([sulfur]).is_err());
     charge(&mut editor, sulfur, 0);
@@ -486,6 +490,40 @@ fn sulfoxide_and_sulfone_grow_from_a_sulfide() {
         ),
         Err(PlacementError::NoFreePosition { atom }) if atom == sulfur
     ));
+    editor.finish().unwrap();
+}
+
+#[test]
+fn a_charge_separated_sulfone_has_a_sulfur_dication() {
+    let (mut editor, sulfur, carbons) = dimethyl_sulfide();
+    let oxygens = [0, 1].map(|_| {
+        let oxygen = grow_free(&mut editor, sulfur, "O");
+        charge(&mut editor, oxygen, -1);
+        assert_settled(&editor, oxygen, 0, &[]);
+        oxygen
+    });
+    // Four single bonds: a neutral sulfur's 4, a seesaw with a lone pair,
+    // and a dication's only valence, a tetrahedron.
+    assert!(hydrogens(&editor, sulfur).is_empty());
+    charge(&mut editor, sulfur, 2);
+    assert_settled(&editor, sulfur, 0, &[TETRAHEDRAL]);
+    for oxygen in oxygens {
+        assert_length(&editor, sulfur, oxygen, BondOrder::Single);
+    }
+    for carbon in carbons {
+        assert_settled(&editor, carbon, 3, &[TETRAHEDRAL]);
+    }
+    // A cation's valence is 3, short of the four bonds.
+    let value = atom_of(&editor, sulfur).with_formal_charge(1);
+    editor.replace_atom(sulfur, value).unwrap();
+    assert!(matches!(
+        editor.settle_atoms([sulfur]),
+        Err(PlacementError::BuilderValence {
+            error: BuilderValenceError::ExcessValence { valence: 4, .. },
+            ..
+        })
+    ));
+    charge(&mut editor, sulfur, 2);
     editor.finish().unwrap();
 }
 
