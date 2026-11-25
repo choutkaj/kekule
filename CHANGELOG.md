@@ -239,8 +239,11 @@ the main branch migrates by the table under "From the SampleSet API".
   other bonds; `BuilderValenceError` names a state outside them.
 - `StructureEditor::settle_atoms` gives edited atoms their builder hydrogen
   count, adding and deleting hydrogens and keeping those that stay, places
-  all of an atom's hydrogens at ideal positions, and turns the smaller side
-  of an atom's two neighbors to its shape's angle (`SettledAtomsReport`);
+  all of an atom's hydrogens at ideal positions, turns the smaller side of
+  an atom's two neighbors to its shape's angle, and fits the whole shape of
+  an atom with three or more, so a sulfur or phosphorus that grows
+  hypervalent becomes a seesaw, trigonal bipyramid, or octahedron
+  (`SettledAtomsReport`);
   `StructureEditor::settle_bonds` gives bonds their ideal length by moving
   the smaller side (`SettledBondsReport`). Both report ring bonds and angles
   they leave. `PlacementError::BuilderValence` names an atom outside the

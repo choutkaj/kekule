@@ -10,7 +10,7 @@
 //!   [`RemovedHydrogensReport`]).
 //! - After an edit, [`StructureEditor::settle_atoms`] gives each changed atom
 //!   its builder hydrogen count ([`builder_hydrogen_count`]) at ideal
-//!   positions and its shape's angle between two neighbors, and
+//!   positions and its shape's angles between its neighbors, and
 //!   [`StructureEditor::settle_bonds`] gives each changed bond its ideal
 //!   length, each moving the smaller side ([`SettledAtomsReport`],
 //!   [`SettledBondsReport`]).
@@ -81,8 +81,13 @@
 //! sites to a deterministic perpendicular.
 //!
 //! Placement never moves an existing atom. Settling moves only what it
-//! reports: an atom's hydrogens, and the smaller side of a bond or of an
-//! atom's two neighbors, never a side that lies in a ring with them.
+//! reports: an atom's hydrogens, the smaller side of a bond, and the sides
+//! of an atom's neighbors other than its largest, never a side that lies in
+//! a ring with them. An atom with three or more other neighbors, or a
+//! hypervalent one with two, fits its whole shape to them, so a sulfur or
+//! phosphorus that takes a fifth or sixth domain moves its neighbors onto
+//! the trigonal bipyramid or octahedron before its hydrogens take the free
+//! sites.
 //! Relaxing the result is a separate step.
 //!
 //! # Names
@@ -136,7 +141,7 @@ mod valences;
 
 pub use crate::topology::editor::RemovedHydrogens;
 pub use domains::{ideal_bond_length, AtomDomains, AtomShape};
-pub(crate) use domains::{perceive_domains, DomainInput};
+pub(crate) use domains::{models_lone_pairs, perceive_domains, DomainInput};
 pub use fragments::{fragment, fragments, Fragment, FragmentKind};
 pub(crate) use fusion::{
     fusion_dropped, fusion_orders, single_heavy_neighbor, FusionEnd, FusionOrders,
@@ -147,7 +152,9 @@ pub use reports::{
     PlacedHydrogensReport, PlacementError, RemovedHydrogensReport, SettledAtom, SettledAtomsReport,
     SettledBond, SettledBondsReport,
 };
-pub(crate) use sites::{free_sites, perpendicular, unit, Rotation, SiteQuery};
+pub(crate) use sites::{
+    fit_shape, free_sites, perpendicular, smallest_angle, unit, Rotation, SiteQuery,
+};
 pub(crate) use valences::builder_max_valence;
 pub use valences::{
     builder_charges, builder_hydrogen_count, builder_valences, BuilderValenceError,
