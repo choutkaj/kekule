@@ -150,7 +150,9 @@ the main branch migrates by the table under "From the SampleSet API".
   classic van der Waals radius tables; the default stays `FreeAtom`.
 - XYZ interpretation in `kekule::xyz`: `xyz::parse_str`, `parse_reader`, or
   `XyzDocument::new` from `XyzAtom`s, then `interpret` infers bonds from
-  distances (`XyzInterpretationReport`, `Format::Xyz`).
+  distances (`XyzInterpretationReport`, `Format::Xyz`). `xyz::frames`
+  streams the frames one at a time (`XyzFrames`), so the first frame of a
+  long file reads without the rest.
 - The PDB writer: `pdb::write` and `write_to` write a structure or set, one
   `MODEL` per geometry, and return a `WriteReport`; what PDB cannot hold fails
   (`PdbWriteErrorKind`) unless `PdbWriteOptions` omits it.

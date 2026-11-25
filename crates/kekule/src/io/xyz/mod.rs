@@ -6,7 +6,7 @@ mod interpret;
 pub(crate) mod write;
 
 pub(crate) use document::{parse_xyz_reader, parse_xyz_str};
-pub use document::{XyzAtom, XyzDocument, XyzFrame, XyzParseOptions};
+pub use document::{XyzAtom, XyzDocument, XyzFrame, XyzFrames, XyzParseOptions};
 pub use interpret::{
     XyzFrameSelection, XyzInferredBond, XyzInterpretIssue, XyzInterpretOptions, XyzInterpretation,
     XyzInterpretationReport, XyzStructureSetInterpretOptions, XyzStructureSetInterpretation,
