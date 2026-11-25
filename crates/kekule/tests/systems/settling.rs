@@ -5,7 +5,7 @@ use kekule::math::{Point3, Vector3};
 use kekule::molecule::{Atom, BondOrder, Element, ImplicitHydrogens};
 use kekule::structure::placement::{
     builder_charges, builder_hydrogen_count, builder_valences, fragment, ideal_bond_length,
-    AttachmentSite, BuilderValenceError, PlacementError, SettledAtomsReport,
+    AtomShape, AttachmentSite, BuilderValenceError, PlacementError, SettledAtomsReport,
 };
 use kekule::structure::StructureEditor;
 use kekule::topology::edit::{EditAtomId, EditBondId};
@@ -1076,6 +1076,147 @@ fn random_edits_keep_every_angle_of_a_tree_open() {
                 assert!(
                     angles.first().is_none_or(|smallest| *smallest >= 85.0),
                     "sequence {sequence}, step {step}: {} has {angles:?}",
+                    atom_of(&editor, atom).element().symbol()
+                );
+            }
+        }
+        editor.finish().unwrap();
+    }
+}
+
+/// The smallest angle at `atom` between one of its hydrogens and another
+/// neighbor, in degrees; 180° without hydrogens.
+fn hydrogen_clearance(editor: &StructureEditor, atom: EditAtomId) -> f64 {
+    let neighbors = editor
+        .topology()
+        .neighbors(atom)
+        .unwrap()
+        .collect::<Vec<_>>();
+    let mut least = 180.0_f64;
+    for hydrogen in hydrogens(editor, atom) {
+        for other in &neighbors {
+            if *other != hydrogen {
+                least = least.min(angle(editor, hydrogen, atom, *other));
+            }
+        }
+    }
+    least
+}
+
+/// A benzene ring placed alone, and its carbons.
+fn benzene() -> (StructureEditor, Vec<EditAtomId>) {
+    let mut editor = StructureEditor::new();
+    let placed = editor
+        .place_fragment(
+            fragment("benzene").unwrap(),
+            Quantity::new(Point3::origin(), ANGSTROM),
+        )
+        .unwrap();
+    let carbons = placed
+        .atoms()
+        .iter()
+        .map(|(_, atom)| *atom)
+        .filter(|atom| !is_hydrogen(&editor, *atom))
+        .collect();
+    (editor, carbons)
+}
+
+#[test]
+fn a_hydrogen_on_held_planar_neighbors_stands_normal_to_them() {
+    // Diphenylamine, then one ring bond at the carbon carrying the nitrogen
+    // made single: that carbon takes a hydrogen beside three neighbors that
+    // the ring holds in a plane.
+    let (mut editor, carbons) = benzene();
+    let carbon = carbons[0];
+    let nitrogen = grow(&mut editor, carbon, "N");
+    let hydrogen = hydrogens(&editor, nitrogen)[0];
+    editor
+        .attach_fragment(
+            nitrogen,
+            fragment("phenyl").unwrap(),
+            AttachmentSite::Hydrogen(hydrogen),
+        )
+        .unwrap();
+    editor.settle_atoms([nitrogen]).unwrap();
+    let neighbor = heavy_neighbors(&editor, carbon)
+        .into_iter()
+        .find(|other| {
+            *other != nitrogen
+                && editor
+                    .topology()
+                    .bond(bond(&editor, carbon, *other))
+                    .unwrap()
+                    .order
+                    != BondOrder::Single
+        })
+        .unwrap();
+    let id = bond(&editor, carbon, neighbor);
+    editor.set_bond_order(id, BondOrder::Single).unwrap();
+    editor.settle_bonds([id]).unwrap();
+    let report = editor.settle_atoms([carbon, neighbor]).unwrap();
+    assert!(report.atoms()[0].angle_in_ring());
+    assert_eq!(hydrogens(&editor, carbon).len(), 1);
+    // The clearest site, 90° from each of the three.
+    assert!((hydrogen_clearance(&editor, carbon) - 90.0).abs() < ANGLE);
+    editor.finish().unwrap();
+}
+
+#[test]
+fn two_hydrogens_on_a_held_planar_carbon_straddle_its_plane() {
+    // Benzene with both ring bonds of one carbon single: its ring neighbors
+    // stay at 120°, and its two hydrogens take mirror sites about the ring.
+    let (mut editor, carbons) = benzene();
+    let carbon = carbons[0];
+    let ring = heavy_neighbors(&editor, carbon);
+    for other in &ring {
+        let id = bond(&editor, carbon, *other);
+        editor.set_bond_order(id, BondOrder::Single).unwrap();
+    }
+    editor.settle_atoms([carbon, ring[0], ring[1]]).unwrap();
+    let own = hydrogens(&editor, carbon);
+    assert_eq!(own.len(), 2);
+    let center = point(&editor, carbon);
+    let normal = (point(&editor, ring[0]) - center).cross(point(&editor, ring[1]) - center);
+    let normal = normal / normal.norm();
+    let [first, second] = [own[0], own[1]].map(|hydrogen| {
+        let offset = point(&editor, hydrogen) - center;
+        offset.dot(normal) / offset.norm()
+    });
+    assert!((first + second).abs() < 1e-6, "{first} {second}");
+    assert!(first.abs() > 0.5);
+    assert!(hydrogen_clearance(&editor, carbon) > 100.0);
+    editor.finish().unwrap();
+}
+
+#[test]
+fn random_edits_of_rings_keep_hydrogens_clear() {
+    let mut random = Random(0x9e37_79b9_7f4a_7c15);
+    for sequence in 0..300 {
+        let name = ["benzene", "cyclohexane"][sequence % 2];
+        let mut editor = StructureEditor::new();
+        editor
+            .place_fragment(
+                fragment(name).unwrap(),
+                Quantity::new(Point3::origin(), ANGSTROM),
+            )
+            .unwrap();
+        for step in 0..12 {
+            let before = editor.clone();
+            if !random_edit(&mut editor, &mut random) {
+                editor = before;
+                continue;
+            }
+            for atom in editor.topology().atom_ids() {
+                // Two ring neighbors at 120° leave four more domains of an
+                // octahedron at most about 83° apart.
+                let floor = match editor.atom_domains(atom).unwrap().shape() {
+                    Some(AtomShape::Octahedral) => 79.5,
+                    _ => 85.0,
+                };
+                let least = hydrogen_clearance(&editor, atom);
+                assert!(
+                    least >= floor,
+                    "{name} sequence {sequence}, step {step}: {} has a hydrogen {least:.1}° from a neighbor",
                     atom_of(&editor, atom).element().symbol()
                 );
             }

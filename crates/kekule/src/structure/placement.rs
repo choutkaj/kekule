@@ -87,7 +87,9 @@
 //! hypervalent one with two, fits its whole shape to them, so a sulfur or
 //! phosphorus that takes a fifth or sixth domain moves its neighbors onto
 //! the trigonal bipyramid or octahedron before its hydrogens take the free
-//! sites.
+//! sites. Where a ring holds neighbors off the shape, the other neighbors
+//! and the hydrogens take the directions clearest of them and of each
+//! other instead.
 //! Relaxing the result is a separate step.
 //!
 //! # Names
@@ -153,7 +155,8 @@ pub use reports::{
     SettledBond, SettledBondsReport,
 };
 pub(crate) use sites::{
-    fit_shape, free_sites, perpendicular, smallest_angle, unit, Rotation, SiteQuery,
+    clearance, clearest_sites, fit_shape, free_sites, perpendicular, smallest_angle, unit,
+    Rotation, SiteQuery,
 };
 pub(crate) use valences::builder_max_valence;
 pub use valences::{

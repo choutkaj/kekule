@@ -242,8 +242,9 @@ the main branch migrates by the table under "From the SampleSet API".
   all of an atom's hydrogens at ideal positions, turns the smaller side of
   an atom's two neighbors to its shape's angle, and fits the whole shape of
   an atom with three or more, so a sulfur or phosphorus that grows
-  hypervalent becomes a seesaw, trigonal bipyramid, or octahedron
-  (`SettledAtomsReport`);
+  hypervalent becomes a seesaw, trigonal bipyramid, or octahedron; beside
+  neighbors a ring holds off the shape, the others and the hydrogens take
+  the clearest directions (`SettledAtomsReport`);
   `StructureEditor::settle_bonds` gives bonds their ideal length by moving
   the smaller side (`SettledBondsReport`). Both report ring bonds and angles
   they leave. `PlacementError::BuilderValence` names an atom outside the
