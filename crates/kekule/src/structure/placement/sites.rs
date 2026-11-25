@@ -288,8 +288,8 @@ impl ShapeFit {
 /// Orients the sites of `shape` that bonds take beside `lone_pairs` (lone
 /// pairs equatorial on a trigonal bipyramid, trans on an octahedron) on the
 /// unit neighbor `directions`, the first `held` of which do not move. The
-/// first lies on a site exactly, and a second direction not along it lies
-/// in the plane of its site; when both are held, the orientation may
+/// first lies on a site exactly, and any second direction not along it
+/// lies in the plane of its site; when both are held, the orientation may
 /// instead split their deviations alike. The other directions take the
 /// nearest free sites. The orientation with the smallest deviation wins,
 /// held directions weighing most, the first found on a tie.
@@ -313,42 +313,48 @@ pub(crate) fn fit_shape(
     if directions.len() > sites.len() {
         return Err(DegenerateSites);
     }
-    let second = directions
-        .iter()
-        .position(|direction| first.cross(*direction).norm() > 1.0e-3);
     let weight = |index: usize| if index < held { HELD_WEIGHT } else { 1.0 };
     let mut best: Option<(f64, ShapeFit)> = None;
     for a in 0..sites.len() {
+        // A second direction not along the first lies in the plane of its
+        // site; when both are held, the frame may instead split their
+        // deviations alike. Every direction may be that second, so nearly
+        // opposite neighbors leave the frame to another one.
         let mut frames = Vec::new();
-        match second {
-            Some(index) => {
-                let other = directions[index];
-                for b in (0..sites.len()).filter(|b| *b != a) {
-                    frames.extend(
-                        frame_rotation(sites[a], sites[b], first, other).map(|frame| (frame, b)),
-                    );
-                    if index < held {
-                        if let (Some(from), Some(to)) =
-                            (unit(sites[a] + sites[b]), unit(first + other))
-                        {
-                            frames.extend(
-                                frame_rotation(from, sites[a], to, first).map(|frame| (frame, b)),
-                            );
-                        }
+        for (index, other) in directions.iter().enumerate().skip(1) {
+            if first.cross(*other).norm() <= 1.0e-3 {
+                continue;
+            }
+            for b in (0..sites.len()).filter(|b| *b != a) {
+                frames.extend(
+                    frame_rotation(sites[a], sites[b], first, *other)
+                        .map(|frame| (frame, Some((index, b)))),
+                );
+                if index < held {
+                    if let (Some(from), Some(to)) =
+                        (unit(sites[a] + sites[b]), unit(first + *other))
+                    {
+                        frames.extend(
+                            frame_rotation(from, sites[a], to, first)
+                                .map(|frame| (frame, Some((index, b)))),
+                        );
                     }
                 }
             }
-            None => frames.extend(
+        }
+        if frames.is_empty() {
+            // All directions lie along the first, or their sites along its.
+            frames.extend(
                 frame_rotation(
                     sites[a],
                     perpendicular(sites[a]),
                     first,
                     perpendicular(first),
                 )
-                .map(|frame| (frame, usize::MAX)),
-            ),
+                .map(|frame| (frame, None)),
+            );
         }
-        for (frame, b) in frames {
+        for (frame, second) in frames {
             let oriented = sites
                 .iter()
                 .map(|site| frame[0] * site.x + frame[1] * site.y + frame[2] * site.z)
@@ -357,7 +363,7 @@ pub(crate) fn fit_shape(
             let mut used = vec![false; sites.len()];
             taken[0] = a;
             used[a] = true;
-            if let Some(index) = second {
+            if let Some((index, b)) = second {
                 taken[index] = b;
                 used[b] = true;
             }

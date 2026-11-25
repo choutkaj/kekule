@@ -679,7 +679,7 @@ impl StructureEditor {
     /// The sides beyond the `others` neighbors of `center`, ordered by their
     /// first neighbor, and the index of the largest by atoms, the first on a
     /// tie. Neighbors whose sides meet share one. The search stops once at
-    /// most one side is incomplete, which is then the largest.
+    /// most one side is incomplete and it is larger than every other.
     fn neighbor_sides(
         &self,
         center: EditAtomId,
@@ -701,14 +701,24 @@ impl StructureEditor {
             .enumerate()
             .map(|(index, other)| (*other, index))
             .collect::<BTreeMap<_, _>>();
+        // Sides that met grow faster than one, so the search goes on until
+        // a single incomplete side is larger than every complete one.
         let searching = |sides: &[Option<Side>]| {
-            sides
+            let mut open = sides.iter().flatten().filter(|side| !side.queue.is_empty());
+            let complete = sides
                 .iter()
                 .flatten()
-                .filter(|side| !side.queue.is_empty())
-                .count()
+                .filter(|side| side.queue.is_empty())
+                .map(|side| side.atoms.len())
+                .max()
+                .unwrap_or(0);
+            match (open.next(), open.next()) {
+                (None, _) => false,
+                (Some(side), None) => side.atoms.len() <= complete,
+                (Some(_), Some(_)) => true,
+            }
         };
-        while searching(&sides) > 1 {
+        while searching(&sides) {
             for index in 0..sides.len() {
                 let Some(current) = sides[index]
                     .as_mut()
@@ -837,3 +847,6 @@ fn at(editor: &StructureEditor, moves: &Moves, atom: EditAtomId) -> Point3 {
 fn angle_between(a: Vector3, b: Vector3) -> f64 {
     a.cross(b).norm().atan2(a.dot(b)).to_degrees()
 }
+
+#[cfg(test)]
+mod tests;
