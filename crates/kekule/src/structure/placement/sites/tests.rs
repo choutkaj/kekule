@@ -115,3 +115,66 @@ fn coincident_neighbors_are_degenerate() {
         Err(DegenerateSites)
     );
 }
+
+#[test]
+fn a_fitted_seesaw_keeps_its_lone_pair_equatorial() {
+    // Three tetrahedral directions on a trigonal bipyramid with one lone
+    // pair: the first stays, and the four bond sites hold one axial pair.
+    let tetrahedron = free_sites(query(AtomShape::Tetrahedral, &[], 0)).unwrap();
+    let fit = fit_shape(AtomShape::TrigonalBipyramidal, 1, &tetrahedron[..3], 1).unwrap();
+    assert_eq!(fit.sites.len(), 4);
+    assert!(angle(fit.sites[fit.taken[0]], tetrahedron[0]) < 1e-9);
+    let free = fit.free();
+    assert_eq!(free.len(), 1);
+    let straight = fit
+        .sites
+        .iter()
+        .enumerate()
+        .flat_map(|(i, a)| fit.sites[i + 1..].iter().map(move |b| angle(*a, *b)))
+        .filter(|found| (found - 180.0).abs() < 1e-6)
+        .count();
+    assert_eq!(straight, 1);
+}
+
+#[test]
+fn two_held_directions_share_their_deviation() {
+    // Two ring bonds at 110° on a seesaw take its equatorial pair, each 5°
+    // off.
+    let (sin, cos) = 55.0_f64.to_radians().sin_cos();
+    let directions = [Vector3::new(sin, 0.0, cos), Vector3::new(-sin, 0.0, cos)];
+    let fit = fit_shape(AtomShape::TrigonalBipyramidal, 1, &directions, 2).unwrap();
+    for (direction, site) in directions.iter().zip(&fit.taken) {
+        assert!((angle(*direction, fit.sites[*site]) - 5.0).abs() < 1e-6);
+    }
+    assert!((angle(fit.sites[fit.taken[0]], fit.sites[fit.taken[1]]) - 120.0).abs() < 1e-6);
+    assert_eq!(
+        fit_shape(
+            AtomShape::Tetrahedral,
+            1,
+            &free_sites(query(AtomShape::Tetrahedral, &[], 0)).unwrap(),
+            1
+        ),
+        Err(DegenerateSites)
+    );
+}
+
+#[test]
+fn nearly_opposite_neighbors_leave_the_frame_to_another() {
+    // A trigonal bipyramid whose axial pair is bent to 179°: every
+    // neighbor stays within a degree of its site.
+    let (sin, cos) = 0.5_f64.to_radians().sin_cos();
+    let mut directions = vec![Vector3::new(sin, 0.0, cos), Vector3::new(sin, 0.0, -cos)];
+    for turn in 0..3 {
+        let (sin, cos) = (f64::from(turn) * 120.0_f64.to_radians()).sin_cos();
+        directions.push(Vector3::new(cos, sin, 0.0));
+    }
+    let fit = fit_shape(AtomShape::TrigonalBipyramidal, 0, &directions, 1).unwrap();
+    for (direction, site) in directions.iter().zip(&fit.taken) {
+        assert!(angle(*direction, fit.sites[*site]) < 1.0 + 1e-6);
+    }
+    // With three lone pairs, the same axial pair alone still fits.
+    let fit = fit_shape(AtomShape::TrigonalBipyramidal, 3, &directions[..2], 1).unwrap();
+    for (direction, site) in directions.iter().zip(&fit.taken) {
+        assert!(angle(*direction, fit.sites[*site]) < 1.0 + 1e-6);
+    }
+}

@@ -1,14 +1,14 @@
 //! Settling atoms and bonds of a structure draft after a chemistry edit:
-//! builder hydrogen counts at ideal positions, the angle between an atom's
-//! two neighbors, and ideal bond lengths.
+//! builder hydrogen counts at ideal positions, the angles between an atom's
+//! neighbors, and ideal bond lengths.
 use super::{bond_length, draft_error, DomainChange, StructureEditor};
 use crate::algorithms::rdkit_hydrogens_at_valence;
-use crate::math::Point3;
+use crate::math::{Point3, Vector3};
 use crate::molecule::{BondOrder, Element};
 use crate::structure::placement::{
-    builder_charges, builder_hydrogen_count, free_sites, perpendicular, unit, AtomShape,
-    NameAllocator, PlacementError, Rotation, SettledAtom, SettledAtomsReport, SettledBond,
-    SettledBondsReport, SiteQuery,
+    builder_charges, builder_hydrogen_count, fit_shape, free_sites, models_lone_pairs,
+    perpendicular, smallest_angle, unit, AtomShape, NameAllocator, PlacementError, Rotation,
+    SettledAtom, SettledAtomsReport, SettledBond, SettledBondsReport, SiteQuery,
 };
 use crate::topology::edit::{EditAtomId, EditBondId};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -37,6 +37,39 @@ struct AtomPlan {
     lone_pairs: usize,
     /// The length of a bond from it to a hydrogen, in nm.
     length: f64,
+}
+
+/// How one atom's neighbors settled before its hydrogens are placed.
+#[derive(Debug, Default)]
+struct AngleSettlement {
+    /// The atoms of the sides that turned.
+    turned: Vec<EditAtomId>,
+    /// Whether a ring holds an angle off its shape's.
+    in_ring: bool,
+    /// The fit of its whole shape, when its neighbors settle together.
+    fit: Option<FitOrder>,
+}
+
+/// The order in which an atom's neighbors fit its shape.
+#[derive(Debug)]
+struct FitOrder {
+    /// Indices of its other neighbors: those that do not move first (the
+    /// largest side's, then those of sides in a ring with the atom), then
+    /// the others by side size, largest first.
+    order: Vec<usize>,
+    /// How many of `order` do not move.
+    held: usize,
+}
+
+/// The atoms beyond one or more neighbors of an atom, reached without
+/// crossing it; neighbors whose sides meet lie in a ring with it.
+#[derive(Debug)]
+struct Side {
+    /// Indices of the neighbors, ascending.
+    neighbors: Vec<usize>,
+    atoms: Vec<EditAtomId>,
+    /// Atoms whose neighbors are not searched yet; empty once complete.
+    queue: VecDeque<EditAtomId>,
 }
 
 /// Where one atom's hydrogens go.
@@ -72,10 +105,23 @@ impl StructureEditor {
     ///   a carbon made sp is straight, and a straight one made sp² or sp³
     ///   bends in a deterministic plane. When both sides lie in a ring with
     ///   it, nothing turns, and the entry reports it.
-    /// - All its hydrogens move to the ideal positions of its shape, at the
+    /// - When an s- or p-block atom has three or more other neighbors, or
+    ///   two on a trigonal bipyramid or an octahedron, its whole shape fits
+    ///   them, its lone pairs on their own sites (equatorial on a trigonal
+    ///   bipyramid, trans on an octahedron). The neighbor of the largest
+    ///   side, by atoms, stays, and each other neighbor more than 5° off its
+    ///   site turns onto it with its side: methanesulfenic acid's sulfur
+    ///   that takes a chlorine and a hydrogen becomes a seesaw, and
+    ///   trimethylphosphine with a chlorine a trigonal bipyramid. Neighbors
+    ///   whose sides lie in a ring with it stay, and when one is off its
+    ///   site the entry reports it.
+    /// - All its hydrogens move to the free sites of its shape, at the
     ///   element pair's bond length, from its other neighbors and lone pairs
     ///   alone ([`placement`](crate::structure::placement)): methyl anion
     ///   pyramidal, methyl cation and borane planar, ammonium tetrahedral.
+    ///   No hydrogen comes nearer another neighbor than the shape's smallest
+    ///   angle (90° on a trigonal bipyramid or an octahedron) less 5°,
+    ///   unless a ring holds the atom's angles.
     ///
     /// The hydrogens of an atom are explicit hydrogens singly bonded to it
     /// alone; a hydrogen that is another atom's is left to it. New hydrogens
@@ -91,7 +137,8 @@ impl StructureEditor {
     /// [`PlacementError::UnsupportedGeometry`] for more than six domains,
     /// [`PlacementError::DegenerateGeometry`] when a neighbor coincides with
     /// the atom, [`PlacementError::NoFreePosition`] when its shape has fewer
-    /// free sites than hydrogens, [`PlacementError::StereoHydrogen`] when its stereo names an
+    /// free sites than hydrogens or a hydrogen would come nearer a neighbor
+    /// than that, [`PlacementError::StereoHydrogen`] when its stereo names an
     /// implicit hydrogen that does not become exactly one new atom, and
     /// [`PlacementError::UnknownBondLength`].
     pub fn settle_atoms(
@@ -114,13 +161,16 @@ impl StructureEditor {
         let mut moves = Moves::new();
         let mut angles = Vec::with_capacity(plans.len());
         for plan in &plans {
-            angles.push(self.settle_angle(plan, &mut moves)?);
+            angles.push(match self.whole_shape(plan) {
+                Some(shape) => self.settle_shape(plan, shape, &mut moves)?,
+                None => self.settle_angle(plan, &mut moves)?,
+            });
         }
         let centers = plans.iter().map(|plan| plan.atom).collect::<BTreeSet<_>>();
         let mut placed = BTreeMap::new();
         let mut hydrogens = Vec::with_capacity(plans.len());
-        for plan in &plans {
-            let hydrogen_plan = self.hydrogen_plan(plan, &moves, &centers, &placed)?;
+        for (plan, settlement) in plans.iter().zip(&angles) {
+            let hydrogen_plan = self.hydrogen_plan(plan, settlement, &moves, &centers, &placed)?;
             moves.extend(hydrogen_plan.kept.iter().copied());
             placed.insert(plan.atom, hydrogen_plan.points.clone());
             hydrogens.push(hydrogen_plan);
@@ -134,9 +184,7 @@ impl StructureEditor {
         }
         let mut names = NameAllocator::default();
         let mut report = Vec::with_capacity(plans.len());
-        for ((plan, hydrogen_plan), (turned, angle_in_ring)) in
-            plans.iter().zip(&hydrogens).zip(angles)
-        {
+        for ((plan, hydrogen_plan), settlement) in plans.iter().zip(&hydrogens).zip(angles) {
             let atom = plan.atom;
             let declared = self.topology.materializable_hydrogens(atom)?.0 > 0
                 || self.topology.owes_hydrogens(atom);
@@ -163,8 +211,8 @@ impl StructureEditor {
                 added,
                 removed: hydrogen_plan.removed.clone(),
                 moved,
-                turned,
-                angle_in_ring,
+                turned: settlement.turned,
+                angle_in_ring: settlement.in_ring,
             });
         }
         // A side may hold hydrogens that a later atom deleted.
@@ -307,6 +355,84 @@ impl StructureEditor {
         })
     }
 
+    /// The shape of the atom of `plan` when its neighbors settle together:
+    /// three or more other neighbors, or two of a trigonal bipyramid or an
+    /// octahedron, on an atom whose shape follows its electrons.
+    fn whole_shape(&self, plan: &AtomPlan) -> Option<AtomShape> {
+        let shape = plan.shape?;
+        let together = match plan.others.len() {
+            0 | 1 => false,
+            2 => shape.domains() > 4,
+            _ => true,
+        };
+        (together && models_lone_pairs(self.element(plan.atom))).then_some(shape)
+    }
+
+    /// Fits the atom of `plan` to its `shape` and turns about it, in
+    /// `moves`, the side of each neighbor that moves alone and is more than
+    /// the tolerance off its site; the largest side and sides in a ring
+    /// with the atom stay.
+    fn settle_shape(
+        &self,
+        plan: &AtomPlan,
+        shape: AtomShape,
+        moves: &mut Moves,
+    ) -> Result<AngleSettlement, PlacementError> {
+        let atom = plan.atom;
+        let center = at(self, moves, atom);
+        let (sides, largest) = self.neighbor_sides(atom, &plan.others)?;
+        let mut order = sides[largest].neighbors.clone();
+        for (index, side) in sides.iter().enumerate() {
+            if index != largest && side.neighbors.len() > 1 {
+                order.extend(&side.neighbors);
+            }
+        }
+        let held = order.len();
+        let mut alone = sides
+            .iter()
+            .enumerate()
+            .filter(|(index, side)| *index != largest && side.neighbors.len() == 1)
+            .map(|(_, side)| side)
+            .collect::<Vec<_>>();
+        alone.sort_by(|a, b| {
+            b.atoms
+                .len()
+                .cmp(&a.atoms.len())
+                .then(a.neighbors.cmp(&b.neighbors))
+        });
+        order.extend(alone.iter().map(|side| side.neighbors[0]));
+        let Some(directions) = order
+            .iter()
+            .map(|index| unit(at(self, moves, plan.others[*index]) - center))
+            .collect::<Option<Vec<_>>>()
+        else {
+            // The hydrogen plan reports a neighbor on the atom.
+            return Ok(AngleSettlement::default());
+        };
+        let fit = fit_shape(shape, plan.lone_pairs, &directions, held)
+            .map_err(|_| PlacementError::DegenerateGeometry { atom })?;
+        let mut settlement = AngleSettlement::default();
+        for (position, direction) in directions.iter().enumerate() {
+            let site = fit.sites[fit.taken[position]];
+            if angle_between(*direction, site) <= ANGLE_TOLERANCE {
+                continue;
+            }
+            if position < held {
+                settlement.in_ring = true;
+                continue;
+            }
+            let side = alone[position - held];
+            let rotation = Rotation::between(*direction, site);
+            for moved in &side.atoms {
+                let point = center + rotation.apply(at(self, moves, *moved) - center);
+                moves.insert(*moved, point);
+            }
+            settlement.turned.extend_from_slice(&side.atoms);
+        }
+        settlement.fit = Some(FitOrder { order, held });
+        Ok(settlement)
+    }
+
     /// Turns the smaller side of an atom with two other neighbors to the
     /// angle of its shape, in `moves`; returns the side's atoms and whether
     /// the angle is off but in a ring.
@@ -314,34 +440,33 @@ impl StructureEditor {
         &self,
         plan: &AtomPlan,
         moves: &mut Moves,
-    ) -> Result<(Vec<EditAtomId>, bool), PlacementError> {
+    ) -> Result<AngleSettlement, PlacementError> {
         let &[first, second] = plan.others.as_slice() else {
-            return Ok((Vec::new(), false));
+            return Ok(AngleSettlement::default());
         };
         let ideal = match plan.shape {
             Some(AtomShape::Linear) => 180.0_f64,
             Some(AtomShape::TrigonalPlanar) => 120.0,
             Some(AtomShape::Tetrahedral) => TETRAHEDRAL,
-            _ => return Ok((Vec::new(), false)),
+            _ => return Ok(AngleSettlement::default()),
         };
         let center = at(self, moves, plan.atom);
         let (Some(towards_first), Some(towards_second)) = (
             unit(at(self, moves, first) - center),
             unit(at(self, moves, second) - center),
         ) else {
-            return Ok((Vec::new(), false));
+            return Ok(AngleSettlement::default());
         };
-        let angle = towards_first
-            .cross(towards_second)
-            .norm()
-            .atan2(towards_first.dot(towards_second))
-            .to_degrees();
+        let angle = angle_between(towards_first, towards_second);
         if (angle - ideal).abs() <= ANGLE_TOLERANCE {
-            return Ok((Vec::new(), false));
+            return Ok(AngleSettlement::default());
         }
         let Some((side, atoms)) = self.smaller_side([(plan.atom, first), (plan.atom, second)])?
         else {
-            return Ok((Vec::new(), true));
+            return Ok(AngleSettlement {
+                in_ring: true,
+                ..AngleSettlement::default()
+            });
         };
         let (turning, fixed) = if side == 0 {
             (towards_first, towards_second)
@@ -356,15 +481,21 @@ impl StructureEditor {
             let point = center + rotation.apply(at(self, moves, *atom) - center);
             moves.insert(*atom, point);
         }
-        Ok((atoms, false))
+        Ok(AngleSettlement {
+            turned: atoms,
+            ..AngleSettlement::default()
+        })
     }
 
     /// Where the hydrogens of the atom of `plan` go: the free sites of its
     /// shape from its other neighbors and lone pairs, kept hydrogens on the
-    /// sites nearest them.
+    /// sites nearest them. No hydrogen comes nearer another neighbor than
+    /// the shape's smallest angle less the tolerance, unless a ring holds
+    /// the atom's angles.
     fn hydrogen_plan(
         &self,
         plan: &AtomPlan,
+        settlement: &AngleSettlement,
         moves: &Moves,
         centers: &BTreeSet<EditAtomId>,
         placed: &BTreeMap<EditAtomId, Vec<Point3>>,
@@ -382,38 +513,57 @@ impl StructureEditor {
             .iter()
             .map(|other| at(self, moves, *other))
             .collect::<Vec<_>>();
-        let reference = match plan.others.as_slice() {
-            [neighbor] => self.settled_reference(*neighbor, atom, moves, centers, placed)?,
-            _ => None,
-        };
         // Up to four domains, lone pairs and bonds take alike sites, so kept
         // hydrogens choose among all free sites and a pyramid keeps its
-        // face; the lone pairs of a hypervalent atom keep their own sites.
-        // With no other neighbor, the first hydrogen orients the shape.
-        let alike = shape.domains() <= 4;
-        let anchor = match neighbors.as_slice() {
-            [] => plan
-                .hydrogens
-                .first()
-                .and_then(|hydrogen| unit(at(self, moves, *hydrogen) - center)),
-            _ => None,
+        // face; the lone pairs of a hypervalent atom keep their own sites,
+        // as do those of a shape fitted whole.
+        let alike = shape.domains() <= 4 && settlement.fit.is_none();
+        let mut sites = match &settlement.fit {
+            Some(fit) => {
+                let directions = fit
+                    .order
+                    .iter()
+                    .map(|index| unit(neighbors[*index] - center))
+                    .collect::<Option<Vec<_>>>()
+                    .ok_or(PlacementError::DegenerateGeometry { atom })?;
+                fit_shape(shape, plan.lone_pairs, &directions, fit.held)
+                    .map_err(|_| PlacementError::DegenerateGeometry { atom })?
+                    .free()
+            }
+            None => {
+                // With no other neighbor, the first hydrogen orients the shape.
+                let reference = match plan.others.as_slice() {
+                    [neighbor] => {
+                        self.settled_reference(*neighbor, atom, moves, centers, placed)?
+                    }
+                    _ => None,
+                };
+                let anchor = match neighbors.as_slice() {
+                    [] => plan
+                        .hydrogens
+                        .first()
+                        .and_then(|hydrogen| unit(at(self, moves, *hydrogen) - center)),
+                    _ => None,
+                };
+                let mut frame = neighbors.clone();
+                let mut sites = Vec::new();
+                if let Some(direction) = anchor {
+                    sites.push(direction);
+                    frame.push(center + direction);
+                }
+                sites.extend(
+                    free_sites(SiteQuery {
+                        center,
+                        neighbors: &frame,
+                        reference: reference.filter(|_| anchor.is_none()),
+                        shape,
+                        lone_pairs: if alike { 0 } else { plan.lone_pairs },
+                    })
+                    .map_err(|_| PlacementError::DegenerateGeometry { atom })?,
+                );
+                sites
+            }
         };
-        let mut frame = neighbors.clone();
-        let mut sites = Vec::new();
-        if let Some(direction) = anchor {
-            sites.push(direction);
-            frame.push(center + direction);
-        }
-        sites.extend(
-            free_sites(SiteQuery {
-                center,
-                neighbors: &frame,
-                reference: reference.filter(|_| anchor.is_none()),
-                shape,
-                lone_pairs: if alike { 0 } else { plan.lone_pairs },
-            })
-            .map_err(|_| PlacementError::DegenerateGeometry { atom })?,
-        );
         if sites.len() < plan.target {
             return Err(PlacementError::NoFreePosition { atom });
         }
@@ -464,6 +614,23 @@ impl StructureEditor {
             .filter(|site| site_taken[*site] || fresh.contains(site))
             .map(point)
             .collect();
+        if !settlement.in_ring {
+            let least = smallest_angle(shape) - ANGLE_TOLERANCE - 1.0e-6;
+            for (index, hydrogen) in result.points.iter().enumerate() {
+                let toward = *hydrogen - center;
+                let mut others = neighbors.iter().chain(
+                    result
+                        .points
+                        .iter()
+                        .enumerate()
+                        .filter(|(other, _)| *other != index)
+                        .map(|(_, point)| point),
+                );
+                if others.any(|other| angle_between(toward, *other - center) < least) {
+                    return Err(PlacementError::NoFreePosition { atom });
+                }
+            }
+        }
         Ok(result)
     }
 
@@ -507,6 +674,100 @@ impl StructureEditor {
                 .and_then(|points| points.first().copied()));
         }
         Ok(hydrogen.map(|hydrogen| at(self, moves, hydrogen)))
+    }
+
+    /// The sides beyond the `others` neighbors of `center`, ordered by their
+    /// first neighbor, and the index of the largest by atoms, the first on a
+    /// tie. Neighbors whose sides meet share one. The search stops once at
+    /// most one side is incomplete and it is larger than every other.
+    fn neighbor_sides(
+        &self,
+        center: EditAtomId,
+        others: &[EditAtomId],
+    ) -> Result<(Vec<Side>, usize), PlacementError> {
+        let mut sides = others
+            .iter()
+            .enumerate()
+            .map(|(index, other)| {
+                Some(Side {
+                    neighbors: vec![index],
+                    atoms: vec![*other],
+                    queue: VecDeque::from([*other]),
+                })
+            })
+            .collect::<Vec<_>>();
+        let mut owner = others
+            .iter()
+            .enumerate()
+            .map(|(index, other)| (*other, index))
+            .collect::<BTreeMap<_, _>>();
+        // Sides that met grow faster than one, so the search goes on until
+        // a single incomplete side is larger than every complete one.
+        let searching = |sides: &[Option<Side>]| {
+            let mut open = sides.iter().flatten().filter(|side| !side.queue.is_empty());
+            let complete = sides
+                .iter()
+                .flatten()
+                .filter(|side| side.queue.is_empty())
+                .map(|side| side.atoms.len())
+                .max()
+                .unwrap_or(0);
+            match (open.next(), open.next()) {
+                (None, _) => false,
+                (Some(side), None) => side.atoms.len() <= complete,
+                (Some(_), Some(_)) => true,
+            }
+        };
+        while searching(&sides) {
+            for index in 0..sides.len() {
+                let Some(current) = sides[index]
+                    .as_mut()
+                    .and_then(|side| side.queue.pop_front())
+                else {
+                    continue;
+                };
+                for next in self.topology.neighbors(current)? {
+                    if next == center {
+                        continue;
+                    }
+                    match owner.get(&next).copied() {
+                        None => {
+                            owner.insert(next, index);
+                            let side = sides[index].as_mut().expect("a searching side is live");
+                            side.atoms.push(next);
+                            side.queue.push_back(next);
+                        }
+                        Some(other) if other == index => {}
+                        Some(other) => {
+                            let met = sides[other].take().expect("an owning side is live");
+                            for atom in &met.atoms {
+                                owner.insert(*atom, index);
+                            }
+                            let side = sides[index].as_mut().expect("a searching side is live");
+                            side.neighbors.extend(met.neighbors);
+                            side.neighbors.sort_unstable();
+                            side.atoms.extend(met.atoms);
+                            side.queue.extend(met.queue);
+                        }
+                    }
+                }
+            }
+        }
+        let mut sides = sides.into_iter().flatten().collect::<Vec<_>>();
+        sides.sort_by_key(|side| side.neighbors[0]);
+        let largest = match sides.iter().position(|side| !side.queue.is_empty()) {
+            Some(open) => open,
+            None => {
+                let mut largest = 0;
+                for (index, side) in sides.iter().enumerate() {
+                    if side.atoms.len() > sides[largest].atoms.len() {
+                        largest = index;
+                    }
+                }
+                largest
+            }
+        };
+        Ok((sides, largest))
     }
 
     /// Of the sides beyond each `(near, far)` pair, the atoms reached from
@@ -581,3 +842,11 @@ fn at(editor: &StructureEditor, moves: &Moves, atom: EditAtomId) -> Point3 {
         .copied()
         .unwrap_or_else(|| editor.point(atom))
 }
+
+/// The angle between two vectors, in degrees.
+fn angle_between(a: Vector3, b: Vector3) -> f64 {
+    a.cross(b).norm().atan2(a.dot(b)).to_degrees()
+}
+
+#[cfg(test)]
+mod tests;

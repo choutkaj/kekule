@@ -215,13 +215,13 @@ impl SettledAtom {
     pub fn moved_hydrogens(&self) -> &[EditAtomId] {
         &self.moved
     }
-    /// The atoms of the side that turned about the atom to give its two
-    /// neighbors the angle of its shape; empty when none turned.
+    /// The atoms of the sides that turned about the atom to give its
+    /// neighbors the angles of its shape; empty when none turned.
     pub fn turned_atoms(&self) -> &[EditAtomId] {
         &self.turned
     }
-    /// Whether the angle between the atom's two neighbors is off its shape's
-    /// but both lie in a ring with the atom, so no side turned; cleaning up
+    /// Whether an angle between the atom's neighbors is off its shape's but
+    /// they lie in a ring with the atom, so they did not turn; cleaning up
     /// the geometry fixes it.
     pub const fn angle_in_ring(&self) -> bool {
         self.angle_in_ring

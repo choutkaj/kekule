@@ -806,3 +806,280 @@ fn elements_outside_the_builder_follow_the_valence_model() {
     let (editor, sodium) = built("Na");
     assert!(hydrogens(&editor, sodium).is_empty());
 }
+
+/// Attaches a single-bonded `symbol` to `parent` at its first free
+/// position and settles both, as a builder does.
+fn grow_free(editor: &mut StructureEditor, parent: EditAtomId, symbol: &str) -> EditAtomId {
+    let direction = editor.free_directions(parent, BondOrder::Single).unwrap()[0];
+    let atom = editor
+        .attach_atom(
+            parent,
+            Atom::new(element(symbol)),
+            BondOrder::Single,
+            AttachmentSite::Toward(direction),
+        )
+        .unwrap()
+        .atom();
+    editor.settle_atoms([parent, atom]).unwrap();
+    atom
+}
+
+/// The angles between the neighbors of `atom`, in degrees, ascending.
+fn neighbor_angles(editor: &StructureEditor, atom: EditAtomId) -> Vec<f64> {
+    let neighbors = editor
+        .topology()
+        .neighbors(atom)
+        .unwrap()
+        .collect::<Vec<_>>();
+    let mut angles = neighbors
+        .iter()
+        .enumerate()
+        .flat_map(|(index, a)| {
+            neighbors[index + 1..]
+                .iter()
+                .map(move |b| angle(editor, *a, atom, *b))
+        })
+        .collect::<Vec<_>>();
+    angles.sort_by(f64::total_cmp);
+    angles
+}
+
+/// Asserts that the angles at `atom` are, within [`ANGLE`], `count` each of
+/// 90°, 120°, and 180°.
+fn assert_hypervalent(editor: &StructureEditor, atom: EditAtomId, counts: [usize; 3]) {
+    let angles = neighbor_angles(editor, atom);
+    let found = [90.0, 120.0, 180.0].map(|ideal| {
+        angles
+            .iter()
+            .filter(|angle| (**angle - ideal).abs() < ANGLE)
+            .count()
+    });
+    assert_eq!(found, counts, "{angles:?}");
+}
+
+/// Methanesulfenic acid, CH3–S–OH, built from hydrogen sulfide.
+fn methanesulfenic_acid() -> (StructureEditor, EditAtomId) {
+    let (mut editor, sulfur) = built("S");
+    grow(&mut editor, sulfur, "C");
+    grow(&mut editor, sulfur, "O");
+    assert_settled(&editor, sulfur, 0, &[TETRAHEDRAL]);
+    (editor, sulfur)
+}
+
+#[test]
+fn a_third_neighbor_makes_a_seesaw_with_its_lone_pair_equatorial() {
+    let (mut editor, sulfur) = methanesulfenic_acid();
+    let chlorine = grow_free(&mut editor, sulfur, "Cl");
+    // Sulfur(IV) takes a hydrogen: three heavy neighbors, a hydrogen, and an
+    // equatorial lone pair, so one axial pair, one equatorial pair, and four
+    // right angles.
+    assert_settled(&editor, sulfur, 1, &[90.0, 120.0, 180.0]);
+    assert_hypervalent(&editor, sulfur, [4, 1, 1]);
+    assert!(neighbor_angles(&editor, sulfur)[0] > 85.0);
+    assert_length(&editor, sulfur, chlorine, BondOrder::Single);
+    editor.finish().unwrap();
+}
+
+#[test]
+fn a_fourth_neighbor_makes_phosphorus_a_trigonal_bipyramid() {
+    let (mut editor, phosphorus) = built("P");
+    let carbons = [(); 3].map(|()| grow(&mut editor, phosphorus, "C"));
+    assert_settled(&editor, phosphorus, 0, &[TETRAHEDRAL]);
+    grow_free(&mut editor, phosphorus, "Cl");
+    assert_settled(&editor, phosphorus, 1, &[90.0, 120.0, 180.0]);
+    assert_hypervalent(&editor, phosphorus, [6, 3, 1]);
+    for carbon in carbons {
+        assert_settled(&editor, carbon, 3, &[TETRAHEDRAL]);
+    }
+    editor.finish().unwrap();
+}
+
+#[test]
+fn sulfur_four_to_six_settles_octahedral() {
+    let (mut editor, sulfur) = methanesulfenic_acid();
+    grow_free(&mut editor, sulfur, "Cl");
+    // In place of the hydrogen, a fourth heavy neighbor: sulfur(IV) without
+    // hydrogens.
+    grow(&mut editor, sulfur, "F");
+    assert_settled(&editor, sulfur, 0, &[90.0, 120.0, 180.0]);
+    assert_hypervalent(&editor, sulfur, [4, 1, 1]);
+    // A fifth makes sulfur(VI), which takes a hydrogen.
+    let report = {
+        let direction = editor.free_directions(sulfur, BondOrder::Single).unwrap()[0];
+        let fluorine = editor
+            .attach_atom(
+                sulfur,
+                Atom::new(Element::F),
+                BondOrder::Single,
+                AttachmentSite::Toward(direction),
+            )
+            .unwrap()
+            .atom();
+        editor.settle_atoms([sulfur, fluorine]).unwrap()
+    };
+    assert_eq!(report.added_count(), 1);
+    assert!(!report.atoms()[0].turned_atoms().is_empty());
+    assert_settled(&editor, sulfur, 1, &[90.0, 180.0]);
+    assert_hypervalent(&editor, sulfur, [12, 0, 3]);
+    editor.finish().unwrap();
+}
+
+#[test]
+fn a_ring_holds_a_hypervalent_angle_and_says_so() {
+    let mut editor = StructureEditor::new();
+    let placed = editor
+        .place_fragment(
+            fragment("cyclopentane").unwrap(),
+            Quantity::new(Point3::origin(), ANGSTROM),
+        )
+        .unwrap();
+    let atom = placed
+        .atoms()
+        .iter()
+        .map(|(_, atom)| *atom)
+        .find(|atom| !is_hydrogen(&editor, *atom))
+        .unwrap();
+    change_element(&mut editor, atom, "S");
+    let ring = heavy_neighbors(&editor, atom);
+    let positions = ring
+        .iter()
+        .map(|neighbor| point(&editor, *neighbor))
+        .collect::<Vec<_>>();
+    let direction = editor.free_directions(atom, BondOrder::Single).unwrap()[0];
+    let chlorine = editor
+        .attach_atom(
+            atom,
+            Atom::new(element("Cl")),
+            BondOrder::Single,
+            AttachmentSite::Toward(direction),
+        )
+        .unwrap()
+        .atom();
+    let report = editor.settle_atoms([atom, chlorine]).unwrap();
+    // The ring's angle at sulfur, near the pentagon's 108°, is far from the
+    // seesaw's equatorial 120° and axial 90°; the ring stays, and the
+    // chlorine turns.
+    let settled = &report.atoms()[0];
+    assert!(settled.angle_in_ring());
+    assert_eq!(settled.turned_atoms(), [chlorine]);
+    assert_eq!(settled.added_hydrogens().len(), 1);
+    for (neighbor, before) in ring.iter().zip(&positions) {
+        assert!((point(&editor, *neighbor) - *before).norm() < 1e-9);
+    }
+    editor.finish().unwrap();
+}
+
+/// Seeded xorshift.
+struct Random(u64);
+
+impl Random {
+    fn below(&mut self, bound: usize) -> usize {
+        self.0 ^= self.0 << 13;
+        self.0 ^= self.0 >> 7;
+        self.0 ^= self.0 << 17;
+        (self.0 % bound as u64) as usize
+    }
+}
+
+/// One random builder edit of `editor` and its settling; `false` when the
+/// edit was refused or leaves a state outside the builder, which the caller
+/// undoes.
+fn random_edit(editor: &mut StructureEditor, random: &mut Random) -> bool {
+    const ELEMENTS: [&str; 8] = ["C", "N", "O", "S", "P", "Se", "Cl", "F"];
+    let heavy = editor
+        .topology()
+        .atom_ids()
+        .filter(|atom| !is_hydrogen(editor, *atom))
+        .collect::<Vec<_>>();
+    // Half the edits are of the first atom, so that it grows hypervalent,
+    // and half of all edits attach an atom.
+    let atom = heavy[random.below(2 * heavy.len()).saturating_sub(heavy.len())];
+    let settled = match random.below(6) {
+        0..=2 => {
+            let order = [BondOrder::Single, BondOrder::Single, BondOrder::Double][random.below(3)];
+            let own = hydrogens(editor, atom);
+            let site = if !own.is_empty() && random.below(2) == 0 {
+                AttachmentSite::Hydrogen(own[random.below(own.len())])
+            } else {
+                match editor.free_directions(atom, order) {
+                    Ok(directions) if !directions.is_empty() => {
+                        AttachmentSite::Toward(directions[random.below(directions.len())])
+                    }
+                    _ => return false,
+                }
+            };
+            let symbol = ELEMENTS[random.below(ELEMENTS.len())];
+            let Ok(attached) = editor.attach_atom(atom, Atom::new(element(symbol)), order, site)
+            else {
+                return false;
+            };
+            editor.settle_atoms([atom, attached.atom()])
+        }
+        3 => {
+            let symbol = ELEMENTS[random.below(ELEMENTS.len())];
+            let value = atom_of(editor, atom).with_element(element(symbol));
+            editor.replace_atom(atom, value).unwrap();
+            let bonds = heavy_neighbors(editor, atom)
+                .into_iter()
+                .map(|neighbor| bond(editor, atom, neighbor))
+                .collect::<Vec<_>>();
+            editor.settle_bonds(bonds).unwrap();
+            editor.settle_atoms([atom])
+        }
+        4 => {
+            let value = atom_of(editor, atom);
+            let charges = builder_charges(value.element()).unwrap();
+            let charge = charges[random.below(charges.len())];
+            editor
+                .replace_atom(atom, value.with_formal_charge(charge))
+                .unwrap();
+            editor.settle_atoms([atom])
+        }
+        _ => {
+            let neighbors = heavy_neighbors(editor, atom);
+            if neighbors.is_empty() {
+                return false;
+            }
+            let other = neighbors[random.below(neighbors.len())];
+            let order = [BondOrder::Single, BondOrder::Double, BondOrder::Triple][random.below(3)];
+            let id = bond(editor, atom, other);
+            editor.set_bond_order(id, order).unwrap();
+            editor.settle_bonds([id]).unwrap();
+            editor.settle_atoms([atom, other])
+        }
+    };
+    match settled {
+        Ok(_) => true,
+        Err(
+            PlacementError::BuilderValence { .. }
+            | PlacementError::InvalidValence { .. }
+            | PlacementError::UnsupportedGeometry { .. },
+        ) => false,
+        Err(error) => panic!("settling failed: {error}"),
+    }
+}
+
+#[test]
+fn random_edits_keep_every_angle_of_a_tree_open() {
+    let mut random = Random(0x2545_f491_4f6c_dd1d);
+    for sequence in 0..300 {
+        let symbol = ["S", "P", "Se", "N", "C"][sequence % 5];
+        let (mut editor, _) = built(symbol);
+        for step in 0..12 {
+            let before = editor.clone();
+            if !random_edit(&mut editor, &mut random) {
+                editor = before;
+                continue;
+            }
+            for atom in editor.topology().atom_ids() {
+                let angles = neighbor_angles(&editor, atom);
+                assert!(
+                    angles.first().is_none_or(|smallest| *smallest >= 85.0),
+                    "sequence {sequence}, step {step}: {} has {angles:?}",
+                    atom_of(&editor, atom).element().symbol()
+                );
+            }
+        }
+        editor.finish().unwrap();
+    }
+}

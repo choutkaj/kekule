@@ -1,6 +1,7 @@
 //! Ideal substituent directions around one atom: electron-domain templates
 //! oriented on the atom's existing neighbors, staggered against the
-//! substituents of a single neighbor.
+//! substituents of a single neighbor, and fitted to all its neighbors for
+//! settling.
 use super::AtomShape;
 use crate::math::{Point3, Vector3};
 
@@ -258,6 +259,166 @@ fn fit_template(
     }
     best.map(|(_, sites, taken)| (sites, taken))
         .ok_or(DegenerateSites)
+}
+
+/// A held neighbor's deviation from its site weighs this much more than a
+/// turning neighbor's in a shape fit.
+const HELD_WEIGHT: f64 = 1.0e3;
+
+/// A shape oriented on an atom's neighbors.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct ShapeFit {
+    /// The sites that bonds take, unit vectors: the shape's sites less those
+    /// of its lone pairs.
+    pub(crate) sites: Vec<Vector3>,
+    /// The site of each neighbor direction, in their order.
+    pub(crate) taken: Vec<usize>,
+}
+
+impl ShapeFit {
+    /// The sites no neighbor takes, in order of preference.
+    pub(crate) fn free(&self) -> Vec<Vector3> {
+        (0..self.sites.len())
+            .filter(|index| !self.taken.contains(index))
+            .map(|index| self.sites[index])
+            .collect()
+    }
+}
+
+/// Orients the sites of `shape` that bonds take beside `lone_pairs` (lone
+/// pairs equatorial on a trigonal bipyramid, trans on an octahedron) on the
+/// unit neighbor `directions`, the first `held` of which do not move. The
+/// first lies on a site exactly, and any second direction not along it
+/// lies in the plane of its site; when both are held, the orientation may
+/// instead split their deviations alike. The other directions take the
+/// nearest free sites. The orientation with the smallest deviation wins,
+/// held directions weighing most, the first found on a tie.
+pub(crate) fn fit_shape(
+    shape: AtomShape,
+    lone_pairs: usize,
+    directions: &[Vector3],
+    held: usize,
+) -> Result<ShapeFit, DegenerateSites> {
+    let template = template(shape);
+    let all = (0..template.len()).collect::<Vec<_>>();
+    let lone = lone_pair_sites(shape, &all, &[], lone_pairs);
+    let sites = all
+        .into_iter()
+        .filter(|index| !lone.contains(index))
+        .map(|index| template[index])
+        .collect::<Vec<_>>();
+    let Some(&first) = directions.first() else {
+        return Err(DegenerateSites);
+    };
+    if directions.len() > sites.len() {
+        return Err(DegenerateSites);
+    }
+    let weight = |index: usize| if index < held { HELD_WEIGHT } else { 1.0 };
+    let mut best: Option<(f64, ShapeFit)> = None;
+    for a in 0..sites.len() {
+        // A second direction not along the first lies in the plane of its
+        // site; when both are held, the frame may instead split their
+        // deviations alike. Every direction may be that second, so nearly
+        // opposite neighbors leave the frame to another one.
+        let mut frames = Vec::new();
+        for (index, other) in directions.iter().enumerate().skip(1) {
+            if first.cross(*other).norm() <= 1.0e-3 {
+                continue;
+            }
+            for b in (0..sites.len()).filter(|b| *b != a) {
+                frames.extend(
+                    frame_rotation(sites[a], sites[b], first, *other)
+                        .map(|frame| (frame, Some((index, b)))),
+                );
+                if index < held {
+                    if let (Some(from), Some(to)) =
+                        (unit(sites[a] + sites[b]), unit(first + *other))
+                    {
+                        frames.extend(
+                            frame_rotation(from, sites[a], to, first)
+                                .map(|frame| (frame, Some((index, b)))),
+                        );
+                    }
+                }
+            }
+        }
+        if frames.is_empty() {
+            // All directions lie along the first, or their sites along its.
+            frames.extend(
+                frame_rotation(
+                    sites[a],
+                    perpendicular(sites[a]),
+                    first,
+                    perpendicular(first),
+                )
+                .map(|frame| (frame, None)),
+            );
+        }
+        for (frame, second) in frames {
+            let oriented = sites
+                .iter()
+                .map(|site| frame[0] * site.x + frame[1] * site.y + frame[2] * site.z)
+                .collect::<Vec<_>>();
+            let mut taken = vec![usize::MAX; directions.len()];
+            let mut used = vec![false; sites.len()];
+            taken[0] = a;
+            used[a] = true;
+            if let Some((index, b)) = second {
+                taken[index] = b;
+                used[b] = true;
+            }
+            // The rest take the free sites nearest them, best matches first.
+            let mut pairs = Vec::new();
+            for (index, direction) in directions.iter().enumerate() {
+                if taken[index] != usize::MAX {
+                    continue;
+                }
+                for (site_index, site) in oriented.iter().enumerate() {
+                    if !used[site_index] {
+                        pairs.push((site.dot(*direction), index, site_index));
+                    }
+                }
+            }
+            pairs.sort_by(|x, y| y.0.total_cmp(&x.0).then((x.1, x.2).cmp(&(y.1, y.2))));
+            for (_, index, site_index) in pairs {
+                if taken[index] == usize::MAX && !used[site_index] {
+                    taken[index] = site_index;
+                    used[site_index] = true;
+                }
+            }
+            let deviation = directions
+                .iter()
+                .zip(&taken)
+                .enumerate()
+                .map(|(index, (direction, site))| {
+                    weight(index) * (1.0 - oriented[*site].dot(*direction))
+                })
+                .sum::<f64>();
+            if best
+                .as_ref()
+                .is_none_or(|(score, _)| deviation < *score - 1.0e-9)
+            {
+                best = Some((
+                    deviation,
+                    ShapeFit {
+                        sites: oriented,
+                        taken,
+                    },
+                ));
+            }
+        }
+    }
+    best.map(|(_, fit)| fit).ok_or(DegenerateSites)
+}
+
+/// The smallest angle between two domains of `shape`, in degrees.
+pub(crate) fn smallest_angle(shape: AtomShape) -> f64 {
+    match shape {
+        AtomShape::Terminal | AtomShape::Linear => 180.0,
+        AtomShape::TrigonalPlanar => 120.0,
+        AtomShape::Tetrahedral => TETRAHEDRAL.to_degrees(),
+        AtomShape::TrigonalBipyramidal | AtomShape::Octahedral => 90.0,
+    }
 }
 
 /// The rotation, as the images of the unit axes, that takes `from` onto `to`

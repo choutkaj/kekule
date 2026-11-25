@@ -149,6 +149,12 @@ pub(crate) fn perceive_domains(input: DomainInput) -> (usize, usize) {
     (input.substituents + lone_pairs, lone_pairs)
 }
 
+/// Whether placement perceives the lone pairs of `element`, an s- or p-block
+/// element, so its shape follows its electrons rather than its neighbors.
+pub(crate) const fn models_lone_pairs(element: Element) -> bool {
+    valence_electrons(element.atomic_number()).is_some()
+}
+
 /// Valence electrons of s- and p-block elements; `None` elsewhere.
 const fn valence_electrons(atomic_number: u8) -> Option<u8> {
     Some(match atomic_number {
