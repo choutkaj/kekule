@@ -794,6 +794,9 @@ the main branch migrates by the table under "From the SampleSet API".
   node's labels once, and the checksum takes 16 bytes per step. A structure
   of a million atoms with full site labels reads about 2.8 times faster,
   holding less than half the memory, and writes about 1.4 times faster.
+  Input that ends inside a column read in chunks fails at the chunk's start,
+  and a `NativeReadOptions::max_input_bytes` limit inside that chunk is
+  reported instead of the early end.
 
 ### Removed
 
