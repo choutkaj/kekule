@@ -54,10 +54,10 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
-pub use crate::io::xyz::entry_points::{parse_reader, parse_str, write, write_to};
+pub use crate::io::xyz::entry_points::{frames, parse_reader, parse_str, write, write_to};
 pub use crate::io::{
-    XyzAtom, XyzDocument, XyzFrame, XyzFrameSelection, XyzInferredBond, XyzInterpretIssue,
-    XyzInterpretOptions, XyzInterpretation, XyzInterpretationReport, XyzParseOptions, XyzSource,
-    XyzStructureSetInterpretOptions, XyzStructureSetInterpretation, XyzWriteOptions,
-    DEFAULT_XYZ_MAX_ATOM_CONTACTS,
+    XyzAtom, XyzDocument, XyzFrame, XyzFrameSelection, XyzFrames, XyzInferredBond,
+    XyzInterpretIssue, XyzInterpretOptions, XyzInterpretation, XyzInterpretationReport,
+    XyzParseOptions, XyzSource, XyzStructureSetInterpretOptions, XyzStructureSetInterpretation,
+    XyzWriteOptions, DEFAULT_XYZ_MAX_ATOM_CONTACTS,
 };

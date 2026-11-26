@@ -281,7 +281,7 @@ impl IndexedFileTrajectoryReader {
             self.metadata.format(),
             self.fingerprint.clone(),
             Arc::clone(self.inner.source().shared_offsets()),
-            self.inner.source().facts().precision_mixed,
+            self.inner.source().facts(),
         )
     }
 
@@ -415,10 +415,8 @@ impl IndexedFileTrajectoryReader {
     /// again: the scan starts after the last of them, and verifies every new
     /// frame as opening does. Under [`TrajectoryOpenOptions::with_growing`] a
     /// final frame still being written stays pending
-    /// ([`Self::pending_byte_count`]) until a later refresh, and DCD frames
-    /// are counted in the file rather than checked against the header's
-    /// `NSET`; otherwise a partial frame is an error, and a DCD must hold
-    /// exactly the frames its header now counts. Sequential reads resume
+    /// ([`Self::pending_byte_count`]) until a later refresh; otherwise a
+    /// partial frame is an error. Sequential reads resume
     /// where they stopped and continue into the new frames, and
     /// [`Self::to_frame_index`] then exports them too.
     ///
@@ -791,9 +789,9 @@ pub fn open_trajectory(
             )
         }
         TrajectoryFormat::Xtc => {
-            let cell_policy = options.xtc.cell_policy();
+            let zero_box = options.xtc.zero_box();
             let reader = xtc::XtcReader::open(reader, topology, options.xtc, source)?;
-            let metadata = FileTrajectoryMetadata::xtc(reader.first_info(), cell_policy, None);
+            let metadata = FileTrajectoryMetadata::xtc(reader.first_info(), zero_box, None);
             (
                 SequentialReaderInner::Xtc(reader),
                 metadata,
@@ -926,18 +924,21 @@ pub fn open_indexed_trajectory_with(
 /// Returns [`TrajectoryIoErrorKind::IndexMismatch`] when the index was built
 /// for a different file or the file changed since: the indexed bytes, the
 /// format, the first frame offset, or DCD steps and times under the reader's
-/// time policy disagree, or a DCD opened without
-/// [`TrajectoryOpenOptions::with_growing`] does not hold the frames its
-/// header counts. Returns the open and header errors of [`open_trajectory`],
+/// time policy disagree. Returns the open and header errors of [`open_trajectory`],
 /// the decoding error of the first invalid appended frame, and the frame
 /// index limits of `options` bound the index as
-/// [`TrajectoryIoErrorKind::LimitExceeded`]. Later reads return
+/// [`TrajectoryIoErrorKind::LimitExceeded`], its frames without positions
+/// counting against the frame limit. An index that records TRR frames
+/// without positions or XYZ frames with extra columns fails with
+/// [`TrajectoryIoErrorKind::UnsupportedVariant`] under options that reject
+/// them. Later reads return
 /// [`TrajectoryIoErrorKind::IndexMismatch`] for a frame that does not end
 /// where the index says or records another time or step, besides the
 /// codec's decoding errors.
 ///
 /// [`TrajectoryIoErrorKind::IndexMismatch`]: crate::traj::TrajectoryIoErrorKind::IndexMismatch
 /// [`TrajectoryIoErrorKind::LimitExceeded`]: crate::traj::TrajectoryIoErrorKind::LimitExceeded
+/// [`TrajectoryIoErrorKind::UnsupportedVariant`]: crate::traj::TrajectoryIoErrorKind::UnsupportedVariant
 pub fn open_indexed_trajectory_from_index(
     path: impl AsRef<Path>,
     topology: impl Into<Arc<Topology>>,
@@ -1030,21 +1031,28 @@ fn open_indexed(
                     Reason::PrefixMismatch,
                 ));
             }
-            if index.frame_count() > index_hard_capacity(&options.limits) {
+            let capacity = index_hard_capacity(&options.limits);
+            let max_frames = options.limits.max_frames();
+            // Frames without positions count against the frame limit too.
+            let exceeded = if index.frame_count() > capacity {
+                Some(LimitExceeded::new(
+                    Resource::Frames,
+                    capacity,
+                    index.frame_count(),
+                ))
+            } else {
+                (index.covered_frames() > max_frames).then(|| {
+                    LimitExceeded::new(Resource::Frames, max_frames, index.covered_frames())
+                })
+            };
+            if let Some(exceeded) = exceeded {
                 return Err(TrajectoryIoError::codec(
                     TrajectoryIoErrorKind::LimitExceeded,
                     TrajectoryIoOperation::Open,
                     Some(format),
                 )
                 .with_source_label(&label)
-                .exceeding(
-                    Part::Index,
-                    LimitExceeded::new(
-                        Resource::Frames,
-                        index_hard_capacity(&options.limits),
-                        index.frame_count(),
-                    ),
-                ));
+                .exceeding(Part::Index, exceeded));
             }
             Some(index)
         }
@@ -1070,7 +1078,7 @@ fn open_indexed(
         TrajectoryFormat::Xyz => {
             let xyz_options = options.xyz;
             let reader = match imported {
-                Some((offsets, _)) => {
+                Some((offsets, facts)) => {
                     let mut reader = xyz::IndexedXyzReader::from_offsets(
                         reader,
                         topology,
@@ -1078,6 +1086,7 @@ fn open_indexed(
                         source,
                         offsets,
                         growing,
+                        facts,
                     )?;
                     reader.inner.extend(growing, &control)?;
                     reader
@@ -1109,28 +1118,8 @@ fn open_indexed(
                         dcd_options,
                         source,
                         offsets,
-                        growing,
                     )?;
-                    reader.inner.extend(growing, &control).map_err(|error| {
-                        if error.kind() == TrajectoryIoErrorKind::InconsistentMetadata
-                            && error.expected().is_some()
-                        {
-                            // The frames do not add up to the header's count.
-                            index_mismatch(
-                                TrajectoryIoOperation::Open,
-                                TrajectoryFormat::Dcd,
-                                &label,
-                                Reason::IndexNsetMismatch,
-                            )
-                            .with_written_counts(
-                                error.expected().unwrap_or(0),
-                                error.actual().unwrap_or(0),
-                            )
-                            .with_source(error)
-                        } else {
-                            error
-                        }
-                    })?;
+                    reader.inner.extend(growing, &control)?;
                     reader
                 }
                 None => dcd::IndexedDcdReader::build(
@@ -1150,14 +1139,14 @@ fn open_indexed(
         TrajectoryFormat::Trr => {
             let trr_options = options.trr;
             let reader = match imported {
-                Some((offsets, precision_mixed)) => {
+                Some((offsets, facts)) => {
                     let mut reader = trr::IndexedTrrReader::from_offsets(
                         reader,
                         topology,
                         trr_options,
                         source,
                         offsets,
-                        precision_mixed,
+                        facts,
                     )?;
                     reader.inner.extend(growing, &control)?;
                     reader
@@ -1181,7 +1170,7 @@ fn open_indexed(
             (IndexedReaderInner::Trr(Box::new(reader)), metadata)
         }
         TrajectoryFormat::Xtc => {
-            let cell_policy = options.xtc.cell_policy();
+            let zero_box = options.xtc.zero_box();
             let xtc_options = options.xtc;
             let reader = match imported {
                 Some((offsets, _)) => {
@@ -1206,8 +1195,7 @@ fn open_indexed(
                 .map_err(unfinished)?,
             };
             let count = reader.frame_count().unwrap_or(0);
-            let metadata =
-                FileTrajectoryMetadata::xtc(reader.first_info(), cell_policy, Some(count));
+            let metadata = FileTrajectoryMetadata::xtc(reader.first_info(), zero_box, Some(count));
             (IndexedReaderInner::Xtc(reader), metadata)
         }
     };
@@ -1240,17 +1228,18 @@ fn open_indexed(
         })?
     };
     *inner.file().slot().indexed() = Some(fingerprint.clone());
-    let note = match imported_count {
+    let mut notes = vec![match imported_count {
         Some(imported) => TrajectoryOpenNote::IndexImported {
             format,
             appended_frames: count - imported,
         },
         None => TrajectoryOpenNote::IndexVerified(format),
-    };
+    }];
+    notes.extend(content_notes(inner.source().facts(), count, growing));
     let report = TrajectoryOpenReport {
         selected_format: format,
         detection_evidence: detection.evidence,
-        notes: vec![note],
+        notes,
     };
     Ok(IndexedFileTrajectoryReader {
         inner,
@@ -1260,6 +1249,32 @@ fn open_indexed(
         label,
         growing,
     })
+}
+
+/// The notes on what an index of `count` frames, built under `growing`,
+/// found in the file besides its frames.
+fn content_notes(
+    facts: IndexFacts,
+    count: usize,
+    growing: bool,
+) -> impl Iterator<Item = TrajectoryOpenNote> {
+    let skipped = facts.skipped_frames.saturating_add(facts.trailing_frames);
+    // A writer updates the header of a growing file after its frames.
+    let declared = facts
+        .declared_frames
+        .filter(|&declared| declared != count && !growing);
+    [
+        declared.map(|declared| TrajectoryOpenNote::DcdFrameCount {
+            declared,
+            counted: count,
+        }),
+        (skipped > 0).then_some(TrajectoryOpenNote::TrrFramesWithoutPositions(skipped)),
+        (facts.extra_column_frames > 0).then_some(TrajectoryOpenNote::XyzExtraColumns(
+            facts.extra_column_frames,
+        )),
+    ]
+    .into_iter()
+    .flatten()
 }
 
 /// A growing file that does not yet hold its first frame or header.

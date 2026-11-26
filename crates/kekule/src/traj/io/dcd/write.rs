@@ -610,15 +610,7 @@ pub(super) fn encode_cell(
         )
         .with_source(error)
     })?;
-    if a.x <= 0.0 || a.y != 0.0 || a.z != 0.0 || b.y <= 0.0 || b.z != 0.0 || c.z <= 0.0 {
-        return Err(codec_context(
-            TrajectoryIoErrorKind::UnsupportedVariant,
-            TrajectoryIoOperation::WriteFrame,
-            Some(FORMAT),
-            source_label,
-            Reason::CellNotStandard,
-        ));
-    }
+    let [a, b, c] = standard_orientation([a, b, c], FORMAT, source_label)?;
     let length =
         |vector: Vector3| (vector.x * vector.x + vector.y * vector.y + vector.z * vector.z).sqrt();
     let dot =

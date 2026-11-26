@@ -6,10 +6,11 @@ use kekule::math::{PeriodicCell, Point3, Vector3};
 use kekule::properties::{PropertyColumn, PropertyKey, PropertyValue};
 use kekule::topology::Topology;
 use kekule::traj::io::xtc::{
-    IndexedXtcReader, XtcCellPolicy, XtcMagic, XtcReadOptions, XtcReader, XtcWriteOptions,
-    XtcWriter,
+    IndexedXtcReader, XtcMagic, XtcReadOptions, XtcReader, XtcWriteOptions, XtcWriter,
 };
-use kekule::traj::io::{TrajectoryIoLimits, TrajectoryOpenOptions, TrajectoryWriteOptions};
+use kekule::traj::io::{
+    TrajectoryIoLimits, TrajectoryOpenOptions, TrajectoryWriteOptions, ZeroBoxPolicy,
+};
 use kekule::traj::{
     FrameBuffer, SeekableTrajectoryReader, TrajectoryFormat, TrajectoryIoErrorKind,
     TrajectoryIoOperation, TrajectoryReader, TrajectoryWriter,
@@ -130,9 +131,11 @@ fn xtc_rejects_cells_degenerate_after_f32_rounding_before_appending_bytes() {
         PeriodicCell::new(
             Quantity::new(
                 [
-                    Vector3::new(1.0, 1.0, 0.0),
-                    Vector3::new(1.0, 1.0 + 1e-8, 0.0),
-                    Vector3::new(0.0, 0.0, 1.0),
+                    Vector3::new(1.0, 0.0, 0.0),
+                    Vector3::new(0.0, 1.0, 0.0),
+                    // Just above the smallest volume a cell may have; f32
+                    // rounds it to that volume.
+                    Vector3::new(0.0, 0.0, f64::EPSILON * (1.0 + 2.0_f64.powi(-30))),
                 ],
                 NANOMETER,
             ),
@@ -491,7 +494,7 @@ fn xtc_exact_frame_and_index_limits_still_allow_clean_eof() {
 }
 
 #[test]
-fn xtc_signed_xdr_counts_and_steps_are_validated_before_private_adaptation() {
+fn xtc_signed_xdr_counts_and_unsigned_steps_are_validated_before_private_adaptation() {
     let topology = topology(3);
     let valid = encoded_frame(&topology, XtcMagic::Xtc1995, 1000.0, 0.0, 4);
 
@@ -519,27 +522,24 @@ fn xtc_signed_xdr_counts_and_steps_are_validated_before_private_adaptation() {
         assert_eq!(context.byte_offset(), Some(expected_offset));
     }
 
-    let mut negative_step = valid.clone();
-    negative_step[8..12].copy_from_slice(&(-1_i32).to_be_bytes());
-    let error = XtcReader::new(
-        Cursor::new(negative_step),
+    // GROMACS writes the low 32 bits of a step from 2^31 on, which read as
+    // a negative signed field.
+    let mut wrapped_step = valid.clone();
+    wrapped_step[8..12].copy_from_slice(&i32::MIN.to_be_bytes());
+    let mut reader = XtcReader::new(
+        Cursor::new(wrapped_step),
         Arc::clone(&topology),
         TrajectoryOpenOptions::default()
             .with_limits(TrajectoryIoLimits::default())
-            .with_source_label("negative-step.xtc"),
+            .with_source_label("wrapped-step.xtc"),
     )
-    .err()
     .unwrap();
-    assert_eq!(
-        codec_kind(&error),
-        Some(TrajectoryIoErrorKind::NegativeOrUnrepresentableStep)
-    );
-    let context = error;
-    assert_eq!(context.frame(), Some(0));
-    assert_eq!(context.byte_offset(), Some(8));
+    let mut destination = FrameBuffer::new(Arc::clone(&topology));
+    assert!(reader.read_next(&mut destination).unwrap());
+    assert_eq!(destination.frame_view().step(), Some(1 << 31));
 
     let mut maximum_step = valid.clone();
-    maximum_step[8..12].copy_from_slice(&i32::MAX.to_be_bytes());
+    maximum_step[8..12].copy_from_slice(&(-1_i32).to_be_bytes());
     let mut reader = XtcReader::new(
         Cursor::new(maximum_step),
         Arc::clone(&topology),
@@ -550,7 +550,7 @@ fn xtc_signed_xdr_counts_and_steps_are_validated_before_private_adaptation() {
     .unwrap();
     let mut destination = FrameBuffer::new(Arc::clone(&topology));
     assert!(reader.read_next(&mut destination).unwrap());
-    assert_eq!(destination.frame_view().step(), Some(i32::MAX as u64));
+    assert_eq!(destination.frame_view().step(), Some(u64::from(u32::MAX)));
 
     let mut maximum_count = valid.clone();
     maximum_count[4..8].copy_from_slice(&i32::MAX.to_be_bytes());
@@ -575,12 +575,12 @@ fn xtc_signed_xdr_counts_and_steps_are_validated_before_private_adaptation() {
         TrajectoryWriteOptions::new(TrajectoryFormat::Xtc).with_source_label("signed-writer.xtc"),
     )
     .unwrap();
-    let maximum = source_frame(&topology, 0.0, i32::MAX as u64);
+    let maximum = source_frame(&topology, 0.0, u64::from(u32::MAX));
     writer.write_frame(maximum.frame_view()).unwrap();
     let bytes = writer.finish().unwrap().into_inner();
     assert_eq!(
-        i32::from_be_bytes(bytes[8..12].try_into().unwrap()),
-        i32::MAX
+        u32::from_be_bytes(bytes[8..12].try_into().unwrap()),
+        u32::MAX
     );
 
     let mut writer = XtcWriter::new(
@@ -589,7 +589,7 @@ fn xtc_signed_xdr_counts_and_steps_are_validated_before_private_adaptation() {
         TrajectoryWriteOptions::new(TrajectoryFormat::Xtc).with_source_label("overflow-writer.xtc"),
     )
     .unwrap();
-    let overflow = source_frame(&topology, 0.0, i32::MAX as u64 + 1);
+    let overflow = source_frame(&topology, 0.0, u64::from(u32::MAX) + 1);
     assert_eq!(
         writer.write_frame(overflow.frame_view()).map_err(seen),
         Err(codec_error(
@@ -1030,7 +1030,7 @@ fn xtc_writer_bounds_scaled_coordinates_and_axis_spans_like_gromacs() {
 #[test]
 fn xtc_zero_box_policy_round_trips_frames_without_a_cell() {
     // GROMACS writes an all-zero box for non-periodic systems; the reader's
-    // ZeroMatrixAsAbsent policy reads it as no cell, and the writer's matching
+    // NoCell zero-box policy reads it as no cell, and the writer's matching
     // policy writes it, so such trajectories round-trip.
     let topology = topology(12);
     let frames = [(0.0, 4_u64), (0.01, 5)].map(|(shift, step)| {
@@ -1060,7 +1060,7 @@ fn xtc_zero_box_policy_round_trips_frames_without_a_cell() {
         Cursor::new(Vec::new()),
         Arc::clone(&topology),
         TrajectoryWriteOptions::from(
-            XtcWriteOptions::default().with_cell_policy(XtcCellPolicy::ZeroMatrixAsAbsent),
+            XtcWriteOptions::default().with_zero_box(ZeroBoxPolicy::NoCell),
         )
         .with_source_label("vacuum.xtc"),
     )
@@ -1072,7 +1072,7 @@ fn xtc_zero_box_policy_round_trips_frames_without_a_cell() {
     let mut reader = XtcReader::new(
         Cursor::new(bytes),
         Arc::clone(&topology),
-        XtcReadOptions::default().with_cell_policy(XtcCellPolicy::ZeroMatrixAsAbsent),
+        XtcReadOptions::default().with_zero_box(ZeroBoxPolicy::NoCell),
     )
     .unwrap();
     let mut destination = reader.frame_buffer();
@@ -1127,4 +1127,38 @@ fn independently_generated_mdanalysis_xtc_matches_lossy_profile() {
     assert_x_close(&buffer, &expected, 0.0011);
     assert_eq!(buffer.frame_view().step(), Some(1));
     assert!(!reader.read_next(&mut buffer).unwrap());
+}
+
+#[test]
+fn xtc_writer_refuses_cells_outside_the_gromacs_orientation() {
+    // GROMACS reads only the lower triangle of the box, so it would read a
+    // turned cell as another box.
+    let topology = topology(12);
+    let mut frame = source_frame(&topology, 0.0, 0);
+    frame.geometry_mut().set_cell(Some(
+        PeriodicCell::new(
+            Quantity::new(
+                [
+                    Vector3::new(0.0, 2.0, 0.0),
+                    Vector3::new(-2.0, 0.0, 0.0),
+                    Vector3::new(0.0, 0.0, 2.0),
+                ],
+                NANOMETER,
+            ),
+            [true; 3],
+        )
+        .unwrap(),
+    ));
+    let mut writer = XtcWriter::new(
+        Cursor::new(Vec::new()),
+        Arc::clone(&topology),
+        TrajectoryWriteOptions::new(TrajectoryFormat::Xtc).with_source_label("rotated.xtc"),
+    )
+    .unwrap();
+    let error = writer.write_frame(frame.frame_view()).unwrap_err();
+    assert_eq!(
+        codec_kind(&error),
+        Some(TrajectoryIoErrorKind::UnsupportedVariant)
+    );
+    assert!(writer.writer().get_ref().is_empty());
 }

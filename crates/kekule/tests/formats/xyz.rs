@@ -839,3 +839,136 @@ fn long_metal_carbon_contacts_are_reported_unbonded() {
     assert_eq!(*atoms, [index(0), index(1)]);
     assert!((distance.value_in(ANGSTROM).unwrap() - 2.28).abs() < 1e-9);
 }
+
+/// A reader that counts the bytes taken from it.
+struct Counting<'a> {
+    bytes: &'a [u8],
+    taken: std::rc::Rc<std::cell::Cell<usize>>,
+}
+
+impl std::io::Read for Counting<'_> {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        let read = std::io::Read::read(&mut self.bytes, buffer)?;
+        self.taken.set(self.taken.get() + read);
+        Ok(read)
+    }
+}
+
+#[test]
+fn the_first_frame_streams_without_the_rest_of_the_input() {
+    // A complete frame, a frame cut short, and a long tail.
+    let first = "1\nhelium\nHe 0 0 0\n";
+    let text = format!("{first}2\n\nHe 0 0 0\n{}", "x".repeat(1 << 20));
+    let taken = std::rc::Rc::new(std::cell::Cell::new(0));
+    let reader = Counting {
+        bytes: text.as_bytes(),
+        taken: std::rc::Rc::clone(&taken),
+    };
+    let mut frames = xyz::frames(reader, Default::default());
+    let frame = frames.next().unwrap().unwrap();
+    assert_eq!(frame.comment(), "helium");
+    assert_eq!(frame.atoms().len(), 1);
+    // One buffer's worth at most.
+    assert!(taken.get() <= 8 * 1024, "{} bytes read", taken.get());
+    let structure = xyz::XyzDocument::new(vec![frame])
+        .interpret(XyzInterpretOptions::default().with_frame(XyzFrameSelection::First))
+        .unwrap()
+        .into_structure();
+    assert_eq!(structure.topology().atom_count(), 1);
+    // The second frame fails at its second atom line and ends the stream.
+    let error = frames.next().unwrap().unwrap_err();
+    assert_eq!(error.kind(), DiagnosticKind::Syntax);
+    assert_eq!(error.location().map(|at| at.line()), Some(7));
+    assert!(frames.next().is_none());
+    // The whole input does not parse.
+    assert!(xyz::parse_str(&text, Default::default()).is_err());
+}
+
+#[test]
+fn streamed_frames_are_the_parsed_frames_and_fail_as_parsing_does() {
+    for text in [
+        WATER,
+        "2\r\n water? \r\nO 0 0 0\r\nH 0.96 0 0 0.41 charge\r\n",
+        "1\rHe\rHe 0 0 0\r1\r\rNe 1 0 0",
+        "1\n\nHe 0 0 0\n\n \n",
+        "",
+    ] {
+        let streamed = xyz::frames(text.as_bytes(), Default::default())
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        let parsed = xyz::parse_str(text, Default::default()).unwrap();
+        assert_eq!(streamed, parsed.frames(), "{text:?}");
+    }
+    for text in [
+        "x\n\n",
+        "0\n\n",
+        "2\n\nHe 0 0 0\n",
+        "1\n\nHe 0 0\n",
+        "1\n\nHe 0 nan 0\n",
+        "1\n\nHe 0 0 0\n\n1\n",
+        "1\n",
+    ] {
+        let streamed = xyz::frames(text.as_bytes(), Default::default())
+            .find_map(Result::err)
+            .unwrap();
+        let parsed = xyz::parse_str(text, Default::default()).unwrap_err();
+        assert_eq!(streamed.kind(), parsed.kind(), "{text:?}");
+        assert_eq!(streamed.location(), parsed.location(), "{text:?}");
+        assert_eq!(streamed.to_string(), parsed.to_string(), "{text:?}");
+    }
+}
+
+#[test]
+fn streamed_limits_count_the_input_read_so_far() {
+    let first = "1\n\nHe 0 0 0\n";
+    let text = format!("{first}{first}");
+    let options = xyz::XyzParseOptions::default().with_max_input_bytes(first.len());
+    let mut frames = xyz::frames(text.as_bytes(), options);
+    assert!(frames.next().unwrap().is_ok());
+    let error = frames.next().unwrap().unwrap_err();
+    assert_eq!(error.kind(), DiagnosticKind::Limit);
+    assert_eq!(error.location().map(|at| at.line()), Some(4));
+    assert!(frames.next().is_none());
+
+    let options = xyz::XyzParseOptions::default().with_max_atom_records(1);
+    let mut frames = xyz::frames(text.as_bytes(), options);
+    assert!(frames.next().unwrap().is_ok());
+    let error = frames.next().unwrap().unwrap_err();
+    assert_eq!(error.kind(), DiagnosticKind::Limit);
+    assert!(frames.next().is_none());
+
+    let error = xyz::frames(&b"1\n\xff\nHe 0 0 0\n"[..], Default::default())
+        .next()
+        .unwrap()
+        .unwrap_err();
+    assert_eq!(error.kind(), DiagnosticKind::Io);
+    assert_eq!(error.location().map(|at| at.line()), Some(2));
+}
+
+/// A reader of `x` without end, and no line end.
+struct Endless;
+
+impl std::io::Read for Endless {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        buffer.fill(b'x');
+        Ok(buffer.len())
+    }
+}
+
+#[test]
+fn an_endless_line_ends_at_the_input_limit() {
+    let options = xyz::XyzParseOptions::default().with_max_input_bytes(64);
+    let error = xyz::frames(Endless, options).next().unwrap().unwrap_err();
+    assert_eq!(error.kind(), DiagnosticKind::Limit);
+    assert_eq!(error.location().map(|at| at.line()), Some(1));
+
+    // After a complete frame, the line that runs on fails and ends the stream.
+    let first = "1\n\nHe 0 0 0\n";
+    let reader = std::io::Read::chain(first.as_bytes(), Endless);
+    let mut frames = xyz::frames(reader, options);
+    assert!(frames.next().unwrap().is_ok());
+    let error = frames.next().unwrap().unwrap_err();
+    assert_eq!(error.kind(), DiagnosticKind::Limit);
+    assert_eq!(error.location().map(|at| at.line()), Some(4));
+    assert!(frames.next().is_none());
+}

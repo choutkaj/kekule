@@ -1,7 +1,7 @@
 //! The public XYZ entry points that `crate::xyz` re-exports.
 
 use crate::diagnostics::{FormatError, WriteReport};
-use crate::io::{XyzDocument, XyzParseOptions, XyzSource, XyzWriteOptions};
+use crate::io::{XyzDocument, XyzFrames, XyzParseOptions, XyzSource, XyzWriteOptions};
 
 /// Parses XYZ frames without assigning molecular meaning. `options` sets
 /// the resource limits.
@@ -35,6 +35,40 @@ pub fn parse_reader(
     options: XyzParseOptions,
 ) -> Result<XyzDocument, FormatError> {
     crate::io::parse_xyz_reader(reader, options)
+}
+
+/// Streams the frames of an XYZ input from `reader`, one at a time.
+///
+/// Each item is one frame or the error that ends the stream: a frame's
+/// atom-count line says where the next begins, so none follows a malformed
+/// frame. Memory is bounded by one frame, and the limits of `options` apply
+/// to the input read so far. Taking only the first frame reads little more
+/// of the input than that frame.
+///
+/// ```
+/// use kekule::xyz::{self, XyzDocument};
+///
+/// // A complete frame, then one cut short.
+/// let text = "1\nhelium\nHe 0 0 0\n2\n\nHe 0 0 0\n";
+/// let mut frames = xyz::frames(text.as_bytes(), Default::default());
+/// let first = frames.next().unwrap()?;
+/// assert_eq!(first.comment(), "helium");
+/// assert!(frames.next().unwrap().is_err());
+/// assert!(frames.next().is_none());
+/// let structure = XyzDocument::new(vec![first])
+///     .interpret(Default::default())?
+///     .into_structure();
+/// assert_eq!(structure.topology().atom_count(), 1);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+///
+/// # Errors
+///
+/// An item is the [`FormatError`] [`parse_str`] gives for its frame, at the
+/// line in the input; a read failure or a line that is not UTF-8 is of kind
+/// [`DiagnosticKind::Io`](crate::diagnostics::DiagnosticKind::Io).
+pub fn frames<R: std::io::Read>(reader: R, options: XyzParseOptions) -> XyzFrames<R> {
+    XyzFrames::new(reader, options)
 }
 
 /// Writes a structure as one frame, or a structure set as one frame per

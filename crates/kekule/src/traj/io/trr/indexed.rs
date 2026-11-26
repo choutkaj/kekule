@@ -52,16 +52,18 @@ impl<R: Read + Seek> IndexedTrrReader<R> {
         Ok(Self { inner })
     }
 
-    /// Opens the stream with previously verified `offsets` instead of
-    /// scanning it; random reads verify each frame against them, including
-    /// that its scalar width is the first frame's unless `precision_mixed`.
+    /// Opens the stream with previously verified `offsets` and the `facts`
+    /// of their scans instead of scanning it; random reads verify each frame
+    /// against them, including that its scalar width is the first frame's
+    /// unless the frames mix widths. Offsets whose frames follow frames
+    /// without positions need options that skip those.
     pub(crate) fn from_offsets(
         reader: R,
         topology: Arc<Topology>,
         options: TrrReadOptions,
         source: ReadSource,
         offsets: Arc<FrameOffsets>,
-        precision_mixed: bool,
+        facts: IndexFacts,
     ) -> Result<Self, TrajectoryIoError> {
         let mut inner = TrrReader::open(reader, topology, options, source)?;
         offsets.verify_start(
@@ -69,8 +71,19 @@ impl<R: Read + Seek> IndexedTrrReader<R> {
             TrajectoryFormat::Trr,
             &inner.source.label,
         )?;
-        inner.precision_mixed = precision_mixed;
-        inner.index_mixed = precision_mixed;
+        if facts.skipped_frames > 0
+            && inner.options.frames_without_positions != UnsupportedContent::Report
+        {
+            return Err(codec_context(
+                TrajectoryIoErrorKind::UnsupportedVariant,
+                TrajectoryIoOperation::Open,
+                Some(FORMAT),
+                &inner.source.label,
+                Reason::IndexedFramesWithoutPositions(facts.skipped_frames),
+            ));
+        }
+        inner.precision_mixed = facts.precision_mixed;
+        inner.set_index_facts(facts);
         Ok(Self {
             inner: IndexedReader::new(inner, offsets),
         })
@@ -87,7 +100,7 @@ impl<R: Read + Seek> IndexedTrrReader<R> {
             reader.options.clone(),
             reader.source.clone(),
             Arc::clone(self.inner.shared_offsets()),
-            reader.index_mixed,
+            reader.index_facts(),
         )
     }
 
@@ -102,15 +115,17 @@ impl<R: Read + Seek> IndexedTrrReader<R> {
 }
 
 /// The index facts record whether the indexed frames mix scalar widths,
-/// apart from what sequential reads have seen. A random read checks the
-/// frame's stamp, and its scalar width against the first frame's unless the
-/// index is mixed.
+/// apart from what sequential reads have seen, and how many frames without
+/// positions the scans skipped. A frame's extent begins with the frames
+/// without positions before it; those after the last frame stay outside the
+/// index, and every scan reads them again. A random read checks the frame's stamp, and
+/// its scalar width against the first frame's unless the index is mixed.
 impl<R: Read + Seek> IndexedCodec for TrrReader<R> {
     type Stream = R;
     type Frame = TrrDecodedFrame;
-    /// The header read ahead, where it starts, and whether sequential reads
-    /// have seen mixed widths.
-    type State = (Option<TrrFrameHeader>, u64, bool);
+    /// The header read ahead, where it starts, whether sequential reads have
+    /// seen mixed widths, and the frames without positions they skipped.
+    type State = (Option<TrrFrameHeader>, u64, bool, usize);
     const FORMAT: TrajectoryFormat = FORMAT;
     const SEEK_OPERATION: TrajectoryIoOperation = TrajectoryIoOperation::Index;
 
@@ -139,24 +154,33 @@ impl<R: Read + Seek> IndexedCodec for TrrReader<R> {
             self.pending_header.clone(),
             self.current_header_offset,
             self.precision_mixed,
+            self.skipped_before,
         )
     }
 
-    fn restore_state(&mut self, (pending, header_offset, precision_mixed): Self::State) {
+    fn restore_state(
+        &mut self,
+        (pending, header_offset, precision_mixed, skipped_before): Self::State,
+    ) {
         self.pending_header = pending;
         self.current_header_offset = header_offset;
         self.precision_mixed = precision_mixed;
+        self.skipped_before = skipped_before;
     }
 
     fn index_facts(&self) -> IndexFacts {
         IndexFacts {
-            declared_frames: None,
             precision_mixed: self.index_mixed,
+            skipped_frames: self.index_skipped,
+            trailing_frames: self.index_trailing,
+            ..IndexFacts::default()
         }
     }
 
     fn set_index_facts(&mut self, facts: IndexFacts) {
         self.index_mixed = facts.precision_mixed;
+        self.index_skipped = facts.skipped_frames;
+        self.index_trailing = facts.trailing_frames;
     }
 
     fn frame_pending(&self) -> bool {
@@ -171,6 +195,9 @@ impl<R: Read + Seek> IndexedCodec for TrrReader<R> {
         }
         self.current_header_offset = end;
         self.precision_mixed = self.index_mixed;
+        // The scan reads the frames after the last indexed one again.
+        self.index_trailing = 0;
+        self.skipped_before = self.index_skipped;
         Ok(())
     }
 
@@ -186,14 +213,43 @@ impl<R: Read + Seek> IndexedCodec for TrrReader<R> {
         }
     }
 
+    fn index_full(
+        &mut self,
+        indexed: usize,
+        _growing: bool,
+        limit: LimitExceeded,
+        control: &IndexBuildControl<'_>,
+    ) -> Result<u64, TrajectoryIoError> {
+        if self.options.frames_without_positions != UnsupportedContent::Report {
+            return end_full_index(self, indexed, limit);
+        }
+        // Frames without positions take no index entry, so the scan reads on
+        // past them. Only a frame with positions overfills the index.
+        match self.next_positioned_header(Some(control))? {
+            None => {
+                self.index_trailing = self.skipped_run;
+                Ok(0)
+            }
+            Some(_) => Err(full_index_error(FORMAT, &self.source.label, indexed, limit)),
+        }
+    }
+
     fn index_next(
         &mut self,
         _indexed: usize,
         offset: u64,
         _growing: bool,
+        control: &IndexBuildControl<'_>,
     ) -> Result<Option<FrameStamp>, TrajectoryIoError> {
-        match self.parse_next() {
-            Ok(decoded) => Ok(decoded.map(|decoded| decoded.header.stamp())),
+        match self.parse_next_with(Some(control)) {
+            Ok(Some(decoded)) => {
+                self.index_skipped = self.index_skipped.saturating_add(self.skipped_run);
+                Ok(Some(decoded.header.stamp()))
+            }
+            Ok(None) => {
+                self.index_trailing = self.skipped_run;
+                Ok(None)
+            }
             Err(error) => Err(frame_offset_context(error, self.frame_cursor, offset)),
         }
     }
@@ -201,6 +257,9 @@ impl<R: Read + Seek> IndexedCodec for TrrReader<R> {
     fn start_read(&mut self, offset: u64) {
         self.pending_header = None;
         self.current_header_offset = offset;
+        // The frames without positions before this one are not counted, so
+        // the limit bounds only the ones this read skips.
+        self.skipped_before = 0;
     }
 
     fn read_frame(&mut self) -> Result<Option<TrrDecodedFrame>, TrajectoryIoError> {

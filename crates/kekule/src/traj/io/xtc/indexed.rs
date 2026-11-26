@@ -166,6 +166,7 @@ impl<R: Read + Seek> IndexedCodec for XtcReader<R> {
         _indexed: usize,
         offset: u64,
         _growing: bool,
+        _control: &IndexBuildControl<'_>,
     ) -> Result<Option<FrameStamp>, TrajectoryIoError> {
         match self.parse_next() {
             Ok(info) => Ok(info.map(|info| info.stamp())),

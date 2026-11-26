@@ -865,7 +865,9 @@ Molfile, one SDF record, one SMILES line, one CIF data block, or one PDB entry.
 SDF and SMILES readers split records by line framing alone, so a malformed
 record fails alone and these formats stream with memory bounded by one record.
 CIF block boundaries are lexical, so malformed framing fails the rest of the
-input. A file-level document is a convenience collection of parsed records;
+input. XYZ frames stream one at a time with memory bounded by one frame; each
+frame's atom count frames it, so the first malformed frame ends the stream.
+A file-level document is a convenience collection of parsed records;
 interpretation is always per record and never depends on a sibling record.
 
 A format document is the typed syntax of one record or block, with source
@@ -905,7 +907,7 @@ the records they concern.
 
 Coordinate-only trajectory formats are the deliberate exception: they carry no
 chemistry, so codecs decode frames against a caller-supplied topology. XYZ is
-read both ways: `kekule::xyz` interprets its frames into structures through
+read both ways, from the same atom lines: `kekule::xyz` interprets its frames into structures through
 this pipeline, and `kekule::traj` streams its coordinates against a topology.
 `kekule::xyz::write` writes a structure or a structure set, and the
 `kekule::traj` codec streams frames in the same text.

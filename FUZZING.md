@@ -21,7 +21,7 @@ per reported inferred bond. The trajectory targets are `trajectory_detection`,
 accepted one re-encoding to the same bytes, and opens a fixture of every
 format through checksummed indexes with fuzzed offsets, each with the step
 and time of a frame of the file: every frame read through one must be a frame
-of the file. Its seeds are the version 2 indexes of those fixtures.
+of the file. Its seeds are the version 3 indexes of those fixtures.
 `native` decodes Kekule's native binary format under small resource limits;
 every successfully decoded object, of any readable version, must encode in the
 current version, decode again, and re-encode to the same bytes. Its seeds,

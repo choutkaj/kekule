@@ -55,10 +55,10 @@
 //!
 //! | Format | Reader | Writer |
 //! |---|---|---|
-//! | XYZ | strict constant-count multi-frame element/x/y/z text; configured length unit (angstrom by default) | deterministic strict text; optional frame state is rejected unless omitted, and omitted frame state and topology content are reported |
-//! | DCD | common 32-bit-record `CORD` files in either byte order, common unit cells, fixed-atom reconstruction, and strict `NSET` | canonical all-atom `CORD` in either byte order with optional unit cells; velocities, forces, properties, and times without a `DELTA` policy rejected unless omitted |
-//! | TRR | GROMACS XDR frames with f32 or f64 position, box, velocity, and force blocks | one explicit f32 or f64 precision with per-frame optional blocks; properties rejected unless omitted; frames without a time or step rejected unless numbered |
-//! | XTC | GROMACS magic 1995/2023, signed nonnegative i32 counts/steps, small uncompressed and ordinary compressed coordinates | magic 1995/2023 at explicit lossy precision, bounding scaled coordinates and per-axis spans as GROMACS does; velocities, forces, and properties rejected unless omitted; frames without a time or step rejected unless numbered |
+//! | XYZ | constant-count multi-frame text with the atom lines `kekule::xyz` parses; configured length unit (angstrom by default) | deterministic strict text; optional frame state is rejected unless omitted, and omitted frame state and topology content are reported |
+//! | DCD | common 32-bit-record `CORD` files in either byte order, common unit cells, fixed-atom reconstruction; frames counted in the file, whatever `NSET` says | canonical all-atom `CORD` in either byte order with optional unit cells; velocities, forces, properties, and times without a `DELTA` policy rejected unless omitted |
+//! | TRR | GROMACS XDR frames with f32 or f64 position, box, velocity, and force blocks; zero boxes and frames without positions as options allow | one explicit f32 or f64 precision with per-frame optional blocks; properties rejected unless omitted; frames without a time or step rejected unless numbered |
+//! | XTC | GROMACS magic 1995/2023, nonnegative i32 counts, unsigned 32-bit steps, small uncompressed and ordinary compressed coordinates; zero boxes as options allow | magic 1995/2023 at explicit lossy precision, bounding scaled coordinates and per-axis spans as GROMACS does; velocities, forces, and properties rejected unless omitted; frames without a time or step rejected unless numbered |
 //!
 //! Readers accept an owned topology or a shared `Arc<Topology>`. File coordinate
 //! index `i` means topology dense atom index `i`. Counts and available metadata
@@ -105,8 +105,7 @@
 //! Opened with [`TrajectoryOpenOptions::with_growing`], an indexed reader
 //! takes a final frame the writer has not finished as pending
 //! ([`IndexedFileTrajectoryReader::pending_byte_count`]) rather than as
-//! corruption, counts DCD frames in the file rather than by the header's
-//! `NSET`, and still rejects corrupt data wherever it lies; a file that does
+//! corruption, and still rejects corrupt data wherever it lies; a file that does
 //! not yet hold a complete frame, or for DCD a complete header, fails to
 //! open as [`TrajectoryIoErrorKind::Incomplete`], to be opened again later.
 //!
@@ -169,6 +168,7 @@
 //! trajectories, and compressed wrappers are outside this initial profile and
 //! return structured unsupported-format or unsupported-variant errors.
 mod append;
+mod cell;
 mod codec;
 pub mod dcd;
 mod decoded;
@@ -189,6 +189,7 @@ pub mod xtc;
 pub mod xyz;
 
 pub use append::{append_trajectory, append_trajectory_with, KeepFrames, TrajectoryAppendReport};
+pub use cell::ZeroBoxPolicy;
 pub use detect::{
     detect_trajectory_format, FormatDetectionEvidence, TrajectoryFormatDetection,
     TrajectoryFormatHint,

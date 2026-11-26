@@ -25,6 +25,7 @@ use crate::traj::{
     TrajectoryFormat, TrajectoryIoError, TrajectoryIoErrorKind, TrajectoryIoOperation,
 };
 
+use super::indexed_reader::IndexFacts;
 use super::limits::index_hard_capacity;
 use super::{io_context, reserve_index_for_push, SharedFile, TrajectoryIoLimits};
 
@@ -39,9 +40,9 @@ const SAMPLE_COUNT: u64 = 16;
 
 const INDEX_MAGIC: [u8; 8] = *b"KEKTRIDX";
 const FINGERPRINT_MAGIC: [u8; 8] = *b"KEKTRFPR";
-const INDEX_VERSION: u32 = 2;
+const INDEX_VERSION: u32 = 3;
 const FINGERPRINT_VERSION: u32 = 1;
-const HEADER_BYTES: usize = 56;
+const HEADER_BYTES: usize = 72;
 const CHECKSUM_BYTES: usize = 8;
 const FINGERPRINT_BYTES: usize = 56;
 /// Where the fingerprint fields lie in both encodings.
@@ -827,9 +828,11 @@ pub(crate) fn index_mismatch(
 /// A portable, versioned frame index of one trajectory file.
 ///
 /// It holds the format, the byte offset of every frame, the frame count, each
-/// frame's time and step where the format records them, and the
-/// [`TrajectoryFileFingerprint`] of the bytes it covers: the file from its
-/// start to the end of its last indexed frame. Export one from a fully
+/// frame's time and step where the format records them, the counts of TRR
+/// frames without positions and XYZ frames with columns after their
+/// coordinates in its frames, and the [`TrajectoryFileFingerprint`] of the
+/// bytes it covers: the file from its start to the end of its last indexed
+/// frame. Export one from a fully
 /// verified reader with [`IndexedFileTrajectoryReader::to_frame_index`],
 /// store it with [`Self::to_bytes`], and later open the same file without
 /// scanning it again with [`open_indexed_trajectory_from_index`].
@@ -850,17 +853,19 @@ pub(crate) fn index_mismatch(
 /// [`TrajectoryIoErrorKind::IndexMismatch`] or
 /// [`TrajectoryIoErrorKind::InvalidIndex`] error, never a wrong frame. Only
 /// the index records which frame is which, so an index deliberately forged
-/// with a valid checksum can at most renumber whole, valid frames of the file;
-/// keep indexes where only the host writes them.
+/// with a valid checksum can at most renumber whole, valid frames of the file,
+/// or change the counts of skipped and extra-column frames that the open
+/// notes and the frame limit take from it; keep indexes where only the host
+/// writes them.
 ///
 /// # Encoding
 ///
-/// [`Self::to_bytes`] writes version 2 of a little-endian layout:
+/// [`Self::to_bytes`] writes version 3 of a little-endian layout:
 ///
 /// | Bytes | Field |
 /// |---|---|
 /// | 8 | magic `KEKTRIDX` |
-/// | 4 | version, `u32` 2 |
+/// | 4 | version, `u32` 3 |
 /// | 1 | format: 1 XYZ, 2 DCD, 3 TRR, 4 XTC |
 /// | 1 | flags: bit 0 set when TRR frames mix f32 and f64 scalars, bit 1 when steps follow the offsets, bit 2 when times follow them; other bits 0 |
 /// | 1 | 1 when the modification time is present, else 0 |
@@ -869,6 +874,8 @@ pub(crate) fn index_mismatch(
 /// | 16 | modification time in nanoseconds from the Unix epoch, `i128`; 0 when absent |
 /// | 8 | content hash, `u64` |
 /// | 8 | frame count `n`, `u64` |
+/// | 8 | TRR frames without positions before the end of the last frame, `u64`, at most the covered size; 0 for other formats |
+/// | 8 | XYZ frames with columns after their coordinates, `u64`, at most `n`; 0 for other formats |
 /// | 8 `n` | strictly increasing frame start offsets, `u64`, each below the covered size |
 /// | 8 `n` | with flag bit 1, frame steps, `u64` |
 /// | 8 `n` | with flag bit 2, frame times in picoseconds, finite `f64` |
@@ -879,9 +886,9 @@ pub(crate) fn index_mismatch(
 /// times are present exactly when [`Self::steps`] and [`Self::times`] are:
 /// never for XYZ or an empty index; steps always, and times under
 /// [`DcdTimePolicy::HeaderDelta`], for DCD; and both for TRR and XTC. Other
-/// versions, including version 1, which recorded no times or steps, are
-/// rejected with [`TrajectoryIoErrorKind::InvalidIndex`]; build such an index
-/// again.
+/// versions, including version 1, which recorded no times or steps, and
+/// version 2, which recorded no frame counts, are rejected with
+/// [`TrajectoryIoErrorKind::InvalidIndex`]; build such an index again.
 ///
 /// [`IndexedFileTrajectoryReader::to_frame_index`]:
 ///     super::IndexedFileTrajectoryReader::to_frame_index
@@ -918,7 +925,9 @@ pub struct TrajectoryFrameIndex {
     fingerprint: TrajectoryFileFingerprint,
     /// Ends at `fingerprint.byte_count`; shared with the readers of the file.
     offsets: Arc<FrameOffsets>,
-    precision_mixed: bool,
+    /// The facts the encoding records: mixed TRR scalar widths, and the
+    /// counts of TRR frames skipped and of XYZ frames with extra columns.
+    facts: IndexFacts,
 }
 
 impl fmt::Debug for TrajectoryFrameIndex {
@@ -933,23 +942,38 @@ impl fmt::Debug for TrajectoryFrameIndex {
 }
 
 impl TrajectoryFrameIndex {
+    /// The index of `offsets` with those of `facts` that the encoding
+    /// records for `format`.
     pub(crate) fn new(
         format: TrajectoryFormat,
         fingerprint: TrajectoryFileFingerprint,
         offsets: Arc<FrameOffsets>,
-        precision_mixed: bool,
+        facts: IndexFacts,
     ) -> Self {
         debug_assert_eq!(offsets.end(), fingerprint.byte_count);
+        let trr = format == TrajectoryFormat::Trr;
+        let xyz = format == TrajectoryFormat::Xyz;
         Self {
             format,
             fingerprint,
             offsets,
-            precision_mixed: precision_mixed && format == TrajectoryFormat::Trr,
+            facts: IndexFacts {
+                precision_mixed: trr && facts.precision_mixed,
+                skipped_frames: if trr { facts.skipped_frames } else { 0 },
+                extra_column_frames: if xyz { facts.extra_column_frames } else { 0 },
+                ..IndexFacts::default()
+            },
         }
     }
 
-    pub(crate) fn into_parts(self) -> (Arc<FrameOffsets>, bool) {
-        (self.offsets, self.precision_mixed)
+    pub(crate) fn into_parts(self) -> (Arc<FrameOffsets>, IndexFacts) {
+        (self.offsets, self.facts)
+    }
+
+    /// The frames in the bytes the index covers, the TRR frames without
+    /// positions included.
+    pub(crate) fn covered_frames(&self) -> usize {
+        self.frame_count().saturating_add(self.facts.skipped_frames)
     }
 
     /// The format of the indexed file.
@@ -1106,7 +1130,7 @@ impl TrajectoryFrameIndex {
         bytes.extend_from_slice(&INDEX_VERSION.to_le_bytes());
         bytes.push(format_code(self.format));
         let mut flags = 0;
-        if self.precision_mixed {
+        if self.facts.precision_mixed {
             flags |= FLAG_MIXED_PRECISION;
         }
         if steps.is_some() {
@@ -1118,6 +1142,9 @@ impl TrajectoryFrameIndex {
         bytes.push(flags);
         self.fingerprint.write_fields(&mut bytes);
         bytes.extend_from_slice(&(self.offsets.len() as u64).to_le_bytes());
+        for count in [self.facts.skipped_frames, self.facts.extra_column_frames] {
+            bytes.extend_from_slice(&(count as u64).to_le_bytes());
+        }
         for start in self.offsets.starts() {
             bytes.extend_from_slice(&start.to_le_bytes());
         }
@@ -1195,6 +1222,19 @@ impl TrajectoryFrameIndex {
                     ),
                 )
             })?;
+        let skipped = u64::from_le_bytes(array(&bytes[56..64]));
+        let extra_columns = u64::from_le_bytes(array(&bytes[64..72]));
+        let counts = match (usize::try_from(skipped), usize::try_from(extra_columns)) {
+            (Ok(skipped), Ok(extra_columns))
+                if (skipped == 0 || format == TrajectoryFormat::Trr)
+                    && (extra_columns == 0 || format == TrajectoryFormat::Xyz)
+                    && skipped as u64 <= fingerprint.byte_count
+                    && extra_columns <= frame_count =>
+            {
+                (skipped, extra_columns)
+            }
+            _ => return Err(invalid_index(Reason::IndexFrameCounts(format))),
+        };
         let recorded = match format {
             _ if frame_count == 0 => (false, false),
             TrajectoryFormat::Xyz => (false, false),
@@ -1265,7 +1305,12 @@ impl TrajectoryFrameIndex {
                 steps,
             }),
             fingerprint,
-            precision_mixed: flags & FLAG_MIXED_PRECISION != 0,
+            facts: IndexFacts {
+                precision_mixed: flags & FLAG_MIXED_PRECISION != 0,
+                skipped_frames: counts.0,
+                extra_column_frames: counts.1,
+                ..IndexFacts::default()
+            },
         })
     }
 }

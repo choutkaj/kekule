@@ -19,8 +19,8 @@ use kekule::traj::io::dcd::DcdWriteOptions;
 use kekule::traj::io::trr::{TrrLambdaPolicy, TrrWriteOptions};
 use kekule::traj::io::{
     create_trajectory_stream_writer, open_indexed_trajectory, open_indexed_trajectory_from_index,
-    IndexedFileTrajectoryReader, TrajectoryFileFingerprint, TrajectoryOpenOptions,
-    TrajectoryWriteOptions,
+    IndexedFileTrajectoryReader, TrajectoryFileFingerprint, TrajectoryOpenNote,
+    TrajectoryOpenOptions, TrajectoryWriteOptions,
 };
 use kekule::traj::{
     FrameView, SeekableTrajectoryReader, TrajectoryFormat, TrajectoryIoErrorKind, TrajectoryReader,
@@ -298,9 +298,9 @@ fn a_partial_final_frame_is_pending_at_every_byte_and_complete_once_written() {
             );
             assert_eq!(frames(&mut reader), complete[..whole], "{context}");
             // A strict reader takes the same bytes as corrupt, unless they
-            // end between frames of a format without a header count.
+            // end between frames.
             let strict = open_indexed_trajectory(&path, topology(), Default::default());
-            let between_frames = cut as u64 == indexed_end && format != TrajectoryFormat::Dcd;
+            let between_frames = cut as u64 == indexed_end;
             if format != TrajectoryFormat::Xyz {
                 assert_eq!(strict.is_ok(), between_frames, "{context}");
             }
@@ -596,10 +596,18 @@ fn growing_dcd_frames_are_counted_in_the_file_whatever_the_header_says() {
         assert_eq!(reader.refresh().unwrap(), 1, "NSET {count}");
         assert_eq!(reader.metadata().declared_frame_count(), Some(3));
     }
-    // A strict reader holds the file to its header.
+    // A complete file is counted the same way, and its report notes the
+    // header's other count.
     fs::write(&path, with_count(2, bytes.len())).unwrap();
-    let error = open_indexed_trajectory(&path, topology(), Default::default()).unwrap_err();
-    assert_eq!(error.kind(), TrajectoryIoErrorKind::InconsistentMetadata);
+    let reader = open_indexed_trajectory(&path, topology(), Default::default()).unwrap();
+    assert_eq!(reader.frame_count(), Some(3));
+    assert!(reader
+        .open_report()
+        .notes()
+        .contains(&TrajectoryOpenNote::DcdFrameCount {
+            declared: 2,
+            counted: 3
+        }));
 }
 
 #[test]
