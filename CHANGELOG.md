@@ -744,6 +744,9 @@ the main branch migrates by the table under "From the SampleSet API".
   names the first atom outside the valence model and its source line
   (`atom`, `location`). Its `ValenceError` names atoms of the published
   molecule.
+- `Topology::perceived_with`, and `perceive_with` on structures and structure
+  sets, perceive the definitions on the run's executor in parallel, with the
+  same result and error as on one thread.
 
 ### Removed
 

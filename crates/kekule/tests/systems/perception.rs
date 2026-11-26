@@ -589,3 +589,94 @@ fn cancellable_perception_stops_once_cancellation_is_requested() {
         .unwrap();
     assert_default_perception(perceived.topology());
 }
+
+/// Perception on several threads gives what one thread gives: every
+/// definition's chemistry, perception and properties, in definition order,
+/// progress counts that never fall, and the first failing definition.
+#[test]
+fn perception_on_several_threads_equals_one_thread() {
+    use kekule::parallel::{Progress, ScopedThreads};
+    use std::num::NonZeroUsize;
+    use std::sync::Mutex;
+
+    // Deleting every glycine of perceived adenylate kinase cuts its chains
+    // into fragments, each a definition to perceive, beside the shared
+    // definitions of its waters and ligands.
+    let mut structure = kekule::mmcif::parse_str(
+        include_str!("../fixtures/mmcif/1AKE.cif"),
+        Default::default(),
+    )
+    .unwrap()
+    .interpret(Default::default())
+    .unwrap()
+    .into_structure();
+    structure.perceive().unwrap();
+    let mut editor = structure.to_editor();
+    let glycines = structure
+        .topology()
+        .atoms()
+        .filter(|atom| {
+            atom.residue()
+                .is_some_and(|residue| residue.name() == "GLY")
+        })
+        .map(|atom| editor.topology().atom_handle(atom.id()).unwrap())
+        .collect::<Vec<_>>();
+    editor.delete_atoms(glycines).unwrap();
+    let topology = editor.finish().unwrap().shared_topology();
+    let pending = topology
+        .definitions()
+        .filter(|definition| definition.molecule().perception().rings().is_none())
+        .count();
+    assert!(pending > 20, "{pending} definitions to perceive");
+    assert!(pending < topology.definition_count());
+    let serial = topology.perceived().unwrap();
+    for threads in [2, 3, 8] {
+        let executor = ScopedThreads::new(NonZeroUsize::new(threads).unwrap());
+        let counts = Mutex::new(Vec::new());
+        let record = |progress: Progress| counts.lock().unwrap().push(progress.completed());
+        let parallel = topology
+            .perceived_with(Run::new().with_executor(&executor).with_progress(&record))
+            .unwrap();
+        assert!(parallel.shares_layout(&topology));
+        assert_eq!(parallel.definition_count(), serial.definition_count());
+        for (left, right) in parallel.definitions().zip(serial.definitions()) {
+            assert_eq!(left.id(), right.id());
+            assert_eq!(left.molecule(), right.molecule());
+            assert_eq!(left.molecule().perception(), right.molecule().perception());
+            assert_eq!(left.molecule().properties(), right.molecule().properties());
+        }
+        assert_default_perception(&parallel);
+        let counts = counts.into_inner().unwrap();
+        assert!(
+            counts.windows(2).all(|pair| pair[0] <= pair[1]),
+            "{counts:?}"
+        );
+        assert_eq!(counts.first(), Some(&0));
+        assert_eq!(counts.last(), Some(&(topology.definition_count() as u64)));
+    }
+
+    // Distinct molecules, of which the 6th and 10th fail valence perception.
+    let bad = || {
+        let mut editor = MoleculeEditor::new();
+        let carbon = Atom::new(Element::from_symbol("C").unwrap())
+            .with_hydrogens(ImplicitHydrogens::Fixed(5));
+        editor.add_atom(carbon).unwrap();
+        editor.finish().unwrap()
+    };
+    let mut molecules = smiles::to_molecules(
+        "c1ccccc1.CCO.C1CC1N.c1ccncc1.CC(=O)[O-].[NH4+].c1ccc2ccccc2c1.OCC(O)CO.C#N.CS(=O)C",
+    )
+    .unwrap();
+    molecules.insert(5, bad());
+    molecules.insert(9, bad());
+    let topology = Topology::from_molecules(molecules).unwrap();
+    let serial = topology.perceived().unwrap_err();
+    assert_eq!(serial.definition, MoleculeDefinitionId::new(5));
+    for threads in 1..=6 {
+        let executor = ScopedThreads::new(NonZeroUsize::new(threads).unwrap());
+        let error = topology
+            .perceived_with(Run::new().with_executor(&executor))
+            .unwrap_err();
+        assert_eq!(error, serial, "{threads} threads");
+    }
+}
