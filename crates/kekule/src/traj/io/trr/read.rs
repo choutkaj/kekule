@@ -20,6 +20,14 @@ pub struct TrrReader<R> {
     pub(super) precision_mixed: bool,
     /// Whether the frames an indexed reader indexed mix scalar widths.
     pub(super) index_mixed: bool,
+    /// The frames without positions the last read skipped.
+    pub(super) skipped_run: usize,
+    /// The frames without positions before the indexed frames that the
+    /// scans of an indexed reader skipped.
+    pub(super) index_skipped: usize,
+    /// The frames without positions after the last indexed frame that the
+    /// last scan skipped.
+    pub(super) index_trailing: usize,
 }
 
 impl<R> fmt::Debug for TrrReader<R> {
@@ -52,7 +60,9 @@ impl<R: Read + Seek> TrrReader<R> {
     ///
     /// Returns [`TrajectoryIoErrorKind::InvalidHeader`] for an empty stream or
     /// malformed header, [`TrajectoryIoErrorKind::UnsupportedVariant`] for an
-    /// unsupported header layout, [`TrajectoryIoErrorKind::InconsistentAtomCount`]
+    /// unsupported header layout or, by default, a first frame without
+    /// positions ([`TrrReadOptions::frames_without_positions`]),
+    /// [`TrajectoryIoErrorKind::InconsistentAtomCount`]
     /// when its atom count differs from the topology's,
     /// [`TrajectoryIoErrorKind::InconsistentMetadata`] for a nonzero lambda
     /// under [`TrrLambdaPolicy::RequireZero`],
@@ -97,6 +107,9 @@ impl<R: Read + Seek> TrrReader<R> {
         let first_header = read_header(&mut reader, limits, source_label, Some(atom_count), false)?
             .ok_or_else(|| header_error(FORMAT, source_label, Reason::EmptyStream))?;
         validate_lambda(first_header.lambda, options.lambda_policy, source_label, 0)?;
+        if !first_header.has_positions() {
+            require_skipping(&options, source_label, 0)?;
+        }
         let mut positions = Vec::new();
         let mut velocities = Vec::new();
         let mut forces = Vec::new();
@@ -193,6 +206,9 @@ impl<R: Read + Seek> TrrReader<R> {
             frame_cursor: 0,
             precision_mixed: false,
             index_mixed: false,
+            skipped_run: 0,
+            index_skipped: 0,
+            index_trailing: 0,
         })
     }
 
@@ -259,90 +275,18 @@ impl<R: Read + Seek> TrrReader<R> {
                 LimitExceeded::first_beyond(Resource::Frames, self.source.limits.max_frames()),
             ));
         }
-        let Some(header) = self.next_header()? else {
-            return Ok(None);
+        self.skipped_run = 0;
+        let header = loop {
+            let Some(header) = self.next_header()? else {
+                return Ok(None);
+            };
+            self.check_frame_header(&header)?;
+            if header.has_positions() {
+                break header;
+            }
+            self.skip_frame(&header)?;
+            self.skipped_run += 1;
         };
-        self.precision_mixed |= header.precision != self.first_header.precision;
-        validate_lambda(
-            header.lambda,
-            self.options.lambda_policy,
-            &self.source.label,
-            self.frame_cursor,
-        )?;
-        let payload_bytes = header
-            .box_size
-            .checked_add(header.x_size)
-            .and_then(|bytes| bytes.checked_add(header.v_size))
-            .and_then(|bytes| bytes.checked_add(header.f_size))
-            .ok_or_else(|| {
-                limit_error(
-                    FORMAT,
-                    TrajectoryIoOperation::ReadFrame,
-                    &self.source.label,
-                    Some(self.frame_cursor),
-                    Reason::AddressRange(Part::FrameSize),
-                )
-            })?;
-        let frame_bytes = header
-            .header_bytes
-            .checked_add(payload_bytes as u64)
-            .ok_or_else(|| {
-                limit_error(
-                    FORMAT,
-                    TrajectoryIoOperation::ReadFrame,
-                    &self.source.label,
-                    Some(self.frame_cursor),
-                    Reason::Range64(Part::FrameSize),
-                )
-            })?;
-        if frame_bytes > self.source.limits.max_frame_bytes() {
-            return Err(limit_error(
-                FORMAT,
-                TrajectoryIoOperation::ReadFrame,
-                &self.source.label,
-                Some(self.frame_cursor),
-                None,
-            )
-            .exceeding(
-                Part::Frame,
-                exceeded_bytes(self.source.limits.max_frame_bytes(), frame_bytes),
-            ));
-        }
-
-        // The reusable raw record and all three dense arrays coexist. Account
-        // for retained capacity as well as any growth needed by this frame;
-        // each dense array holds one vector per atom, whether it is kept or
-        // allocated by this read, as the check at opening counts them.
-        let atom_count = self.topology.atom_count();
-        let raw_bytes = self
-            .raw
-            .capacity()
-            .max(header.box_size)
-            .max(header.x_size)
-            .max(header.v_size)
-            .max(header.f_size);
-        let scratch_bytes = filled_bytes(&self.positions, atom_count)
-            .and_then(|bytes| bytes.checked_add(filled_bytes(&self.velocities, atom_count)?))
-            .and_then(|bytes| bytes.checked_add(filled_bytes(&self.forces, atom_count)?))
-            .and_then(|bytes| bytes.checked_add(raw_bytes));
-        if scratch_bytes.is_none_or(|bytes| bytes > self.source.limits.max_scratch_bytes()) {
-            return Err(limit_error(
-                FORMAT,
-                TrajectoryIoOperation::ReadFrame,
-                &self.source.label,
-                Some(self.frame_cursor),
-                None,
-            )
-            .exceeding(
-                Part::FrameBuffers,
-                LimitExceeded::new(
-                    Resource::BufferBytes,
-                    self.source.limits.max_scratch_bytes(),
-                    scratch_bytes.unwrap_or(usize::MAX),
-                ),
-            ));
-        }
-
         let cell = if header.has_cell() {
             read_raw(
                 &mut self.reader,
@@ -353,12 +297,13 @@ impl<R: Read + Seek> TrrReader<R> {
                 self.frame_cursor,
                 Datum::Box,
             )?;
-            Some(decode_cell(
+            decode_cell(
                 &self.raw,
                 header.precision,
+                self.options.zero_box,
                 &self.source.label,
                 self.frame_cursor,
-            )?)
+            )?
         } else {
             None
         };
@@ -450,6 +395,117 @@ impl<R: Read + Seek> TrrReader<R> {
             )
         })?;
         Ok(Some(TrrDecodedFrame { header, cell }))
+    }
+
+    /// Checks the header of the next frame, `header`, before its blocks are
+    /// read.
+    fn check_frame_header(&mut self, header: &TrrFrameHeader) -> Result<(), TrajectoryIoError> {
+        self.precision_mixed |= header.precision != self.first_header.precision;
+        validate_lambda(
+            header.lambda,
+            self.options.lambda_policy,
+            &self.source.label,
+            self.frame_cursor,
+        )?;
+        let payload_bytes = header
+            .box_size
+            .checked_add(header.x_size)
+            .and_then(|bytes| bytes.checked_add(header.v_size))
+            .and_then(|bytes| bytes.checked_add(header.f_size))
+            .ok_or_else(|| {
+                limit_error(
+                    FORMAT,
+                    TrajectoryIoOperation::ReadFrame,
+                    &self.source.label,
+                    Some(self.frame_cursor),
+                    Reason::AddressRange(Part::FrameSize),
+                )
+            })?;
+        let frame_bytes = header
+            .header_bytes
+            .checked_add(payload_bytes as u64)
+            .ok_or_else(|| {
+                limit_error(
+                    FORMAT,
+                    TrajectoryIoOperation::ReadFrame,
+                    &self.source.label,
+                    Some(self.frame_cursor),
+                    Reason::Range64(Part::FrameSize),
+                )
+            })?;
+        if frame_bytes > self.source.limits.max_frame_bytes() {
+            return Err(limit_error(
+                FORMAT,
+                TrajectoryIoOperation::ReadFrame,
+                &self.source.label,
+                Some(self.frame_cursor),
+                None,
+            )
+            .exceeding(
+                Part::Frame,
+                exceeded_bytes(self.source.limits.max_frame_bytes(), frame_bytes),
+            ));
+        }
+
+        // The reusable raw record and all three dense arrays coexist. Account
+        // for retained capacity as well as any growth needed by this frame;
+        // each dense array holds one vector per atom, whether it is kept or
+        // allocated by this read, as the check at opening counts them.
+        let atom_count = self.topology.atom_count();
+        let raw_bytes = self
+            .raw
+            .capacity()
+            .max(header.box_size)
+            .max(header.x_size)
+            .max(header.v_size)
+            .max(header.f_size);
+        let scratch_bytes = filled_bytes(&self.positions, atom_count)
+            .and_then(|bytes| bytes.checked_add(filled_bytes(&self.velocities, atom_count)?))
+            .and_then(|bytes| bytes.checked_add(filled_bytes(&self.forces, atom_count)?))
+            .and_then(|bytes| bytes.checked_add(raw_bytes));
+        if scratch_bytes.is_none_or(|bytes| bytes > self.source.limits.max_scratch_bytes()) {
+            return Err(limit_error(
+                FORMAT,
+                TrajectoryIoOperation::ReadFrame,
+                &self.source.label,
+                Some(self.frame_cursor),
+                None,
+            )
+            .exceeding(
+                Part::FrameBuffers,
+                LimitExceeded::new(
+                    Resource::BufferBytes,
+                    self.source.limits.max_scratch_bytes(),
+                    scratch_bytes.unwrap_or(usize::MAX),
+                ),
+            ));
+        }
+
+        Ok(())
+    }
+
+    /// Reads past the blocks of a frame without positions, which
+    /// [`TrrReadOptions::frames_without_positions`] must allow skipping.
+    fn skip_frame(&mut self, header: &TrrFrameHeader) -> Result<(), TrajectoryIoError> {
+        require_skipping(&self.options, &self.source.label, self.frame_cursor)?;
+        for (size, field) in [
+            (header.box_size, Datum::Box),
+            (header.v_size, Datum::Velocity),
+            (header.f_size, Datum::Force),
+        ] {
+            if size != 0 {
+                read_raw(
+                    &mut self.reader,
+                    &mut self.raw,
+                    size,
+                    &self.source.limits,
+                    &self.source.label,
+                    self.frame_cursor,
+                    field,
+                )?;
+            }
+        }
+        Ok(())
     }
 
     pub(super) fn publish(
@@ -670,15 +726,6 @@ pub(super) fn read_header<R: Read>(
             Reason::UnsupportedTrrBlocks,
         ));
     }
-    if x_size == 0 {
-        return Err(codec_context(
-            TrajectoryIoErrorKind::UnsupportedVariant,
-            TrajectoryIoOperation::ReadHeader,
-            Some(FORMAT),
-            source_label,
-            Reason::NoPositions,
-        ));
-    }
     let precision = infer_precision(atom_count, box_size, x_size, v_size, f_size, source_label)?;
     let expected_vectors = atom_count
         .checked_mul(3)
@@ -692,7 +739,7 @@ pub(super) fn read_header<R: Read>(
                 Reason::AddressRange(Part::VectorBlock),
             )
         })?;
-    if x_size != expected_vectors
+    if (x_size != 0 && x_size != expected_vectors)
         || (v_size != 0 && v_size != expected_vectors)
         || (f_size != 0 && f_size != expected_vectors)
         || (box_size != 0 && box_size != 9 * precision.bytes())
@@ -705,16 +752,11 @@ pub(super) fn read_header<R: Read>(
             Reason::BlockSizesMismatch,
         ));
     }
-    let step_raw = read_i32(reader, source_label, None, Reason::Truncated(Part::Step))?;
-    let step = u64::try_from(step_raw).map_err(|_| {
-        codec_context(
-            TrajectoryIoErrorKind::NegativeOrUnrepresentableStep,
-            TrajectoryIoOperation::ReadHeader,
-            Some(FORMAT),
-            source_label,
-            Reason::Negative(Part::Step),
-        )
-    })?;
+    // GROMACS writes the low 32 bits of its 64-bit step, so a step from
+    // 2^31 on reads as a negative signed field.
+    let step = u64::from(
+        read_i32(reader, source_label, None, Reason::Truncated(Part::Step))?.cast_unsigned(),
+    );
     let nre = read_i32(
         reader,
         source_label,
@@ -996,9 +1038,10 @@ pub(super) fn decode_triplets_into<T>(
 pub(super) fn decode_cell(
     raw: &[u8],
     precision: TrrScalarPrecision,
+    policy: ZeroBoxPolicy,
     source_label: &str,
     frame: usize,
-) -> Result<PeriodicCell, TrajectoryIoError> {
+) -> Result<Option<PeriodicCell>, TrajectoryIoError> {
     let mut vectors = [Vector3::zero(); 3];
     decode_triplets(
         raw,
@@ -1009,17 +1052,27 @@ pub(super) fn decode_cell(
         frame,
         Datum::Box,
     )?;
-    PeriodicCell::new(Quantity::new(vectors, NANOMETER), [true; 3]).map_err(|error| {
-        frame_error(
-            FORMAT,
-            TrajectoryIoErrorKind::InvalidFrame,
-            TrajectoryIoOperation::ReadFrame,
-            source_label,
-            frame,
-            Reason::InvalidPeriodicCell,
-        )
-        .with_source(error)
-    })
+    gromacs_cell(vectors, policy, FORMAT, source_label, frame)
+}
+
+/// Fails unless `options` skip frames without positions, such as frame
+/// `frame`.
+fn require_skipping(
+    options: &TrrReadOptions,
+    source_label: &str,
+    frame: usize,
+) -> Result<(), TrajectoryIoError> {
+    if options.frames_without_positions == UnsupportedContent::Report {
+        return Ok(());
+    }
+    Err(frame_error(
+        FORMAT,
+        TrajectoryIoErrorKind::UnsupportedVariant,
+        TrajectoryIoOperation::ReadFrame,
+        source_label,
+        frame,
+        Reason::NoPositions,
+    ))
 }
 
 pub(super) fn scalar_at(bytes: &[u8], index: usize, precision: TrrScalarPrecision) -> f64 {

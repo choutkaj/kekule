@@ -4,7 +4,12 @@
 //! or f64 position, box, velocity and force blocks; [`TrrWriter`] writes them
 //! at one explicit [`TrrScalarPrecision`]. Every frame carries a step and a
 //! time; GROMACS nanometre, picosecond and kJ/(mol nm) units are converted at
-//! the codec boundary. The lambda scalar follows a [`TrrLambdaPolicy`]. A
+//! the codec boundary. The step field holds the low 32 bits of the GROMACS
+//! step and reads as an unsigned number. The lambda scalar follows a
+//! [`TrrLambdaPolicy`], a box of zeros follows a [`ZeroBoxPolicy`], and the
+//! frames without positions follow
+//! [`TrrReadOptions::frames_without_positions`]. The writer writes cells in
+//! the GROMACS orientation only: vector a along +x, b in the xy plane. A
 //! frame without a time or step can be numbered under
 //! [`TrrWriteOptions::frame_timing`]; the occupancies, B-factors, and
 //! properties TRR cannot carry are rejected unless
@@ -68,7 +73,8 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::sync::Arc;
 
 use crate::diagnostics::{
-    GeometryField, LimitExceeded, Resource, UnrepresentablePolicy, WriteOmission, WriteReport,
+    GeometryField, LimitExceeded, Resource, UnrepresentablePolicy, UnsupportedContent,
+    WriteOmission, WriteReport,
 };
 use crate::io::write_policy::StatePolicies;
 use crate::math::{PeriodicCell, Point3, Vector3};
@@ -86,6 +92,7 @@ use crate::units::{
 };
 use std::borrow::Cow;
 
+use super::cell::{gromacs_cell, standard_orientation};
 use super::codec::{
     frame_error, header_error, limit_error, read_exact, read_operation, validate_atom_count,
     writer_limit,
@@ -101,7 +108,7 @@ use super::TrajectoryWriteOptions;
 use super::{
     codec_context, frame_offset_context, index_mismatch, io_context, probe_seekable_eof,
     require_no_partial_frame, require_nonempty_writer, validation_cause, FrameOffsets, FrameStamp,
-    FrameTimingPolicy, IndexBuildControl, TrajectoryIoLimits, TrajectoryOpenOptions,
+    FrameTimingPolicy, IndexBuildControl, TrajectoryIoLimits, TrajectoryOpenOptions, ZeroBoxPolicy,
 };
 
 /// The format of this codec's streams.
@@ -174,12 +181,16 @@ pub enum TrrLambdaPolicy {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TrrReadOptions {
     lambda_policy: TrrLambdaPolicy,
+    zero_box: ZeroBoxPolicy,
+    frames_without_positions: UnsupportedContent,
 }
 
 impl Default for TrrReadOptions {
     fn default() -> Self {
         Self {
             lambda_policy: TrrLambdaPolicy::FrameProperty,
+            zero_box: ZeroBoxPolicy::Reject,
+            frames_without_positions: UnsupportedContent::Reject,
         }
     }
 }
@@ -192,9 +203,43 @@ impl TrrReadOptions {
         self
     }
 
+    /// Sets [`Self::zero_box`].
+    #[must_use]
+    pub const fn with_zero_box(mut self, zero_box: ZeroBoxPolicy) -> Self {
+        self.zero_box = zero_box;
+        self
+    }
+
+    /// Sets [`Self::frames_without_positions`].
+    #[must_use]
+    pub const fn with_frames_without_positions(mut self, policy: UnsupportedContent) -> Self {
+        self.frames_without_positions = policy;
+        self
+    }
+
     /// How lambda is published; [`TrrLambdaPolicy::FrameProperty`] by default.
     pub const fn lambda_policy(&self) -> TrrLambdaPolicy {
         self.lambda_policy
+    }
+
+    /// How a box of zeros reads; [`ZeroBoxPolicy::Reject`] by default. A
+    /// frame without a box block has no cell, and every other box must be a
+    /// finite, nondegenerate cell.
+    pub const fn zero_box(&self) -> ZeroBoxPolicy {
+        self.zero_box
+    }
+
+    /// The frames without positions, which GROMACS writes when it saves
+    /// velocities or forces at steps it saves no positions at;
+    /// [`UnsupportedContent::Reject`] by default, which fails at the first.
+    /// [`UnsupportedContent::Report`] skips them: the frames read are those
+    /// with positions, each with its own velocities and forces, and an
+    /// indexed reader's open report counts the frames its scan skipped
+    /// ([`TrajectoryOpenNote::TrrFramesWithoutPositions`]).
+    ///
+    /// [`TrajectoryOpenNote::TrrFramesWithoutPositions`]: super::TrajectoryOpenNote::TrrFramesWithoutPositions
+    pub const fn frames_without_positions(&self) -> UnsupportedContent {
+        self.frames_without_positions
     }
 }
 
@@ -350,6 +395,10 @@ impl TrrFrameHeader {
 
     pub(crate) const fn has_cell(&self) -> bool {
         self.box_size != 0
+    }
+
+    pub(crate) const fn has_positions(&self) -> bool {
+        self.x_size != 0
     }
 
     pub(crate) const fn has_velocities(&self) -> bool {

@@ -196,7 +196,9 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
                 Reason::FrameLacks(Datum::Step, Need::Format(FORMAT)),
             )
         })?;
-        let step = i32::try_from(step).map_err(|_| {
+        // The field holds the step as an unsigned 32-bit number, written as
+        // GROMACS writes its low 32 bits.
+        let step = u32::try_from(step).map(u32::cast_signed).map_err(|_| {
             codec_context(
                 TrajectoryIoErrorKind::NegativeOrUnrepresentableStep,
                 TrajectoryIoOperation::WriteFrame,
@@ -226,9 +228,9 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
         })?;
         let time = finite_f32(time, &self.source_label, Datum::Time)?;
         let mut boxvec = [0.0_f32; 9];
-        match (frame.cell().copied(), self.options.cell_policy) {
-            (None, XtcCellPolicy::ZeroMatrixAsAbsent) => {}
-            (None, XtcCellPolicy::RequirePeriodic) => {
+        match (frame.cell().copied(), self.options.zero_box) {
+            (None, ZeroBoxPolicy::NoCell) => {}
+            (None, ZeroBoxPolicy::Reject) => {
                 return Err(codec_context(
                     TrajectoryIoErrorKind::InconsistentMetadata,
                     TrajectoryIoOperation::WriteFrame,
@@ -257,6 +259,7 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
                     )
                     .with_source(error)
                 })?;
+                let vectors = standard_orientation(vectors, FORMAT, &self.source_label)?;
                 for (target, value) in boxvec.iter_mut().zip(
                     vectors
                         .into_iter()
@@ -268,7 +271,7 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
                 // three dimensions. Validate the representation the reader will receive.
                 decode_cell(
                     boxvec.map(f64::from),
-                    XtcCellPolicy::RequirePeriodic,
+                    ZeroBoxPolicy::Reject,
                     &self.source_label,
                     self.frame_count,
                 )

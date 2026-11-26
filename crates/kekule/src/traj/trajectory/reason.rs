@@ -501,7 +501,6 @@ pub(crate) enum Reason {
     IndexedBytesChanged,
     IndexForOtherFormat(TrajectoryFormat),
     PrefixMismatch,
-    IndexNsetMismatch,
     ChangedWhileIndexed,
     TrailingBytes(Encoding),
     ReservedByte(Encoding),
@@ -580,9 +579,6 @@ pub(crate) enum Reason {
     StepSequenceRange,
     DeltaNotTime,
     InvalidDelta(f32),
-    IndexBeyondNset,
-    FramesBeyondNset,
-    EndsBeforeNset,
     FrameCountField,
     CellNotFinite,
     BoxNotFinite,
@@ -872,9 +868,6 @@ impl fmt::Display for Reason {
                 return write!(formatter, "The index was built for a {format} file.")
             }
             Self::PrefixMismatch => "The file does not begin with the bytes the index covers.",
-            Self::IndexNsetMismatch => {
-                "The index's frame count differs from the frame count NSET in the header."
-            }
             Self::ChangedWhileIndexed => "The file changed while it was indexed.",
             Self::TrailingBytes(encoding) => {
                 return write!(formatter, "The {encoding} has trailing bytes.")
@@ -1067,13 +1060,6 @@ impl fmt::Display for Reason {
                     "The time step DELTA is {delta}. It is not a finite, nonnegative number."
                 )
             }
-            Self::IndexBeyondNset => {
-                "The index counts more frames than the frame count NSET in the header."
-            }
-            Self::FramesBeyondNset => {
-                "The file holds more frames than the frame count NSET in its header."
-            }
-            Self::EndsBeforeNset => "The file ends before the frame count NSET in its header.",
             Self::FrameCountField => {
                 "The trajectory has more frames than the 32-bit frame count of the header holds."
             }

@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use kekule::diagnostics::GeometryField;
+use kekule::diagnostics::{GeometryField, UnsupportedContent};
 use kekule::math::{PeriodicCell, Point3, Vector3};
 use kekule::properties::{PropertyColumn, PropertyKey, PropertyValue};
 use kekule::topology::Topology;
@@ -15,7 +15,8 @@ use kekule::traj::io::trr::{
 use kekule::traj::io::TrajectoryWriteOptions;
 use kekule::traj::io::{
     open_indexed_trajectory, open_trajectory, CoordinateEncoding, ScalarPrecision,
-    TrajectoryFormatHint, TrajectoryIoLimits, TrajectoryOpenOptions,
+    TrajectoryFormatHint, TrajectoryIoLimits, TrajectoryOpenNote, TrajectoryOpenOptions,
+    ZeroBoxPolicy,
 };
 use kekule::traj::{
     FrameBuffer, SeekableTrajectoryReader, TrajectoryFormat, TrajectoryIoErrorKind,
@@ -124,9 +125,11 @@ fn trr_cell_validation_uses_the_encoded_precision_before_appending_bytes() {
     let cell = PeriodicCell::new(
         Quantity::new(
             [
-                Vector3::new(1.0, 1.0, 0.0),
-                Vector3::new(1.0, 1.0 + 1e-8, 0.0),
-                Vector3::new(0.0, 0.0, 1.0),
+                Vector3::new(1.0, 0.0, 0.0),
+                Vector3::new(0.0, 1.0, 0.0),
+                // Just above the smallest volume a cell may have; f32
+                // rounds it to that volume.
+                Vector3::new(0.0, 0.0, f64::EPSILON * (1.0 + 2.0_f64.powi(-30))),
             ],
             NANOMETER,
         ),
@@ -990,4 +993,260 @@ fn independently_generated_mdanalysis_trr_preserves_all_supported_fields() {
         Some(&lambda(0.25))
     );
     assert!(!reader.read_next(&mut buffer).unwrap());
+}
+
+/// A single-precision TRR frame of three atoms at `step`, with a box of
+/// `cell` values, positions when `positions`, and velocities when
+/// `velocities`; position and velocity component `i` of the frame is
+/// `step + i`.
+fn raw_frame(step: i32, cell: Option<[f32; 9]>, positions: bool, velocities: bool) -> Vec<u8> {
+    let vectors = 3 * 3 * 4;
+    let block = |present: bool, size: i32| if present { size } else { 0 };
+    // The sizes of the input record, energy, box, virial, pressure,
+    // topology, symbol, position, velocity, and force blocks.
+    let sizes = [
+        0,
+        0,
+        block(cell.is_some(), 36),
+        0,
+        0,
+        0,
+        0,
+        block(positions, vectors),
+        block(velocities, vectors),
+        0,
+    ];
+    let mut bytes = Vec::new();
+    for value in [1993_i32, 13, 12] {
+        bytes.extend_from_slice(&value.to_be_bytes());
+    }
+    bytes.extend_from_slice(b"GMX_trn_file");
+    // The block sizes, the atom count, the step, and no energy terms.
+    for value in sizes.into_iter().chain([3, step, 0]) {
+        bytes.extend_from_slice(&value.to_be_bytes());
+    }
+    for value in [step as f32, 0.0] {
+        bytes.extend_from_slice(&value.to_be_bytes());
+    }
+    for value in cell.into_iter().flatten() {
+        bytes.extend_from_slice(&value.to_be_bytes());
+    }
+    for present in [positions, velocities] {
+        if present {
+            for component in 0..9 {
+                bytes.extend_from_slice(&(step as f32 + component as f32).to_be_bytes());
+            }
+        }
+    }
+    bytes
+}
+
+#[test]
+fn trr_zero_box_reads_as_a_frame_without_a_cell_under_the_no_cell_policy() {
+    // GROMACS mdrun writes a box of zeros into every frame of a run without
+    // periodic boundaries.
+    let topology = topology();
+    let mut bytes = raw_frame(0, Some([0.0; 9]), true, false);
+    bytes.extend(raw_frame(1, None, true, false));
+
+    let mut strict = TrrReader::new(
+        Cursor::new(bytes.clone()),
+        Arc::clone(&topology),
+        TrajectoryOpenOptions::default().with_source_label("zero-box.trr"),
+    )
+    .unwrap();
+    let mut buffer = strict.frame_buffer();
+    let error = strict.read_next(&mut buffer).unwrap_err();
+    assert_eq!(
+        codec_kind(&error),
+        Some(TrajectoryIoErrorKind::UnsupportedVariant)
+    );
+    assert!(error.to_string().contains("The box is a zero matrix."));
+
+    let options =
+        TrajectoryOpenOptions::from(TrrReadOptions::default().with_zero_box(ZeroBoxPolicy::NoCell));
+    let mut reader = TrrReader::new(
+        Cursor::new(bytes.clone()),
+        Arc::clone(&topology),
+        options.clone(),
+    )
+    .unwrap();
+    let mut buffer = reader.frame_buffer();
+    assert!(reader.read_next(&mut buffer).unwrap());
+    assert!(buffer.cell().is_none());
+    assert!(reader.read_next(&mut buffer).unwrap());
+    assert!(!reader.read_next(&mut buffer).unwrap());
+
+    let mut indexed = IndexedTrrReader::new(Cursor::new(bytes), topology, options).unwrap();
+    assert_eq!(indexed.frame_count(), Some(2));
+    indexed.read_frame(0, &mut buffer).unwrap();
+    assert!(buffer.cell().is_none());
+}
+
+#[test]
+fn trr_frames_without_positions_are_skipped_when_the_options_report_them() {
+    // With nstvout below nstxout, GROMACS writes frames of velocities alone
+    // between the frames with positions.
+    let topology = topology();
+    let mut bytes = raw_frame(0, None, true, true);
+    for step in [5, 10] {
+        bytes.extend(raw_frame(step, None, false, true));
+    }
+    bytes.extend(raw_frame(15, None, true, true));
+    bytes.extend(raw_frame(20, None, false, true));
+
+    let mut strict = TrrReader::new(
+        Cursor::new(bytes.clone()),
+        Arc::clone(&topology),
+        TrajectoryOpenOptions::default().with_source_label("velocities.trr"),
+    )
+    .unwrap();
+    let mut buffer = strict.frame_buffer();
+    assert!(strict.read_next(&mut buffer).unwrap());
+    let error = strict.read_next(&mut buffer).unwrap_err();
+    assert_eq!(
+        codec_kind(&error),
+        Some(TrajectoryIoErrorKind::UnsupportedVariant)
+    );
+    assert_eq!(error.frame(), Some(1));
+    assert!(error.to_string().contains("The frame has no positions."));
+    let leading = raw_frame(5, None, false, true);
+    assert_eq!(
+        codec_kind(
+            &TrrReader::new(
+                Cursor::new(leading),
+                Arc::clone(&topology),
+                TrajectoryOpenOptions::default()
+            )
+            .unwrap_err()
+        ),
+        Some(TrajectoryIoErrorKind::UnsupportedVariant)
+    );
+
+    let options = TrajectoryOpenOptions::from(
+        TrrReadOptions::default().with_frames_without_positions(UnsupportedContent::Report),
+    );
+    let mut reader = TrrReader::new(
+        Cursor::new(bytes.clone()),
+        Arc::clone(&topology),
+        options.clone(),
+    )
+    .unwrap();
+    let mut steps = Vec::new();
+    let mut velocities = Vec::new();
+    while reader.read_next(&mut buffer).unwrap() {
+        let view = buffer.frame_view();
+        steps.push(view.step().unwrap());
+        velocities.push(view.velocities().unwrap().values().value()[0].y);
+    }
+    assert_eq!(steps, [0, 15]);
+    // Each frame keeps its own velocities: component 1 is the step plus 1.
+    assert!((velocities[1] / velocities[0] - 16.0).abs() < 1e-9);
+
+    let mut indexed = IndexedTrrReader::new(
+        Cursor::new(bytes.clone()),
+        Arc::clone(&topology),
+        options.clone(),
+    )
+    .unwrap();
+    assert_eq!(indexed.frame_count(), Some(2));
+    indexed.read_frame(1, &mut buffer).unwrap();
+    assert_eq!(buffer.frame_view().step(), Some(15));
+    indexed.read_frame(0, &mut buffer).unwrap();
+    assert_eq!(buffer.frame_view().step(), Some(0));
+
+    // The open report counts the frames skipped, those after the last
+    // frame with positions included.
+    let path = std::env::temp_dir().join(format!(
+        "kekule-trr-without-positions-{}.trr",
+        std::process::id()
+    ));
+    fs::write(&path, &bytes).unwrap();
+    let reader = open_indexed_trajectory(&path, Arc::clone(&topology), options);
+    fs::remove_file(&path).unwrap();
+    let reader = reader.unwrap();
+    assert_eq!(reader.frame_count(), Some(2));
+    assert!(reader
+        .open_report()
+        .notes()
+        .contains(&TrajectoryOpenNote::TrrFramesWithoutPositions(3)));
+}
+
+#[test]
+fn trr_steps_read_as_the_unsigned_low_32_bits_gromacs_writes() {
+    let topology = topology();
+    let mut bytes = raw_frame(i32::MAX, None, true, false);
+    bytes.extend(raw_frame(i32::MIN, None, true, false));
+    bytes.extend(raw_frame(-1, None, true, false));
+    let mut reader = TrrReader::new(
+        Cursor::new(bytes),
+        Arc::clone(&topology),
+        TrajectoryOpenOptions::default(),
+    )
+    .unwrap();
+    let mut buffer = reader.frame_buffer();
+    let mut steps = Vec::new();
+    while reader.read_next(&mut buffer).unwrap() {
+        steps.push(buffer.frame_view().step().unwrap());
+    }
+    assert_eq!(steps, [(1 << 31) - 1, 1 << 31, u64::from(u32::MAX)]);
+
+    for (step, written) in [(u64::from(u32::MAX), Some(-1_i32)), (1 << 32, None)] {
+        let frame = populated_frame(&topology, 0.0, step);
+        let mut writer = TrrWriter::new(
+            Cursor::new(Vec::new()),
+            Arc::clone(&topology),
+            TrajectoryWriteOptions::from(TrrWriteOptions::default()),
+        )
+        .unwrap();
+        match written {
+            Some(written) => {
+                writer.write_frame(frame.frame_view()).unwrap();
+                let bytes = writer.finish().unwrap().into_inner();
+                // The step follows the version string and ten block sizes.
+                let at = 12 + 12 + 40 + 4;
+                assert_eq!(
+                    i32::from_be_bytes(bytes[at..at + 4].try_into().unwrap()),
+                    written
+                );
+            }
+            None => assert_eq!(
+                codec_kind(&writer.write_frame(frame.frame_view()).unwrap_err()),
+                Some(TrajectoryIoErrorKind::NegativeOrUnrepresentableStep)
+            ),
+        }
+    }
+}
+
+#[test]
+fn trr_writer_refuses_cells_outside_the_gromacs_orientation() {
+    let topology = topology();
+    let mut frame = populated_frame(&topology, 0.0, 0);
+    // The cell of the populated frame turned by 90 degrees about z.
+    frame.geometry_mut().set_cell(Some(
+        PeriodicCell::new(
+            Quantity::new(
+                [
+                    Vector3::new(0.0, 2.0, 0.0),
+                    Vector3::new(-2.1, 0.2, 0.0),
+                    Vector3::new(-0.4, 0.3, 2.2),
+                ],
+                NANOMETER,
+            ),
+            [true; 3],
+        )
+        .unwrap(),
+    ));
+    let mut writer = TrrWriter::new(
+        Cursor::new(Vec::new()),
+        Arc::clone(&topology),
+        TrajectoryWriteOptions::from(TrrWriteOptions::default()).with_source_label("rotated.trr"),
+    )
+    .unwrap();
+    let error = writer.write_frame(frame.frame_view()).unwrap_err();
+    assert_eq!(
+        codec_kind(&error),
+        Some(TrajectoryIoErrorKind::UnsupportedVariant)
+    );
+    assert!(writer.writer().get_ref().is_empty());
 }

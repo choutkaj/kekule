@@ -404,11 +404,6 @@ fn an_index_opens_the_file_grown_by_appending_and_indexes_only_the_new_frames() 
         match name.rsplit('.').next() {
             // XYZ accepts a last line without its line break.
             Some("xyz") => {}
-            // Bytes follow the frames the header counts.
-            Some("dcd") => assert_eq!(
-                strict.unwrap_err().kind(),
-                TrajectoryIoErrorKind::IndexMismatch
-            ),
             _ => assert_eq!(
                 strict.unwrap_err().kind(),
                 TrajectoryIoErrorKind::TruncatedRecord,
@@ -543,7 +538,9 @@ fn forged_offsets_fail_the_frames_they_misplace_and_no_other() {
 }
 
 #[test]
-fn a_dcd_index_must_count_the_declared_frames() {
+fn a_dcd_index_missing_a_frame_fails_the_frame_it_misplaces() {
+    // The header's frame count is not checked: the index covers the whole
+    // file, so its one frame does not end where the index says.
     let directory = Directory::new();
     let path = directory.fixture("mdanalysis-2.9.0-three-atoms.dcd");
     let topology = topology(&["C", "H", "O"], &[(0, 1), (0, 2)]);
@@ -551,9 +548,13 @@ fn a_dcd_index_must_count_the_declared_frames() {
         .unwrap()
         .to_frame_index();
     let bytes = forge(&index, &index.frame_offsets()[..1]);
-    let error = reopen(&path, &topology, &bytes).unwrap_err();
-    assert_eq!(error.kind(), TrajectoryIoErrorKind::IndexMismatch);
-    assert_eq!((error.expected(), error.actual()), (Some(2), Some(1)));
+    let mut reader = reopen(&path, &topology, &bytes).unwrap();
+    assert_eq!(reader.frame_count(), Some(1));
+    let mut buffer = reader.frame_buffer();
+    assert_eq!(
+        reader.read_frame(0, &mut buffer).unwrap_err().kind(),
+        TrajectoryIoErrorKind::IndexMismatch
+    );
 }
 
 #[test]

@@ -14,9 +14,6 @@ pub struct DcdReader<R> {
     pub(super) positions: Vec<Point3>,
     pub(super) record: Vec<u8>,
     pub(super) frame_cursor: usize,
-    /// Whether frames are counted in the stream rather than checked against
-    /// the header's `NSET`, as in a file still being written.
-    pub(super) growing: bool,
 }
 
 impl<R> fmt::Debug for DcdReader<R> {
@@ -377,7 +374,6 @@ impl<R: Read + Seek> DcdReader<R> {
             positions,
             record,
             frame_cursor: 0,
-            growing: false,
         })
     }
 
@@ -388,19 +384,6 @@ impl<R: Read + Seek> DcdReader<R> {
 
     pub(crate) fn header(&self) -> &DcdHeader {
         &self.header
-    }
-
-    pub(super) fn early_eof_error(&self, frame_start: u64) -> TrajectoryIoError {
-        TrajectoryIoError::codec(
-            TrajectoryIoErrorKind::InconsistentMetadata,
-            TrajectoryIoOperation::ReadFrame,
-            Some(FORMAT),
-        )
-        .with_source_label(&self.source.label)
-        .with_frame(self.frame_cursor)
-        .with_byte_offset(frame_start)
-        .with_counts(self.header.declared_frames as u64, self.frame_cursor as u64)
-        .with_reason(Reason::EndsBeforeNset)
     }
 
     pub(super) fn parse_next(
@@ -421,39 +404,8 @@ impl<R: Read + Seek> DcdReader<R> {
                 error,
             )
         })?;
-        if self.growing {
-            // Frames are counted in the stream; NSET may lag behind them.
-            if probe_seekable_eof(
-                &mut self.reader,
-                TrajectoryIoOperation::ReadFrame,
-                TrajectoryFormat::Dcd,
-                &self.source.label,
-            )? {
-                return Ok(None);
-            }
-        } else if self.frame_cursor >= self.header.declared_frames {
-            if probe_seekable_eof(
-                &mut self.reader,
-                TrajectoryIoOperation::ReadFrame,
-                TrajectoryFormat::Dcd,
-                &self.source.label,
-            )? {
-                return Ok(None);
-            }
-            return Err(TrajectoryIoError::codec(
-                TrajectoryIoErrorKind::InconsistentMetadata,
-                TrajectoryIoOperation::ReadFrame,
-                Some(FORMAT),
-            )
-            .with_source_label(&self.source.label)
-            .with_frame(self.frame_cursor)
-            .with_byte_offset(frame_start)
-            .with_counts(
-                self.header.declared_frames as u64,
-                (self.frame_cursor as u64).saturating_add(1),
-            )
-            .with_reason(Reason::FramesBeyondNset));
-        }
+        // Frames are counted in the stream, whatever the header's `NSET`
+        // says: the stream ends cleanly before a frame's first record.
         if self.frame_cursor >= self.source.limits.max_frames() {
             if probe_seekable_eof(
                 &mut self.reader,
@@ -461,7 +413,7 @@ impl<R: Read + Seek> DcdReader<R> {
                 TrajectoryFormat::Dcd,
                 &self.source.label,
             )? {
-                return Err(self.early_eof_error(frame_start));
+                return Ok(None);
             }
             return Err(limit_error(
                 FORMAT,
@@ -489,7 +441,7 @@ impl<R: Read + Seek> DcdReader<R> {
                 true,
                 Some((CELL_BYTES, Reason::UnitCellValues)),
             )? {
-                return Err(self.early_eof_error(frame_start));
+                return Ok(None);
             }
             cell = Some(decode_cell(
                 &self.record,
@@ -549,7 +501,7 @@ impl<R: Read + Seek> DcdReader<R> {
                 clean_frame_eof,
                 Some((coordinate_bytes, Reason::CoordinateRecordSize)),
             )? {
-                return Err(self.early_eof_error(frame_start));
+                return Ok(None);
             }
             for (value_index, chunk) in self.record.as_chunks::<4>().0.iter().enumerate() {
                 let value = f64::from(self.header.endian.f32(*chunk));

@@ -35,6 +35,12 @@ pub(crate) struct IndexFacts {
     pub(crate) declared_frames: Option<usize>,
     /// Whether the indexed TRR frames mix scalar widths.
     pub(crate) precision_mixed: bool,
+    /// The TRR frames without positions before indexed frames, which the
+    /// scans skipped.
+    pub(crate) skipped_frames: usize,
+    /// The TRR frames without positions after the last indexed frame, which
+    /// the last scan skipped.
+    pub(crate) trailing_frames: usize,
 }
 
 /// A sequential reader that an [`IndexedReader`] scans and seeks.

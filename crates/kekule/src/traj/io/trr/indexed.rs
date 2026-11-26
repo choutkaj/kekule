@@ -102,9 +102,11 @@ impl<R: Read + Seek> IndexedTrrReader<R> {
 }
 
 /// The index facts record whether the indexed frames mix scalar widths,
-/// apart from what sequential reads have seen. A random read checks the
-/// frame's stamp, and its scalar width against the first frame's unless the
-/// index is mixed.
+/// apart from what sequential reads have seen, and how many frames without
+/// positions the scans skipped. A frame's extent begins with the frames
+/// without positions before it; those after the last frame stay outside the
+/// index, and every scan reads them again. A random read checks the frame's stamp, and
+/// its scalar width against the first frame's unless the index is mixed.
 impl<R: Read + Seek> IndexedCodec for TrrReader<R> {
     type Stream = R;
     type Frame = TrrDecodedFrame;
@@ -150,13 +152,17 @@ impl<R: Read + Seek> IndexedCodec for TrrReader<R> {
 
     fn index_facts(&self) -> IndexFacts {
         IndexFacts {
-            declared_frames: None,
             precision_mixed: self.index_mixed,
+            skipped_frames: self.index_skipped,
+            trailing_frames: self.index_trailing,
+            ..IndexFacts::default()
         }
     }
 
     fn set_index_facts(&mut self, facts: IndexFacts) {
         self.index_mixed = facts.precision_mixed;
+        self.index_skipped = facts.skipped_frames;
+        self.index_trailing = facts.trailing_frames;
     }
 
     fn frame_pending(&self) -> bool {
@@ -171,6 +177,8 @@ impl<R: Read + Seek> IndexedCodec for TrrReader<R> {
         }
         self.current_header_offset = end;
         self.precision_mixed = self.index_mixed;
+        // The scan reads the frames after the last indexed one again.
+        self.index_trailing = 0;
         Ok(())
     }
 
@@ -193,7 +201,14 @@ impl<R: Read + Seek> IndexedCodec for TrrReader<R> {
         _growing: bool,
     ) -> Result<Option<FrameStamp>, TrajectoryIoError> {
         match self.parse_next() {
-            Ok(decoded) => Ok(decoded.map(|decoded| decoded.header.stamp())),
+            Ok(Some(decoded)) => {
+                self.index_skipped = self.index_skipped.saturating_add(self.skipped_run);
+                Ok(Some(decoded.header.stamp()))
+            }
+            Ok(None) => {
+                self.index_trailing = self.skipped_run;
+                Ok(None)
+            }
             Err(error) => Err(frame_offset_context(error, self.frame_cursor, offset)),
         }
     }

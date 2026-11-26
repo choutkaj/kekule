@@ -128,10 +128,8 @@ impl TrajectoryOpenOptions {
     /// [`pending`](super::IndexedFileTrajectoryReader::pending_byte_count),
     /// and [`refresh`](super::IndexedFileTrajectoryReader::refresh) indexes
     /// it once it is complete. Corrupt data is still an error wherever it
-    /// lies. DCD readers count the frames in the file rather than check
-    /// them against the header's `NSET`, which writers update only as they
-    /// flush or when they finish. XYZ lines count only once their line
-    /// break is written, so a growing XYZ file's last line must end in one.
+    /// lies. XYZ lines count only once their line break is written, so a
+    /// growing XYZ file's last line must end in one.
     /// A file that holds no complete frame yet, or for DCD no complete
     /// header, fails to open with [`TrajectoryIoErrorKind::Incomplete`].
     ///

@@ -1,5 +1,4 @@
 use super::*;
-use crate::traj::trajectory::reason::{Part, Reason};
 
 /// Fully verified DCD indexed reader. Random reads leave the fixed-atom
 /// reference coordinates as they are.
@@ -17,11 +16,9 @@ impl<R: Read + Seek> IndexedDcdReader<R> {
     /// # Errors
     ///
     /// Returns the errors of [`DcdReader::new`], the decoding error of the
-    /// first invalid frame, [`TrajectoryIoErrorKind::InconsistentMetadata`]
-    /// when the frame count differs from the header `NSET` count,
-    /// [`TrajectoryIoErrorKind::LimitExceeded`] when the index outgrows the
-    /// limits, and [`TrajectoryIoErrorKind::Io`] when reading or seeking
-    /// fails.
+    /// first invalid frame, [`TrajectoryIoErrorKind::LimitExceeded`] when
+    /// the index outgrows the limits, and [`TrajectoryIoErrorKind::Io`] when
+    /// reading or seeking fails.
     pub fn new(
         reader: R,
         topology: impl Into<Arc<Topology>>,
@@ -40,8 +37,7 @@ impl<R: Read + Seek> IndexedDcdReader<R> {
     }
 
     /// Indexes the stream like [`Self::new`], reporting to `control`. A
-    /// `growing` stream may end in a partial frame, and its frames are
-    /// counted in the stream rather than checked against `NSET`.
+    /// `growing` stream may end in a partial frame.
     pub(crate) fn build(
         reader: R,
         topology: Arc<Topology>,
@@ -57,9 +53,7 @@ impl<R: Read + Seek> IndexedDcdReader<R> {
     }
 
     /// Opens the stream with previously verified `offsets` instead of
-    /// scanning it; random reads verify each frame against them. Unless the
-    /// stream is `growing`, the offsets must count at most the header's
-    /// `NSET` frames, and a later scan then requires the rest. With fixed
+    /// scanning it; random reads verify each frame against them. With fixed
     /// atoms, frame 0 is decoded and verified here for their reference
     /// coordinates.
     pub(crate) fn from_offsets(
@@ -68,20 +62,9 @@ impl<R: Read + Seek> IndexedDcdReader<R> {
         options: DcdReadOptions,
         source: ReadSource,
         offsets: Arc<FrameOffsets>,
-        growing: bool,
     ) -> Result<Self, TrajectoryIoError> {
         let mut inner = DcdReader::open(reader, topology, options, source)?;
-        inner.growing = growing;
         let label = inner.source.label.clone();
-        if !growing && offsets.len() > inner.header.declared_frames {
-            return Err(index_mismatch(
-                TrajectoryIoOperation::Open,
-                TrajectoryFormat::Dcd,
-                &label,
-                Reason::IndexBeyondNset,
-            )
-            .with_counts(inner.header.declared_frames as u64, offsets.len() as u64));
-        }
         offsets.verify_start(inner.header.data_start, TrajectoryFormat::Dcd, &label)?;
         for frame in 0..offsets.len() {
             offsets.verify_stamp(
@@ -123,7 +106,6 @@ impl<R: Read + Seek> IndexedDcdReader<R> {
             reader.options.clone(),
             reader.source.clone(),
             Arc::clone(self.inner.shared_offsets()),
-            reader.growing,
         )?;
         fork.inner.codec.header.declared_frames = reader.header.declared_frames;
         Ok(fork)
@@ -140,8 +122,8 @@ impl<R: Read + Seek> IndexedDcdReader<R> {
 }
 
 /// A scan reads the header's `NSET` again first, since a writer appending
-/// frames updates it, and records it in the index facts. Unless the stream
-/// is growing, it must hold exactly `NSET` frames.
+/// frames updates it, and records it in the index facts. The frames are
+/// counted in the stream, whatever `NSET` says.
 impl<R: Read + Seek> IndexedCodec for DcdReader<R> {
     type Stream = R;
     type Frame = DcdDecodedFrame;
@@ -176,7 +158,7 @@ impl<R: Read + Seek> IndexedCodec for DcdReader<R> {
     fn index_facts(&self) -> IndexFacts {
         IndexFacts {
             declared_frames: Some(self.header.declared_frames),
-            precision_mixed: false,
+            ..IndexFacts::default()
         }
     }
 
@@ -186,81 +168,24 @@ impl<R: Read + Seek> IndexedCodec for DcdReader<R> {
         }
     }
 
-    fn start_scan(&mut self, end: u64, growing: bool) -> Result<(), TrajectoryIoError> {
-        self.growing = growing;
+    fn start_scan(&mut self, end: u64, _growing: bool) -> Result<(), TrajectoryIoError> {
         self.header.declared_frames = self.reread_declared_frames()?;
         self.seek_to(SeekFrom::Start(end), TrajectoryIoOperation::Index)
             .map(drop)
     }
 
-    fn before_frame(
-        &mut self,
-        indexed: usize,
-        growing: bool,
-    ) -> Result<Option<u64>, TrajectoryIoError> {
-        let declared = self.header.declared_frames;
-        if growing || indexed < declared {
-            return Ok(None);
-        }
-        if probe_seekable_eof(
-            &mut self.reader,
-            TrajectoryIoOperation::Index,
-            TrajectoryFormat::Dcd,
-            &self.source.label,
-        )? {
-            return Ok(Some(0));
-        }
-        Err(TrajectoryIoError::codec(
-            TrajectoryIoErrorKind::InconsistentMetadata,
-            TrajectoryIoOperation::Index,
-            Some(FORMAT),
-        )
-        .with_source_label(&self.source.label)
-        .with_counts(declared as u64, (indexed as u64).saturating_add(1))
-        .with_reason(Reason::FramesBeyondNset))
-    }
-
-    fn index_full(
-        &mut self,
-        indexed: usize,
-        growing: bool,
-        limit: LimitExceeded,
-    ) -> Result<u64, TrajectoryIoError> {
-        if probe_seekable_eof(
-            &mut self.reader,
-            TrajectoryIoOperation::Index,
-            TrajectoryFormat::Dcd,
-            &self.source.label,
-        )? {
-            if growing {
-                return Ok(0);
-            }
-            return Err(self.ended_early(indexed));
-        }
-        Err(limit_error(
-            FORMAT,
-            TrajectoryIoOperation::Index,
-            &self.source.label,
-            Some(indexed),
-            None,
-        )
-        .exceeding(Part::FrameIndex, limit))
-    }
-
     fn index_next(
         &mut self,
-        indexed: usize,
+        _indexed: usize,
         offset: u64,
-        growing: bool,
+        _growing: bool,
     ) -> Result<Option<FrameStamp>, TrajectoryIoError> {
         let frame = self.frame_cursor;
         let stamp = self
             .stamp(frame)
             .map_err(|error| frame_offset_context(error, frame, offset))?;
         match self.parse_next(true) {
-            Ok(Some(_)) => Ok(Some(stamp)),
-            Ok(None) if growing => Ok(None),
-            Ok(None) => Err(self.ended_early(indexed)),
+            Ok(decoded) => Ok(decoded.map(|_| stamp)),
             Err(error) => Err(frame_offset_context(error, frame, offset)),
         }
     }
@@ -293,20 +218,5 @@ impl<R: Read + Seek> IndexedCodec for DcdReader<R> {
             forces: None,
             owner: None,
         })
-    }
-}
-
-impl<R> DcdReader<R> {
-    /// The error for a stream that ends after `indexed` of the header's
-    /// `NSET` frames.
-    fn ended_early(&self, indexed: usize) -> TrajectoryIoError {
-        TrajectoryIoError::codec(
-            TrajectoryIoErrorKind::InconsistentMetadata,
-            TrajectoryIoOperation::Index,
-            Some(FORMAT),
-        )
-        .with_source_label(&self.source.label)
-        .with_counts(self.header.declared_frames as u64, indexed as u64)
-        .with_reason(Reason::EndsBeforeNset)
     }
 }
