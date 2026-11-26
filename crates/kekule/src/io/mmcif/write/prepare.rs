@@ -2,7 +2,9 @@
 use super::entities::{
     stated_author_id, AssignedEntityKind, AsymRow, AtomEntityAssignment, EntityPlan, EntityRow,
 };
-use super::implied::{mark_implied, residue_key, ComponentTable, ReadBlock};
+use super::implied::{
+    mark_implied, residue_key, unstated_disulfides, ComponentTable, Implications, ReadBlock,
+};
 use super::one_based_serial;
 use super::{fail, invalid_structure, MmcifSharedCategory, MmcifWriteErrorKind, MmcifWriteOptions};
 use crate::components::ComponentLibrary;
@@ -89,6 +91,10 @@ pub(super) struct PreparedModel {
     /// that readers record as coordination rather than bonds. Kinds with a
     /// zero count are listed too, and recording drops them.
     pub(super) omissions: Vec<WriteOmission>,
+    /// The atoms readers bond from their distance that the structure leaves
+    /// unbonded, each pair in row order: geometries count them together
+    /// as [`WriteOmission::InferredBonds`].
+    pub(super) inferred_bonds: BTreeSet<[InstanceAtomId; 2]>,
 }
 
 /// Counts of the chemistry the rows leave out, by kind.
@@ -231,18 +237,40 @@ pub(super) fn prepare_model(
         .filter(|entity| entity.kind == AssignedEntityKind::Polymer)
         .map(|entity| entity.id.as_str())
         .collect::<BTreeSet<_>>();
-    let (component_tables, missing) = mark_implied(
+    let Implications {
+        tables: component_tables,
+        missing,
+        unstated_links,
+    } = mark_implied(
         &block,
         &atoms,
         &elements,
         &mut connections,
-        &atom_indexes,
         options.coordinate_precision,
         |row| polymer_entities.contains(row.entity_id.as_str()),
     );
     if let Some(&[left, right]) = missing.first() {
         if options.chemistry == UnrepresentablePolicy::Fail {
             return Err(fail(MmcifWriteErrorKind::DictionaryBondMissing {
+                atoms: [atoms[left].atom, atoms[right].atom],
+            }));
+        }
+    }
+    // No row keeps apart atoms that readers bond from their distance.
+    let inferred = unstated_links
+        .into_iter()
+        .map(|[left, right]| [left.min(right), left.max(right)])
+        .chain(unstated_disulfides(
+            &block,
+            &atoms,
+            &elements,
+            &connections,
+            options.coordinate_precision,
+        ))
+        .collect::<BTreeSet<_>>();
+    if let Some(&[left, right]) = inferred.first() {
+        if options.chemistry == UnrepresentablePolicy::Fail {
+            return Err(fail(MmcifWriteErrorKind::InferredBond {
                 atoms: [atoms[left].atom, atoms[right].atom],
             }));
         }
@@ -319,6 +347,10 @@ pub(super) fn prepare_model(
         selectors.validate(connection.left, &atoms, &atom_indexes)?;
         selectors.validate(connection.right, &atoms, &atom_indexes)?;
     }
+    let inferred_bonds = inferred
+        .into_iter()
+        .map(|pair| pair.map(|row| atoms[row].atom))
+        .collect();
     Ok(PreparedModel {
         entities,
         asyms,
@@ -359,6 +391,7 @@ pub(super) fn prepare_model(
                 first: first_unread.map(|(atom, _, _)| atom),
             },
         ],
+        inferred_bonds,
     })
 }
 

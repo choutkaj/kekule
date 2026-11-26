@@ -21,22 +21,25 @@
 use crate::diagnostics::{Countable, LengthMismatch};
 use crate::fixed_u32_id::FixedId;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::convert::Infallible;
 use std::fmt;
 use std::io::Write;
 use std::ops::Range;
 use std::sync::Arc;
 
 use crate::algorithms::{metal_bond_reading, MetalBondReading};
+use crate::components::ComponentLinking;
 use crate::diagnostics::{
     AtomField, Capitalized, CellReason, Count, DiagnosticKind, Format, FormatError,
     FormatErrorDetail, GeometryField,
 };
 use crate::io::element_symbol::structure_element_symbol;
 use crate::io::macromolecular::connectivity::{
-    hydrogen_sites, is_coordination, link_sides, link_valence, reader_protonation, reader_template,
-    standard_link, true_ends, within_bonding_distance, AtomEvidence, PolymerLink, Protonation,
-    ResidueEvidence, ResidueTemplate, StandardLink,
+    dictionary_template, hydrogen_sites, is_coordination, link_sides, link_valence,
+    reader_protonation, reader_template, standard_link, true_ends, within_bonding_distance,
+    AtomEvidence, PolymerLink, Protonation, ResidueEvidence, ResidueTemplate, StandardLink,
 };
+use crate::io::macromolecular::disulfides::{is_cysteine, pair_sulfurs, Sulfur};
 use crate::io::macromolecular::pdb::{
     linking_role, polymer_linking, polymer_template, segment_starts, Segment,
 };
@@ -208,8 +211,10 @@ impl PdbWriteOptions {
     /// deuterium and tritium, radicals, atom maps, represented stereo, bonds
     /// `CONECT` cannot state (see [`PdbWriteErrorKind::UnsupportedBondOrder`]),
     /// residue bonds that differ from the dictionary readers apply (see
-    /// [`PdbWriteErrorKind::DictionaryBondConflict`]), and charges readers
-    /// derive differently (see [`PdbWriteErrorKind::ChargeNotReadBack`]). By
+    /// [`PdbWriteErrorKind::DictionaryBondConflict`]), charges readers
+    /// derive differently (see [`PdbWriteErrorKind::ChargeNotReadBack`]),
+    /// and atoms the structure leaves unbonded that readers bond from their
+    /// distance (see [`PdbWriteErrorKind::InferredBond`]). By
     /// default it fails to write; [`UnrepresentablePolicy::Omit`] writes the
     /// records without it and reports each kind left out. Fixed implicit-hydrogen counts have
     /// their own policy, [`Self::implicit_hydrogens`].
@@ -403,6 +408,14 @@ pub enum PdbWriteErrorKind {
         /// The charge a reader gives it, in e.
         read: i8,
     },
+    /// The structure leaves two atoms unbonded that a reader bonds from
+    /// their distance, with [`PdbWriteOptions::chemistry`] set to fail: the
+    /// standard polymer link of residues adjacent along a chain, or a
+    /// disulfide between cysteine `SG` atoms. No record keeps them apart.
+    InferredBond {
+        /// The two atoms.
+        atoms: [InstanceAtomId; 2],
+    },
     /// The 1-based geometry `geometry` of a structure set has state PDB cannot
     /// carry, with [`PdbWriteOptions::geometry_metadata`] set to fail. A
     /// bare time order is reported for the first geometry.
@@ -529,6 +542,13 @@ impl fmt::Display for PdbWriteErrorKind {
                     atoms[1]
                 ),
             },
+            Self::InferredBond {
+                atoms: [left, right],
+            } => write!(
+                f,
+                "{} and {right} are not bonded, but a reader bonds them from their distance.",
+                Capitalized(left)
+            ),
             Self::UnrepresentableGeometry { geometry, field } => {
                 f.write_str(&unrepresentable_state("PDB", *field, Some(*geometry)))
             }
@@ -718,8 +738,8 @@ pub(crate) fn write_pdb_to<'a>(
         None => Vec::new(),
     };
     plan.check_reader(
-        views[0].topology(),
         views[0],
+        &positions,
         &links,
         source.reports.and_then(<[_]>::first),
         &options,
@@ -1961,7 +1981,11 @@ impl<'o> Plan<'o> {
     ///   are counted as [`WriteOmission::DictionaryBonds`];
     /// - charges readers derive differently fail as
     ///   [`PdbWriteErrorKind::ChargeNotReadBack`], or are counted as
-    ///   [`WriteOmission::FormalCharges`].
+    ///   [`WriteOmission::FormalCharges`];
+    /// - atoms readers bond from their distance in any of `structures`, the
+    ///   written coordinates of each structure, that the structure leaves
+    ///   unbonded fail as [`PdbWriteErrorKind::InferredBond`], or are
+    ///   counted as [`WriteOmission::InferredBonds`].
     ///
     /// A chain gets `SEQRES` records when its residues' places in their
     /// sequence (`label_seq_id`) leave residues out, or when a residue's
@@ -1976,13 +2000,14 @@ impl<'o> Plan<'o> {
     /// between two of them is a gap unless either shows a true end.
     fn check_reader(
         &mut self,
-        topology: &Topology,
         view: StructureView<'_>,
+        structures: &[Vec<Option<Point3>>],
         links: &[[usize; 2]],
         report: Option<&StructureInterpretationReport>,
         options: &PdbWriteOptions,
         omissions: &mut Omissions,
     ) -> Result<(), FormatError> {
+        let topology = view.topology();
         let mut coordinated = BTreeMap::<usize, usize>::new();
         for &index in links.iter().flatten() {
             *coordinated.entry(index).or_default() += 1;
@@ -2041,7 +2066,7 @@ impl<'o> Plan<'o> {
             .flatten()
             .map(|&(key, _)| key)
             .collect::<BTreeSet<_>>();
-        let positions = written_positions(view);
+        let positions = &structures[0];
         let evidences = self
             .templated
             .iter()
@@ -2140,6 +2165,9 @@ impl<'o> Plan<'o> {
         };
         let mut residue_ends = BTreeMap::<&ResidueKey, [bool; 2]>::new();
         let mut seqres = Vec::new();
+        // The first records of residues a reader numbers consecutively along
+        // their chain, so it links them.
+        let mut neighbours = Vec::new();
         for (&chain, residues) in &chains {
             if chain.0 == ' ' || letters.get(&chain.0).is_some_and(|chains| chains.len() > 1) {
                 continue;
@@ -2192,6 +2220,11 @@ impl<'o> Plan<'o> {
             };
             for (&(key, _), &place) in residues.iter().zip(&places) {
                 residue_ends.insert(key, [place > 1, place < length]);
+            }
+            for (pair, places) in residues.windows(2).zip(places.windows(2)) {
+                if places[1] == places[0] + 1 {
+                    neighbours.push([pair[0].1, pair[1].1]);
+                }
             }
             seqres.push((chain.0, sequence));
         }
@@ -2259,12 +2292,11 @@ impl<'o> Plan<'o> {
                             record.ter || (record.chain, record.segment.as_str()) != chain
                         })
                 });
-                if ends_run {
-                    last = None;
-                }
                 if !ends_run {
+                    neighbours.push([residues[at].1, residues[at + 1].1]);
                     continue;
                 }
+                last = None;
                 if at > run {
                     for (offset, &(key, _)) in residues[run..=at].iter().enumerate() {
                         residue_ends.insert(key, [offset > 0, run + offset < at]);
@@ -2407,8 +2439,139 @@ impl<'o> Plan<'o> {
             });
         }
 
+        // No record keeps apart atoms that readers bond from their distance.
+        let inferred =
+            self.inferred_bonds(topology, structures, &neighbours, &coordinated, library);
+        if let Some(&[left, right]) = inferred.first() {
+            if strict {
+                return Err(fail(PdbWriteErrorKind::InferredBond {
+                    atoms: [self.records[left].atom, self.records[right].atom],
+                }));
+            }
+            omissions.record(WriteOmission::InferredBonds {
+                bonds: inferred.len(),
+            });
+        }
+
         self.seqres = seqres;
         Ok(())
+    }
+
+    /// The atoms, by dense index, that readers bond from their distance in
+    /// a written structure of `structures` although the structure leaves
+    /// them unbonded: the standard links of the residues readers number
+    /// consecutively along a chain (`neighbours`, by first record), and
+    /// the disulfides readers infer between cysteine `SG` atoms that no
+    /// `CONECT` or `LINK` record (`coordinated`) joins to another residue.
+    fn inferred_bonds(
+        &self,
+        topology: &Topology,
+        structures: &[Vec<Option<Point3>>],
+        neighbours: &[[usize; 2]],
+        coordinated: &BTreeMap<usize, usize>,
+        library: Option<&ComponentLibrary>,
+    ) -> BTreeSet<[usize; 2]> {
+        let atom = |index: usize| {
+            topology
+                .atom_at(TopologyAtomIndex::from_index(index))
+                .expect("records follow dense atoms")
+        };
+        let element = |index: usize| atom(index).atom().element;
+        let key = |index: usize| &self.residues[index].key;
+        let bonded = |a: usize, b: usize| {
+            atom(a)
+                .bonds()
+                .any(|bond| bond.atoms().iter().any(|end| end.index().index() == b))
+        };
+        let named = |start: usize| {
+            move |name: &str| {
+                (start..self.records.len())
+                    .take_while(|&index| key(index) == key(start))
+                    .find(|&index| self.records[index].name.trim() == name)
+            }
+        };
+        let linking = |start: usize| {
+            dictionary_template(library, &self.records[start].residue_name)
+                .map_or(ComponentLinking::None, |(component, _)| component.linking())
+        };
+        let mut inferred = BTreeSet::new();
+        for &[earlier, later] in neighbours {
+            let Some(link) = PolymerLink::undeclared(linking(earlier), linking(later)) else {
+                continue;
+            };
+            let outcome = standard_link(
+                link,
+                named(earlier),
+                named(later),
+                |atom_index: usize, partner: usize| {
+                    Ok::<_, Infallible>(atom(atom_index).bonds().any(|bond| {
+                        let [x, y] = bond.atoms().map(|end| end.index().index());
+                        let other = if x == atom_index { y } else { x };
+                        other != partner
+                            && key(other) != key(atom_index)
+                            && !is_coordination(bond.order, [element(atom_index), element(other)])
+                    }))
+                },
+                |left, right| {
+                    structures.iter().any(|positions| {
+                        matches!(
+                            (positions[left], positions[right]),
+                            (Some(l), Some(r))
+                                if within_bonding_distance((element(left), l), (element(right), r))
+                        )
+                    })
+                },
+            );
+            if let Ok(StandardLink::Linked([left, right])) = outcome {
+                if !bonded(left, right) {
+                    inferred.insert([left.min(right), left.max(right)]);
+                }
+            }
+        }
+        let linked = |index: usize| {
+            self.conect
+                .get(&index)
+                .is_some_and(|partners| partners.iter().any(|&partner| key(partner) != key(index)))
+        };
+        for positions in structures {
+            let mut hydrogens = BTreeMap::<&ResidueKey, Vec<Point3>>::new();
+            let mut candidates = Vec::new();
+            for (index, record) in self.records.iter().enumerate() {
+                let Some(point) = positions[index] else {
+                    continue;
+                };
+                if !is_cysteine(&record.residue_name) {
+                    continue;
+                }
+                if element(index).atomic_number() == 1 {
+                    hydrogens.entry(key(index)).or_default().push(point);
+                } else if record.name.trim() == "SG"
+                    && element(index) == Element::S
+                    && !linked(index)
+                    && !coordinated.contains_key(&index)
+                {
+                    candidates.push((index, point));
+                }
+            }
+            let mut sulfurs = candidates
+                .into_iter()
+                .filter(|&(index, point)| {
+                    !hydrogens.get(key(index)).is_some_and(|points| {
+                        points.iter().any(|&hydrogen| {
+                            within_bonding_distance((Element::S, point), (Element::H, hydrogen))
+                        })
+                    })
+                })
+                .map(|(index, point)| Sulfur {
+                    residue: key(index),
+                    order: index,
+                    point,
+                })
+                .collect::<Vec<_>>();
+            let Ok(pairs) = pair_sulfurs(&mut sulfurs, || Ok::<_, Infallible>(()));
+            inferred.extend(pairs.into_iter().filter(|&[a, b]| !bonded(a, b)));
+        }
+        inferred
     }
 
     /// `SEQRES` records for the chains [`Self::check_reader`] sequences.
@@ -2512,10 +2675,9 @@ impl LinkContext<'_> {
         let (earlier, later) = if at_a < at_b { (a, b) } else { (b, a) };
         let library = ComponentLibrary::bundled();
         let linking = |atom: usize| {
-            library.get(&self.records[atom].residue_name).map_or(
-                crate::components::ComponentLinking::None,
-                Component::linking,
-            )
+            library
+                .get(&self.records[atom].residue_name)
+                .map_or(ComponentLinking::None, Component::linking)
         };
         let Some(link) = PolymerLink::undeclared(linking(earlier), linking(later)) else {
             return false;

@@ -194,16 +194,18 @@ impl MmcifWriteOptions {
 
     /// Other represented chemistry mmCIF cannot carry: isotopes other than
     /// deuterium and tritium, radicals, atom maps, represented stereo, and
-    /// zero-order bonds, which `_struct_conn` cannot state, and bonds a
+    /// zero-order bonds, which `_struct_conn` cannot state, bonds a
     /// dictionary residue lacks, which a reader adds back
-    /// ([`MmcifWriteErrorKind::DictionaryBondMissing`]), and charges readers
-    /// derive differently ([`MmcifWriteErrorKind::ChargeNotReadBack`]). By
-    /// default it fails to write; [`UnrepresentablePolicy::Omit`] writes the
-    /// rows without it and reports each kind left out
-    /// ([`WriteOmission::Isotopes`], [`WriteOmission::Radicals`],
-    /// [`WriteOmission::AtomMaps`], [`WriteOmission::Stereo`],
-    /// [`WriteOmission::Bonds`], [`WriteOmission::DictionaryBonds`], and
-    /// [`WriteOmission::FormalCharges`]). An omitted isotope is written as its
+    /// ([`MmcifWriteErrorKind::DictionaryBondMissing`]), charges readers
+    /// derive differently ([`MmcifWriteErrorKind::ChargeNotReadBack`]), and
+    /// atoms the structure leaves unbonded that readers bond from their
+    /// distance ([`MmcifWriteErrorKind::InferredBond`]). By default it fails
+    /// to write; [`UnrepresentablePolicy::Omit`] writes the rows without it
+    /// and reports each kind left out ([`WriteOmission::Isotopes`],
+    /// [`WriteOmission::Radicals`], [`WriteOmission::AtomMaps`],
+    /// [`WriteOmission::Stereo`], [`WriteOmission::Bonds`],
+    /// [`WriteOmission::DictionaryBonds`], [`WriteOmission::FormalCharges`],
+    /// and [`WriteOmission::InferredBonds`]). An omitted isotope is written as its
     /// element. mmCIF readers read no stereo, but the coordinates still
     /// define it, and [`crate::stereo::coordinates`] infers it from them.
     /// Fixed implicit-hydrogen counts have their own policy,
@@ -373,6 +375,14 @@ pub enum MmcifWriteErrorKind {
         /// The two atoms.
         atoms: [InstanceAtomId; 2],
     },
+    /// The structure leaves two atoms unbonded that a reader bonds from
+    /// their distance, with [`MmcifWriteOptions::chemistry`] set to fail:
+    /// the standard polymer link of residues adjacent along a chain, or a
+    /// disulfide between cysteine `SG` atoms. No row keeps them apart.
+    InferredBond {
+        /// The two atoms.
+        atoms: [InstanceAtomId; 2],
+    },
     /// A reader gives the atom another charge than the structure's, with
     /// [`MmcifWriteOptions::chemistry`] set to fail. Readers derive the
     /// charges of residues the dictionary covers, and ignore a stated 0 in
@@ -468,6 +478,7 @@ impl MmcifWriteErrorKind {
             | Self::UnsupportedStereo(_)
             | Self::UnsupportedBondOrder { .. }
             | Self::DictionaryBondMissing { .. }
+            | Self::InferredBond { .. }
             | Self::ChargeNotReadBack { .. }
             | Self::AmbiguousConnectionSelector(_)
             | Self::UnsupportedTextValue { .. }
@@ -621,6 +632,13 @@ impl fmt::Display for MmcifWriteErrorKind {
             } => write!(
                 f,
                 "{} and {right} are not bonded, but the component dictionary bonds them.",
+                Capitalized(left)
+            ),
+            Self::InferredBond {
+                atoms: [left, right],
+            } => write!(
+                f,
+                "{} and {right} are not bonded, but a reader bonds them from their distance.",
                 Capitalized(left)
             ),
             Self::AmbiguousConnectionSelector(atom) => write!(
@@ -1121,6 +1139,9 @@ fn write_model_block_to(
     for omission in &prepared.omissions {
         omissions.record(*omission);
     }
+    omissions.record(WriteOmission::InferredBonds {
+        bonds: prepared.inferred_bonds.len(),
+    });
     Ok(())
 }
 
@@ -1200,6 +1221,7 @@ fn write_multi_model_block_to(
         let plan = multi_model_entity_plan(view, classifications, reports.map(|all| &all[index]))?;
         let candidate = prepare_model(view, plan, options)?;
         validate_geometry(&first, &candidate, index + 1)?;
+        first.inferred_bonds.extend(&candidate.inferred_bonds);
         // A bond the reader derives in one model but not another is stated.
         for (connection, geometry) in first.connections.iter_mut().zip(&candidate.connections) {
             if connection.implied != geometry.implied {
@@ -1227,6 +1249,10 @@ fn write_multi_model_block_to(
     for omission in &first.omissions {
         omissions.record(*omission);
     }
+    // Readers bond atoms from their distance in any geometry.
+    omissions.record(WriteOmission::InferredBonds {
+        bonds: first.inferred_bonds.len(),
+    });
     Ok(())
 }
 
