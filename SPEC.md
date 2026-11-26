@@ -863,7 +863,9 @@ Molfile, one SDF record, one SMILES line, one CIF data block, or one PDB entry.
 SDF and SMILES readers split records by line framing alone, so a malformed
 record fails alone and these formats stream with memory bounded by one record.
 CIF block boundaries are lexical, so malformed framing fails the rest of the
-input. A file-level document is a convenience collection of parsed records;
+input. XYZ frames stream one at a time with memory bounded by one frame; each
+frame's atom count frames it, so the first malformed frame ends the stream.
+A file-level document is a convenience collection of parsed records;
 interpretation is always per record and never depends on a sibling record.
 
 A format document is the typed syntax of one record or block, with source

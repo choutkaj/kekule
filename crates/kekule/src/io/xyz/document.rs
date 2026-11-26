@@ -5,15 +5,19 @@
 //! Cartesian coordinates, and optionally further whitespace-separated columns,
 //! as extended XYZ writes them. Parsing types the count, element token, and
 //! coordinates and keeps the comment and any further columns verbatim;
-//! interpretation decides what they mean.
+//! interpretation decides what they mean. [`XyzFrames`] parses one frame at
+//! a time, so a reader of a long file can stop after the frames it needs.
 //!
 //! A host that holds atoms as elements and positions, such as one reading a
 //! format that lists a molecule beside other data, builds the same document
 //! with [`XyzAtom::new`], [`XyzFrame::new`], and [`XyzDocument::new`] and
 //! interprets it as it would a parsed file.
+use std::io::{BufRead, BufReader, Read};
+
 use crate::diagnostics::{
     read_bounded, DiagnosticKind, Format, FormatError, LimitExceeded, Resource, SourceLocation,
 };
+use crate::io::lines::read_line;
 use crate::math::Point3;
 use crate::molecule::Element;
 
@@ -291,19 +295,13 @@ pub(crate) fn parse_xyz_str(
     options: XyzParseOptions,
 ) -> Result<XyzDocument, FormatError> {
     if input.len() > options.max_input_bytes {
-        let limit = LimitExceeded::new(Resource::InputBytes, options.max_input_bytes, input.len());
-        return Err(xyz_parse_error(
-            DiagnosticKind::Limit,
-            1,
-            format!("The input exceeds its {}.", limit.describe()),
-        )
-        .exceeding(limit));
+        return Err(input_limit(1, options.max_input_bytes, input.len()));
     }
     // Every terminator (`\r\n`, `\r`, `\n`) ends one line; a final terminator
     // does not start another.
     let body = input.strip_suffix('\n').unwrap_or(input);
     let body = body.strip_suffix('\r').unwrap_or(body);
-    let mut lines = (!input.is_empty())
+    let lines = (!input.is_empty())
         .then(|| {
             body.split('\n')
                 .flat_map(|chunk| chunk.strip_suffix('\r').unwrap_or(chunk).split('\r'))
@@ -311,76 +309,236 @@ pub(crate) fn parse_xyz_str(
         .into_iter()
         .flatten()
         .enumerate()
-        .map(|(index, line)| (index + 1, line))
-        .peekable();
+        .map(|(index, line)| (index + 1, line));
+    let mut lines = TextLines(lines, std::marker::PhantomData);
     let mut frames = Vec::new();
     let mut atom_records = 0usize;
-    while let Some((count_line, count_text)) = lines.next() {
-        if count_text.trim().is_empty() {
-            // Blank lines may only trail the last frame.
-            if let Some((line, _)) = lines.find(|(_, text)| !text.trim().is_empty()) {
+    while let Some(frame) = next_frame(&mut lines, &options, &mut atom_records)? {
+        frames.push(frame);
+    }
+    Ok(XyzDocument { frames })
+}
+
+/// Streams the frames of an XYZ input one at a time.
+///
+/// Each frame's atom-count line says where the next frame begins, so memory
+/// is bounded by one frame, and the first malformed frame ends the stream:
+/// no count line follows it to resume from. Blank lines may follow the last
+/// frame; any other content after them is a syntax error. The limits of
+/// [`XyzParseOptions`] apply to the input read so far.
+#[derive(Debug)]
+pub struct XyzFrames<R> {
+    lines: ReadLines<R>,
+    options: XyzParseOptions,
+    atom_records: usize,
+    done: bool,
+}
+
+impl<R: Read> XyzFrames<R> {
+    /// Streams the frames of `reader` under the limits of `options`.
+    pub fn new(reader: R, options: XyzParseOptions) -> Self {
+        Self {
+            lines: ReadLines {
+                reader: Counted {
+                    inner: BufReader::new(reader),
+                    consumed: 0,
+                },
+                line: Vec::new(),
+                number: 0,
+                max_bytes: options.max_input_bytes,
+            },
+            options,
+            atom_records: 0,
+            done: false,
+        }
+    }
+}
+
+impl<R: Read> Iterator for XyzFrames<R> {
+    type Item = Result<XyzFrame, FormatError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.done {
+            return None;
+        }
+        let frame = next_frame(&mut self.lines, &self.options, &mut self.atom_records);
+        self.done = !matches!(frame, Ok(Some(_)));
+        frame.transpose()
+    }
+}
+
+impl<R: Read> std::iter::FusedIterator for XyzFrames<R> {}
+
+/// The lines of an XYZ input, numbered from 1, without their terminators.
+trait Lines {
+    fn next_line(&mut self) -> Result<Option<(usize, &str)>, FormatError>;
+}
+
+/// The lines of an input held whole.
+struct TextLines<'a, I>(I, std::marker::PhantomData<&'a str>);
+
+impl<'a, I: Iterator<Item = (usize, &'a str)>> Lines for TextLines<'a, I> {
+    fn next_line(&mut self) -> Result<Option<(usize, &str)>, FormatError> {
+        Ok(self.0.next())
+    }
+}
+
+/// The lines of an input read as they are needed.
+#[derive(Debug)]
+struct ReadLines<R> {
+    reader: Counted<BufReader<R>>,
+    line: Vec<u8>,
+    number: usize,
+    max_bytes: usize,
+}
+
+impl<R: Read> Lines for ReadLines<R> {
+    fn next_line(&mut self) -> Result<Option<(usize, &str)>, FormatError> {
+        // A line is read no further than the bytes left and one more, which
+        // tells that the input exceeds them, so an endless line ends too.
+        let room = self.max_bytes.saturating_sub(self.reader.consumed);
+        let bound = u64::try_from(room).map_or(u64::MAX, |room| room.saturating_add(1));
+        let mut bounded = (&mut self.reader).take(bound);
+        let read = read_line(&mut bounded, &mut self.line, room).map_err(|error| {
+            xyz_parse_error(DiagnosticKind::Io, self.number + 1, "").with_source(error)
+        })?;
+        if read.is_none() {
+            return Ok(None);
+        }
+        self.number += 1;
+        if self.reader.consumed > self.max_bytes {
+            return Err(input_limit(
+                self.number,
+                self.max_bytes,
+                self.reader.consumed,
+            ));
+        }
+        let text = std::str::from_utf8(&self.line).map_err(|error| {
+            xyz_parse_error(
+                DiagnosticKind::Io,
+                self.number,
+                "The input is not valid UTF-8.",
+            )
+            .with_source(error)
+        })?;
+        Ok(Some((self.number, text)))
+    }
+}
+
+/// A buffered reader that counts the bytes consumed from it, terminators
+/// included.
+#[derive(Debug)]
+struct Counted<B> {
+    inner: B,
+    consumed: usize,
+}
+
+impl<B: BufRead> Read for Counted<B> {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        let read = self.inner.read(buffer)?;
+        self.consumed = self.consumed.saturating_add(read);
+        Ok(read)
+    }
+}
+
+impl<B: BufRead> BufRead for Counted<B> {
+    fn fill_buf(&mut self) -> std::io::Result<&[u8]> {
+        self.inner.fill_buf()
+    }
+
+    fn consume(&mut self, amount: usize) {
+        self.inner.consume(amount);
+        self.consumed = self.consumed.saturating_add(amount);
+    }
+}
+
+fn input_limit(line: usize, max_bytes: usize, observed: usize) -> FormatError {
+    let limit = LimitExceeded::new(Resource::InputBytes, max_bytes, observed);
+    xyz_parse_error(
+        DiagnosticKind::Limit,
+        line,
+        format!("The input exceeds its {}.", limit.describe()),
+    )
+    .exceeding(limit)
+}
+
+/// The next frame of `lines`, `atom_records` counting the atom lines of the
+/// frames before; `None` after the last.
+fn next_frame(
+    lines: &mut impl Lines,
+    options: &XyzParseOptions,
+    atom_records: &mut usize,
+) -> Result<Option<XyzFrame>, FormatError> {
+    let (count_line, blank, count) = match lines.next_line()? {
+        None => return Ok(None),
+        Some((line, text)) => (line, text.trim().is_empty(), text.trim().parse::<usize>()),
+    };
+    if blank {
+        // Blank lines may only trail the last frame.
+        while let Some((line, text)) = lines.next_line()? {
+            if !text.trim().is_empty() {
                 return Err(xyz_parse_error(
                     DiagnosticKind::Syntax,
                     line,
                     "Content follows a blank line after the last frame.",
                 ));
             }
-            break;
         }
-        let count = count_text.trim().parse::<usize>().map_err(|_| {
-            xyz_parse_error(
+        return Ok(None);
+    }
+    let count = count.map_err(|_| {
+        xyz_parse_error(
+            DiagnosticKind::Syntax,
+            count_line,
+            "The atom count line does not hold one whole number.",
+        )
+    })?;
+    if count == 0 {
+        return Err(xyz_parse_error(
+            DiagnosticKind::InvalidValue,
+            count_line,
+            "The frame has zero atoms.",
+        ));
+    }
+    let total = atom_records.saturating_add(count);
+    if total > options.max_atom_records {
+        let limit = LimitExceeded::new(Resource::Atoms, options.max_atom_records, total);
+        return Err(xyz_parse_error(
+            DiagnosticKind::Limit,
+            count_line,
+            format!("The input exceeds its {}.", limit.describe()),
+        )
+        .exceeding(limit));
+    }
+    *atom_records = total;
+    let Some((_, comment)) = lines.next_line()? else {
+        return Err(xyz_parse_error(
+            DiagnosticKind::Syntax,
+            count_line,
+            "The frame ends before its comment line.",
+        ));
+    };
+    let comment = comment.to_owned();
+    let mut atoms = Vec::with_capacity(count);
+    for atom_index in 0..count {
+        let Some((line, text)) = lines.next_line()? else {
+            return Err(xyz_parse_error(
                 DiagnosticKind::Syntax,
                 count_line,
-                "The atom count line does not hold one whole number.",
-            )
-        })?;
-        if count == 0 {
-            return Err(xyz_parse_error(
-                DiagnosticKind::InvalidValue,
-                count_line,
-                "The frame has zero atoms.",
-            ));
-        }
-        let total = atom_records.saturating_add(count);
-        if total > options.max_atom_records {
-            let limit = LimitExceeded::new(Resource::Atoms, options.max_atom_records, total);
-            return Err(xyz_parse_error(
-                DiagnosticKind::Limit,
-                count_line,
-                format!("The input exceeds its {}.", limit.describe()),
-            )
-            .exceeding(limit));
-        }
-        atom_records = total;
-        let Some((_, comment)) = lines.next() else {
-            return Err(xyz_parse_error(
-                DiagnosticKind::Syntax,
-                count_line,
-                "The frame ends before its comment line.",
+                format!(
+                    "The frame declares {} but ends after {atom_index}.",
+                    crate::diagnostics::counted(count, "atom", "atoms")
+                ),
             ));
         };
-        let mut atoms = Vec::with_capacity(count);
-        for atom_index in 0..count {
-            let Some((line, text)) = lines.next() else {
-                return Err(xyz_parse_error(
-                    DiagnosticKind::Syntax,
-                    count_line,
-                    format!(
-                        "The frame declares {} but ends after {atom_index}.",
-                        crate::diagnostics::counted(count, "atom", "atoms")
-                    ),
-                ));
-            };
-            atoms.push(parse_atom(line, text)?);
-        }
-        frames.push(XyzFrame {
-            comment: comment.to_owned(),
-            atoms,
-            line: count_line,
-            parsed: true,
-        });
+        atoms.push(parse_atom(line, text)?);
     }
-    Ok(XyzDocument { frames })
+    Ok(Some(XyzFrame {
+        comment,
+        atoms,
+        line: count_line,
+        parsed: true,
+    }))
 }
 
 fn parse_atom(line: usize, text: &str) -> Result<XyzAtom, FormatError> {
