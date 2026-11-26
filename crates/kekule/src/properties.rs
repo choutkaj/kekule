@@ -1310,29 +1310,19 @@ impl RawPropertyTable {
         Ok(())
     }
 
-    /// Whether [`Self::copy_rows_from`] takes every value of `source`: each
-    /// source column whose key this table has matches its type, and its real
-    /// values convert to its unit and stay finite.
+    /// Whether [`Self::copy_rows_from`] takes every value of `source`. It runs
+    /// the check that storing a value in an existing column runs, so the two
+    /// cannot disagree.
     pub(crate) fn accepts_rows_of(&self, source: &Self) -> bool {
         source.columns.iter().all(|(key, column)| {
             let Some(own) = self.columns.get(key) else {
                 return true;
             };
-            match (own, column) {
-                (PropertyColumn::Bool(_), PropertyColumn::Bool(_))
-                | (PropertyColumn::Int(_), PropertyColumn::Int(_))
-                | (PropertyColumn::String(_), PropertyColumn::String(_)) => true,
-                (
-                    PropertyColumn::Real { unit, .. },
-                    PropertyColumn::Real { unit: from, values },
-                ) => from.conversion_factor_to(*unit).is_ok_and(|factor| {
-                    values
-                        .iter()
-                        .flatten()
-                        .all(|value| (value * factor).is_finite())
-                }),
-                _ => false,
-            }
+            (0..column.len()).all(|index| match column.value_ref(index) {
+                Ok(Some(value)) => value_for_column(own, key, index, value).is_ok(),
+                Ok(None) => true,
+                Err(_) => false,
+            })
         })
     }
 
@@ -1949,13 +1939,27 @@ fn validate_value_for_column(
     let Some(value) = value else {
         return Ok(None);
     };
+    match value_for_column(column, key, index, value.as_ref())? {
+        PropertyValueRef::Real { value, unit } => Ok(Some(PropertyValue::Real { value, unit })),
+        _ => Ok(Some(value)),
+    }
+}
+
+/// `value` as `column` stores it at `index`: of the column's type, with a real
+/// value converted to the column's unit and still finite.
+fn value_for_column<'a>(
+    column: &PropertyColumn,
+    key: &PropertyKey,
+    index: usize,
+    value: PropertyValueRef<'a>,
+) -> Result<PropertyValueRef<'a>, PropertyError> {
     match (column, value) {
-        (PropertyColumn::Bool(_), value @ PropertyValue::Bool(_))
-        | (PropertyColumn::Int(_), value @ PropertyValue::Int(_))
-        | (PropertyColumn::String(_), value @ PropertyValue::String(_)) => Ok(Some(value)),
+        (PropertyColumn::Bool(_), PropertyValueRef::Bool(_))
+        | (PropertyColumn::Int(_), PropertyValueRef::Int(_))
+        | (PropertyColumn::String(_), PropertyValueRef::String(_)) => Ok(value),
         (
             PropertyColumn::Real { unit, .. },
-            PropertyValue::Real {
+            PropertyValueRef::Real {
                 value,
                 unit: source_unit,
             },
@@ -1964,7 +1968,7 @@ fn validate_value_for_column(
             if !value.is_finite() {
                 return Err(PropertyError::NonFiniteValue { index: Some(index) });
             }
-            Ok(Some(PropertyValue::Real { value, unit: *unit }))
+            Ok(PropertyValueRef::Real { value, unit: *unit })
         }
         _ => Err(PropertyError::TypeMismatch { key: key.clone() }),
     }

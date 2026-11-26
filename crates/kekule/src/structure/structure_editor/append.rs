@@ -38,9 +38,10 @@ impl StructureEditor {
     /// adopts the source cell. Otherwise a periodic source requires equal periodic
     /// axes and canonical cell vectors within floating-point conversion roundoff
     /// (16 machine epsilons times the largest vector component). Callers can set
-    /// the intended cell before retrying. Failure leaves the entire editor unchanged.
+    /// the intended cell before retrying. An error leaves the entire editor unchanged.
     /// Unless a property column of the source clashes with the draft's, the
-    /// append works in place, without copying the draft.
+    /// append works in place, without copying the draft. A panic during it can
+    /// then leave the draft part-appended.
     ///
     /// ```
     /// use kekule::{smiles, structure::{Structure, Positions}, math::Point3,
@@ -90,9 +91,10 @@ impl StructureEditor {
         let same_ids: &ChainIds<'_> =
             &|label, author| (label.to_owned(), author.map(str::to_owned));
         // Past its first step, which reserves the atoms, an append fails only
-        // when a property column clashes or lacks rows. Without either it
-        // runs in place: staging copies the whole draft, which would make
-        // appending many parts cost the square of their size.
+        // when a property column clashes or a property table lacks rows, and
+        // the checks below rule out both. Then it runs in place: staging
+        // copies the whole draft, which would make appending many parts cost
+        // the square of their size.
         if self.topology.accepts_properties_of(source.topology())
             && self.slots.properties.accepts_rows_of(
                 source.properties(),
@@ -198,6 +200,11 @@ impl StructureEditor {
 /// The chains of `source` whose label or author identifier a chain of
 /// `draft` has.
 fn colliding_chains(draft: &TopologyEditor, source: &Topology) -> Vec<ChainId> {
+    // A part without chains, such as a molecule built from SMILES, skips
+    // hashing every chain of the draft.
+    if source.chains().len() == 0 {
+        return Vec::new();
+    }
     let mut labels = std::collections::HashSet::new();
     let mut authors = std::collections::HashSet::new();
     for (_, chain) in draft.chains() {
