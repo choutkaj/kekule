@@ -181,8 +181,12 @@ enum Value<'a> {
     MoleculeClass(MoleculeClass),
 }
 
-const PROTEIN_BACKBONE: [&str; 4] = ["N", "CA", "C", "O"];
-const PROTEIN_MAIN_CHAIN: [&str; 5] = ["N", "CA", "C", "O", "OXT"];
+/// `N CA C O`, with the `O` of a C terminus also under its CHARMM name `OT1`
+/// and its GROMACS name `OC1`.
+const PROTEIN_BACKBONE: [&str; 6] = ["N", "CA", "C", "O", "OT1", "OC1"];
+/// The backbone and a C terminus's `OXT`, also as CHARMM's `OT2` and
+/// GROMACS's `OC2`.
+const PROTEIN_MAIN_CHAIN: [&str; 9] = ["N", "CA", "C", "O", "OT1", "OC1", "OXT", "OT2", "OC2"];
 const NUCLEIC_BACKBONE: [&str; 11] = [
     "P", "OP1", "OP2", "OP3", "O1P", "O2P", "O5'", "C5'", "C4'", "C3'", "O3'",
 ];

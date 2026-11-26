@@ -5,7 +5,7 @@ use std::fmt::{self, Write};
 use super::ast::{
     DistanceUnit, Field, Flag, HostTermKind, Level, Literal, Node, NodeKind, ValueMatch,
 };
-use super::syntax::KEYWORDS;
+use super::syntax::{is_property_range, is_unit, property_number, KEYWORDS};
 use crate::topology::{MoleculeClass, ResidueClass};
 
 /// Binding strength: an operand weaker than its position requires is
@@ -191,9 +191,11 @@ fn literal(formatter: &mut fmt::Formatter<'_>, literal: &Literal) -> fmt::Result
         Literal::ResidueClass(class) => formatter.write_str(residue_class_name(*class)),
         Literal::MoleculeClass(class) => formatter.write_str(molecule_class_name(*class)),
         Literal::Property { text, number, unit } => {
-            // An unquoted number reads back as a number; other text that
-            // looks like one must stay quoted.
-            if number.is_none() && text.parse::<f64>().is_ok_and(f64::is_finite) {
+            // Bare text reads back as a number, a range such as `1-2`, or,
+            // after a number, its unit; such text stays quoted.
+            if number.is_none()
+                && (property_number(text).is_some() || is_property_range(text) || is_unit(text))
+            {
                 quoted(formatter, text)?;
             } else {
                 word(formatter, text)?;
