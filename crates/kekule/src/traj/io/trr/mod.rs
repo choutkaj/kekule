@@ -99,7 +99,8 @@ use super::codec::{
 };
 use super::frame_state::{check_frame_state, frame_interval, record, writer_field_error};
 use super::indexed_reader::{
-    indexed_reader_traits, IndexFacts, IndexedCodec, IndexedReader, IndexedSource,
+    end_full_index, full_index_error, indexed_reader_traits, IndexFacts, IndexedCodec,
+    IndexedReader, IndexedSource,
 };
 use super::limits::{exceeded_bytes, filled_bytes};
 use super::metadata::{FieldAvailability, TrajectoryFieldAvailability};

@@ -45,6 +45,51 @@ pub(crate) struct IndexFacts {
     pub(crate) extra_column_frames: usize,
 }
 
+/// Ends a scan of `codec` whose index of `indexed` frames has no room for
+/// another: cleanly at the end of the stream, otherwise with an error.
+pub(crate) fn end_full_index<C: IndexedCodec + ?Sized>(
+    codec: &mut C,
+    indexed: usize,
+    limit: LimitExceeded,
+) -> Result<u64, TrajectoryIoError> {
+    let clean_eof = !codec.frame_pending() && {
+        let (stream, source) = codec.stream_and_source();
+        probe_seekable_eof(
+            stream,
+            TrajectoryIoOperation::Index,
+            C::FORMAT,
+            &source.label,
+        )?
+    };
+    if clean_eof {
+        return Ok(0);
+    }
+    Err(full_index_error(
+        C::FORMAT,
+        &codec.source().label,
+        indexed,
+        limit,
+    ))
+}
+
+/// The error of a scan that finds another frame where its index of
+/// `indexed` frames has no room for it.
+pub(crate) fn full_index_error(
+    format: TrajectoryFormat,
+    source_label: &str,
+    indexed: usize,
+    limit: LimitExceeded,
+) -> TrajectoryIoError {
+    limit_error(
+        format,
+        TrajectoryIoOperation::ReadFrame,
+        source_label,
+        Some(indexed),
+        None,
+    )
+    .exceeding(Part::FrameIndex, limit)
+}
+
 /// A sequential reader that an [`IndexedReader`] scans and seeks.
 ///
 /// `State` is the decode state beyond the stream position and frame cursor,
@@ -96,33 +141,16 @@ pub(crate) trait IndexedCodec: TrajectoryReader {
     }
 
     /// Ends a scan whose index has no room for another frame: cleanly at the
-    /// end of the stream, otherwise with an error.
+    /// end of the stream, otherwise with an error. A codec that reads on
+    /// past frames it skips polls `control` while it does.
     fn index_full(
         &mut self,
         indexed: usize,
         _growing: bool,
         limit: LimitExceeded,
+        _control: &IndexBuildControl<'_>,
     ) -> Result<u64, TrajectoryIoError> {
-        let clean_eof = !self.frame_pending() && {
-            let (stream, source) = self.stream_and_source();
-            probe_seekable_eof(
-                stream,
-                TrajectoryIoOperation::Index,
-                Self::FORMAT,
-                &source.label,
-            )?
-        };
-        if clean_eof {
-            return Ok(0);
-        }
-        Err(limit_error(
-            Self::FORMAT,
-            TrajectoryIoOperation::ReadFrame,
-            &self.source().label,
-            Some(indexed),
-            None,
-        )
-        .exceeding(Part::FrameIndex, limit))
+        end_full_index(self, indexed, limit)
     }
 
     /// Where the next frame starts.
@@ -131,12 +159,14 @@ pub(crate) trait IndexedCodec: TrajectoryReader {
     }
 
     /// Decodes the frame after `indexed` ones, which starts at `offset`, and
-    /// returns its stamp, or `None` at the end of the stream.
+    /// returns its stamp, or `None` at the end of the stream. A codec that
+    /// skips frames polls `control` while it does.
     fn index_next(
         &mut self,
         indexed: usize,
         offset: u64,
         growing: bool,
+        control: &IndexBuildControl<'_>,
     ) -> Result<Option<FrameStamp>, TrajectoryIoError>;
 
     /// Prepares to decode the frame at `offset`, where the stream now is.
@@ -263,10 +293,10 @@ impl<C: IndexedCodec> IndexedReader<C> {
                 return Ok(pending);
             }
             if let Some(limit) = projected_index_limit(indexed, &self.codec.source().limits) {
-                return self.codec.index_full(indexed, growing, limit);
+                return self.codec.index_full(indexed, growing, limit, control);
             }
             let offset = self.codec.frame_offset()?;
-            let stamp = match self.codec.index_next(indexed, offset, growing) {
+            let stamp = match self.codec.index_next(indexed, offset, growing, control) {
                 Ok(Some(stamp)) => stamp,
                 Ok(None) => return Ok(0),
                 Err(error) if growing && error.kind() == TrajectoryIoErrorKind::TruncatedRecord => {

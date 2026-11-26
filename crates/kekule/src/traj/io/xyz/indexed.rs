@@ -169,6 +169,7 @@ impl<R: BufRead + Seek> IndexedCodec for XyzReader<R> {
         _indexed: usize,
         _growing: bool,
         limit: LimitExceeded,
+        _control: &IndexBuildControl<'_>,
     ) -> Result<u64, TrajectoryIoError> {
         if self.at_end(TrajectoryIoOperation::Index)? {
             return Ok(0);
@@ -189,6 +190,7 @@ impl<R: BufRead + Seek> IndexedCodec for XyzReader<R> {
         _indexed: usize,
         _offset: u64,
         _growing: bool,
+        _control: &IndexBuildControl<'_>,
     ) -> Result<Option<FrameStamp>, TrajectoryIoError> {
         if !self.parse_next(false)? {
             return Ok(None);

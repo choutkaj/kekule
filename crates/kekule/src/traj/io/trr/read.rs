@@ -254,20 +254,17 @@ impl<R: Read + Seek> TrrReader<R> {
     }
 
     pub(super) fn parse_next(&mut self) -> Result<Option<TrrDecodedFrame>, TrajectoryIoError> {
-        self.skipped_run = 0;
-        let header = loop {
-            if self.at_frame_limit()? {
-                return Ok(None);
-            }
-            let Some(header) = self.next_header()? else {
-                return Ok(None);
-            };
-            self.check_frame_header(&header)?;
-            if header.has_positions() {
-                break header;
-            }
-            self.skip_frame(&header)?;
-            self.skipped_run += 1;
+        self.parse_next_with(None)
+    }
+
+    /// Decodes the next frame with positions as [`Self::parse_next`] does.
+    /// A scan passes its `control`, which the frames it skips poll.
+    pub(super) fn parse_next_with(
+        &mut self,
+        control: Option<&IndexBuildControl<'_>>,
+    ) -> Result<Option<TrrDecodedFrame>, TrajectoryIoError> {
+        let Some(header) = self.next_positioned_header(control)? else {
+            return Ok(None);
         };
         let cell = if header.has_cell() {
             read_raw(
@@ -378,6 +375,35 @@ impl<R: Read + Seek> TrrReader<R> {
         })?;
         self.skipped_before = self.skipped_before.saturating_add(self.skipped_run);
         Ok(Some(TrrDecodedFrame { header, cell }))
+    }
+
+    /// Reads the header of the next frame with positions, skipping the
+    /// frames without them, or returns `None` at the end of the stream.
+    /// After each frame skipped, `control` reports progress and fails a
+    /// cancelled scan.
+    pub(super) fn next_positioned_header(
+        &mut self,
+        control: Option<&IndexBuildControl<'_>>,
+    ) -> Result<Option<TrrFrameHeader>, TrajectoryIoError> {
+        self.skipped_run = 0;
+        loop {
+            if self.at_frame_limit()? {
+                return Ok(None);
+            }
+            let Some(header) = self.next_header()? else {
+                return Ok(None);
+            };
+            self.check_frame_header(&header)?;
+            if header.has_positions() {
+                return Ok(Some(header));
+            }
+            self.skip_frame(&header)?;
+            self.skipped_run += 1;
+            if let Some(control) = control {
+                let offset = self.position(TrajectoryIoOperation::Index)?;
+                control.checkpoint(self.frame_cursor, offset, FORMAT, &self.source.label)?;
+            }
+        }
     }
 
     /// Whether the stream ends where `TrajectoryIoLimits::max_frames` stops

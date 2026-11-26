@@ -179,6 +179,7 @@ impl<R: Read + Seek> IndexedCodec for DcdReader<R> {
         _indexed: usize,
         offset: u64,
         _growing: bool,
+        _control: &IndexBuildControl<'_>,
     ) -> Result<Option<FrameStamp>, TrajectoryIoError> {
         let frame = self.frame_cursor;
         let stamp = self

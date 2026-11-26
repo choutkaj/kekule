@@ -1,11 +1,13 @@
 use std::fs;
 use std::io::Cursor;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use kekule::diagnostics::{GeometryField, UnsupportedContent};
+use kekule::diagnostics::{Cancellation, GeometryField, UnsupportedContent};
 use kekule::math::{PeriodicCell, Point3, Vector3};
+use kekule::parallel::Run;
 use kekule::properties::{PropertyColumn, PropertyKey, PropertyValue};
 use kekule::topology::Topology;
 use kekule::traj::io::trr::{
@@ -14,9 +16,9 @@ use kekule::traj::io::trr::{
 };
 use kekule::traj::io::TrajectoryWriteOptions;
 use kekule::traj::io::{
-    open_indexed_trajectory, open_trajectory, CoordinateEncoding, ScalarPrecision,
-    TrajectoryFormatHint, TrajectoryIoLimits, TrajectoryOpenNote, TrajectoryOpenOptions,
-    ZeroBoxPolicy,
+    open_indexed_trajectory, open_indexed_trajectory_with, open_trajectory, CoordinateEncoding,
+    ScalarPrecision, TrajectoryFormatHint, TrajectoryIoLimits, TrajectoryOpenNote,
+    TrajectoryOpenOptions, ZeroBoxPolicy,
 };
 use kekule::traj::{
     FrameBuffer, SeekableTrajectoryReader, TrajectoryFormat, TrajectoryIoErrorKind,
@@ -1225,6 +1227,80 @@ fn trr_frames_without_positions_count_against_the_frame_limit() {
         Some(TrajectoryIoErrorKind::LimitExceeded)
     );
     assert!(!control.violated());
+}
+
+fn skipping_options() -> TrajectoryOpenOptions {
+    TrajectoryOpenOptions::from(
+        TrrReadOptions::default().with_frames_without_positions(UnsupportedContent::Report),
+    )
+}
+
+#[test]
+fn trr_frames_without_positions_after_a_full_index_need_no_entry() {
+    let topology = topology();
+    let mut bytes = raw_frame(0, None, true, true);
+    bytes.extend(raw_frame(5, None, false, true));
+    let options =
+        skipping_options().with_limits(TrajectoryIoLimits::default().with_max_index_entries(1));
+    let path =
+        std::env::temp_dir().join(format!("kekule-trr-full-index-{}.trr", std::process::id()));
+    fs::write(&path, &bytes).unwrap();
+    let reader = open_indexed_trajectory(&path, Arc::clone(&topology), options.clone());
+    fs::remove_file(&path).unwrap();
+    let reader = reader.unwrap();
+    assert_eq!(reader.frame_count(), Some(1));
+    assert!(reader
+        .open_report()
+        .notes()
+        .contains(&TrajectoryOpenNote::TrrFramesWithoutPositions(1)));
+
+    // A further frame with positions needs the entry the index lacks.
+    bytes.extend(raw_frame(10, None, true, true));
+    let error = IndexedTrrReader::new(Cursor::new(bytes), Arc::clone(&topology), options)
+        .err()
+        .unwrap();
+    assert_eq!(
+        codec_kind(&error),
+        Some(TrajectoryIoErrorKind::LimitExceeded)
+    );
+}
+
+#[test]
+fn a_cancelled_trr_scan_stops_in_frames_without_positions() {
+    let topology = topology();
+    let mut bytes = raw_frame(0, None, true, true);
+    for step in 1..4 {
+        bytes.extend(raw_frame(step, None, false, true));
+    }
+    let path = std::env::temp_dir().join(format!(
+        "kekule-trr-cancelled-skip-{}.trr",
+        std::process::id()
+    ));
+    fs::write(&path, &bytes).unwrap();
+    // The scan polls before frame 0 and after it. The third poll follows
+    // the first frame it skips.
+    let polls = Arc::new(AtomicUsize::new(0));
+    let counted = Arc::clone(&polls);
+    let cancellation = Cancellation::new(move || counted.fetch_add(1, Ordering::Relaxed) >= 2);
+    let cancelled = open_indexed_trajectory_with(
+        &path,
+        Arc::clone(&topology),
+        skipping_options(),
+        Run::new().with_cancellation(&cancellation),
+    );
+    let never = Cancellation::new(|| false);
+    let finished = open_indexed_trajectory_with(
+        &path,
+        Arc::clone(&topology),
+        skipping_options(),
+        Run::new().with_cancellation(&never),
+    );
+    fs::remove_file(&path).unwrap();
+    let error = cancelled.err().unwrap();
+    assert_eq!(error.kind(), TrajectoryIoErrorKind::Cancelled);
+    assert_eq!(error.operation(), Some(TrajectoryIoOperation::Index));
+    assert_eq!(polls.load(Ordering::Relaxed), 3);
+    assert_eq!(finished.unwrap().frame_count(), Some(1));
 }
 
 #[test]

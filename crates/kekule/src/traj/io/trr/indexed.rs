@@ -200,13 +200,35 @@ impl<R: Read + Seek> IndexedCodec for TrrReader<R> {
         }
     }
 
+    fn index_full(
+        &mut self,
+        indexed: usize,
+        _growing: bool,
+        limit: LimitExceeded,
+        control: &IndexBuildControl<'_>,
+    ) -> Result<u64, TrajectoryIoError> {
+        if self.options.frames_without_positions != UnsupportedContent::Report {
+            return end_full_index(self, indexed, limit);
+        }
+        // Frames without positions take no index entry, so the scan reads on
+        // past them. Only a frame with positions overfills the index.
+        match self.next_positioned_header(Some(control))? {
+            None => {
+                self.index_trailing = self.skipped_run;
+                Ok(0)
+            }
+            Some(_) => Err(full_index_error(FORMAT, &self.source.label, indexed, limit)),
+        }
+    }
+
     fn index_next(
         &mut self,
         _indexed: usize,
         offset: u64,
         _growing: bool,
+        control: &IndexBuildControl<'_>,
     ) -> Result<Option<FrameStamp>, TrajectoryIoError> {
-        match self.parse_next() {
+        match self.parse_next_with(Some(control)) {
             Ok(Some(decoded)) => {
                 self.index_skipped = self.index_skipped.saturating_add(self.skipped_run);
                 Ok(Some(decoded.header.stamp()))
