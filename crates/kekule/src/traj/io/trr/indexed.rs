@@ -112,7 +112,7 @@ impl<R: Read + Seek> IndexedCodec for TrrReader<R> {
     type Frame = TrrDecodedFrame;
     /// The header read ahead, where it starts, and whether sequential reads
     /// have seen mixed widths.
-    type State = (Option<TrrFrameHeader>, u64, bool);
+    type State = (Option<TrrFrameHeader>, u64, bool, usize);
     const FORMAT: TrajectoryFormat = FORMAT;
     const SEEK_OPERATION: TrajectoryIoOperation = TrajectoryIoOperation::Index;
 
@@ -141,13 +141,18 @@ impl<R: Read + Seek> IndexedCodec for TrrReader<R> {
             self.pending_header.clone(),
             self.current_header_offset,
             self.precision_mixed,
+            self.skipped_before,
         )
     }
 
-    fn restore_state(&mut self, (pending, header_offset, precision_mixed): Self::State) {
+    fn restore_state(
+        &mut self,
+        (pending, header_offset, precision_mixed, skipped_before): Self::State,
+    ) {
         self.pending_header = pending;
         self.current_header_offset = header_offset;
         self.precision_mixed = precision_mixed;
+        self.skipped_before = skipped_before;
     }
 
     fn index_facts(&self) -> IndexFacts {
@@ -179,6 +184,7 @@ impl<R: Read + Seek> IndexedCodec for TrrReader<R> {
         self.precision_mixed = self.index_mixed;
         // The scan reads the frames after the last indexed one again.
         self.index_trailing = 0;
+        self.skipped_before = self.index_skipped;
         Ok(())
     }
 
@@ -216,6 +222,9 @@ impl<R: Read + Seek> IndexedCodec for TrrReader<R> {
     fn start_read(&mut self, offset: u64) {
         self.pending_header = None;
         self.current_header_offset = offset;
+        // The frames without positions before this one are not counted, so
+        // the limit bounds only the ones this read skips.
+        self.skipped_before = 0;
     }
 
     fn read_frame(&mut self) -> Result<Option<TrrDecodedFrame>, TrajectoryIoError> {

@@ -22,6 +22,10 @@ pub struct TrrReader<R> {
     pub(super) index_mixed: bool,
     /// The frames without positions the last read skipped.
     pub(super) skipped_run: usize,
+    /// The frames without positions before `frame_cursor`. They count
+    /// against `TrajectoryIoLimits::max_frames` with the frames read. A
+    /// read of one indexed frame starts it at zero.
+    pub(super) skipped_before: usize,
     /// The frames without positions before the indexed frames that the
     /// scans of an indexed reader skipped.
     pub(super) index_skipped: usize,
@@ -207,6 +211,7 @@ impl<R: Read + Seek> TrrReader<R> {
             precision_mixed: false,
             index_mixed: false,
             skipped_run: 0,
+            skipped_before: 0,
             index_skipped: 0,
             index_trailing: 0,
         })
@@ -249,34 +254,11 @@ impl<R: Read + Seek> TrrReader<R> {
     }
 
     pub(super) fn parse_next(&mut self) -> Result<Option<TrrDecodedFrame>, TrajectoryIoError> {
-        if self.frame_cursor >= self.source.limits.max_frames() {
-            let clean_eof = if self.pending_header.is_some() {
-                false
-            } else {
-                probe_seekable_eof(
-                    &mut self.reader,
-                    TrajectoryIoOperation::ReadFrame,
-                    TrajectoryFormat::Trr,
-                    &self.source.label,
-                )?
-            };
-            if clean_eof {
-                return Ok(None);
-            }
-            return Err(limit_error(
-                FORMAT,
-                TrajectoryIoOperation::ReadFrame,
-                &self.source.label,
-                Some(self.frame_cursor),
-                None,
-            )
-            .exceeding(
-                Part::Trajectory,
-                LimitExceeded::first_beyond(Resource::Frames, self.source.limits.max_frames()),
-            ));
-        }
         self.skipped_run = 0;
         let header = loop {
+            if self.at_frame_limit()? {
+                return Ok(None);
+            }
             let Some(header) = self.next_header()? else {
                 return Ok(None);
             };
@@ -394,7 +376,46 @@ impl<R: Read + Seek> TrrReader<R> {
                 Reason::AddressRange(Part::FrameNumber),
             )
         })?;
+        self.skipped_before = self.skipped_before.saturating_add(self.skipped_run);
         Ok(Some(TrrDecodedFrame { header, cell }))
+    }
+
+    /// Whether the stream ends where `TrajectoryIoLimits::max_frames` stops
+    /// the reader. Frames without positions count against the limit, so
+    /// skipping them stays bounded. A further frame fails the read.
+    fn at_frame_limit(&mut self) -> Result<bool, TrajectoryIoError> {
+        let max_frames = self.source.limits.max_frames();
+        let frames = self
+            .frame_cursor
+            .saturating_add(self.skipped_before)
+            .saturating_add(self.skipped_run);
+        if frames < max_frames {
+            return Ok(false);
+        }
+        let clean_eof = if self.pending_header.is_some() {
+            false
+        } else {
+            probe_seekable_eof(
+                &mut self.reader,
+                TrajectoryIoOperation::ReadFrame,
+                TrajectoryFormat::Trr,
+                &self.source.label,
+            )?
+        };
+        if clean_eof {
+            return Ok(true);
+        }
+        Err(limit_error(
+            FORMAT,
+            TrajectoryIoOperation::ReadFrame,
+            &self.source.label,
+            Some(self.frame_cursor),
+            None,
+        )
+        .exceeding(
+            Part::Trajectory,
+            LimitExceeded::first_beyond(Resource::Frames, max_frames),
+        ))
     }
 
     /// Checks the header of the next frame, `header`, before its blocks are

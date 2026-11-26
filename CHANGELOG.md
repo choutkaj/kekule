@@ -741,7 +741,8 @@ the main branch migrates by the table under "From the SampleSet API".
 - `TrrReadOptions::with_frames_without_positions` skips TRR frames that hold
   only velocities or forces under `UnsupportedContent::Report`. An indexed
   reader's open report counts them
-  (`TrajectoryOpenNote::TrrFramesWithoutPositions`).
+  (`TrajectoryOpenNote::TrrFramesWithoutPositions`). They count against
+  `TrajectoryIoLimits::max_frames`.
 - **Breaking:** DCD readers read every complete frame in the file, whatever
   frame count `NSET` the header declares, as VMD and MDAnalysis do. An
   indexed reader's open report notes another count

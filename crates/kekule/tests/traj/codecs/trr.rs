@@ -1173,6 +1173,61 @@ fn trr_frames_without_positions_are_skipped_when_the_options_report_them() {
 }
 
 #[test]
+fn trr_frames_without_positions_count_against_the_frame_limit() {
+    let topology = topology();
+    let mut bytes = Vec::new();
+    for step in 0..3 {
+        bytes.extend(raw_frame(step, None, false, true));
+    }
+    let third_offset = 2 * raw_frame(0, None, false, true).len() as u64;
+    bytes.extend(raw_frame(3, None, true, true));
+    let options = |max_frames| {
+        TrajectoryOpenOptions::from(
+            TrrReadOptions::default().with_frames_without_positions(UnsupportedContent::Report),
+        )
+        .with_limits(TrajectoryIoLimits::default().with_max_frames(max_frames))
+    };
+
+    // Four frames in the file fit a limit of four.
+    let mut reader = TrrReader::new(
+        Cursor::new(bytes.clone()),
+        Arc::clone(&topology),
+        options(4),
+    )
+    .unwrap();
+    let mut buffer = reader.frame_buffer();
+    assert!(reader.read_next(&mut buffer).unwrap());
+    assert!(!reader.read_next(&mut buffer).unwrap());
+    let mut indexed = IndexedTrrReader::new(
+        Cursor::new(bytes.clone()),
+        Arc::clone(&topology),
+        options(4),
+    )
+    .unwrap();
+    assert_eq!(indexed.frame_count(), Some(1));
+    indexed.read_frame(0, &mut buffer).unwrap();
+    assert_eq!(buffer.frame_view().step(), Some(3));
+
+    // With a limit of two, both readers stop before the third frame.
+    let (stream, control) = GuardedCursor::new(bytes.clone(), third_offset);
+    let mut reader = TrrReader::new(stream, Arc::clone(&topology), options(2)).unwrap();
+    assert_eq!(
+        codec_kind(&reader.read_next(&mut buffer).unwrap_err()),
+        Some(TrajectoryIoErrorKind::LimitExceeded)
+    );
+    assert!(!control.violated());
+    let (stream, control) = GuardedCursor::new(bytes, third_offset);
+    let error = IndexedTrrReader::new(stream, Arc::clone(&topology), options(2))
+        .err()
+        .unwrap();
+    assert_eq!(
+        codec_kind(&error),
+        Some(TrajectoryIoErrorKind::LimitExceeded)
+    );
+    assert!(!control.violated());
+}
+
+#[test]
 fn trr_steps_read_as_the_unsigned_low_32_bits_gromacs_writes() {
     let topology = topology();
     let mut bytes = raw_frame(i32::MAX, None, true, false);

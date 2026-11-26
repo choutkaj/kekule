@@ -235,8 +235,10 @@ impl TrrReadOptions {
     /// [`UnsupportedContent::Report`] skips them: the frames read are those
     /// with positions, each with its own velocities and forces, and an
     /// indexed reader's open report counts the frames its scan skipped
-    /// ([`TrajectoryOpenNote::TrrFramesWithoutPositions`]).
+    /// ([`TrajectoryOpenNote::TrrFramesWithoutPositions`]). Skipped frames
+    /// count against [`TrajectoryIoLimits::max_frames`].
     ///
+    /// [`TrajectoryIoLimits::max_frames`]: super::TrajectoryIoLimits::max_frames
     /// [`TrajectoryOpenNote::TrrFramesWithoutPositions`]: super::TrajectoryOpenNote::TrrFramesWithoutPositions
     pub const fn frames_without_positions(&self) -> UnsupportedContent {
         self.frames_without_positions
