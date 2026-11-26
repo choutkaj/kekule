@@ -673,26 +673,34 @@ impl HierarchyBuilder {
             .then(|| self.hierarchy.explicit_residue_class(residue))?
     }
 
-    /// Reconstructs stored hierarchy from its node lists.
+    /// Reconstructs stored hierarchy from its node columns.
     ///
     /// Node IDs are list positions. Each residue must be listed by exactly one
     /// chain and each site by exactly one residue; those lists give every
     /// residue its chain and every site its residue, in stored child order.
     /// Atom placements must be unique. Atoms are checked against a topology
-    /// only at publication.
+    /// only at publication. The columns of residues and of sites must match.
     pub(crate) fn from_raw_parts(
         chains: Vec<RawChain>,
-        residues: Vec<RawResidue>,
-        sites: Vec<RawAtomSite>,
+        residues: RawResidues,
+        sites: RawAtomSites,
     ) -> Result<Self, RawHierarchyError> {
+        if !residues.consistent() {
+            return Err(RawHierarchyError::ResidueColumns);
+        }
+        if !sites.consistent() {
+            return Err(RawHierarchyError::AtomSiteColumns);
+        }
+        let residue_count = residues.classes.len();
+        let site_count = sites.atoms.len();
         for (len, kind) in [
             (chains.len(), Countable::Chain),
-            (residues.len(), Countable::Residue),
-            (sites.len(), Countable::AtomSite),
+            (residue_count, Countable::Residue),
+            (site_count, Countable::AtomSite),
         ] {
             checked_len(0, len, kind).map_err(RawHierarchyError::CapacityExceeded)?;
         }
-        let mut residue_chain = vec![None; residues.len()];
+        let mut residue_chain = vec![None; residue_count];
         for (index, chain) in chains.iter().enumerate() {
             let chain_id = ChainId::from_index(index);
             for &residue in &chain.residues {
@@ -704,10 +712,10 @@ impl HierarchyBuilder {
                 }
             }
         }
-        let mut site_residue = vec![None; sites.len()];
-        for (index, residue) in residues.iter().enumerate() {
+        let mut site_residue = vec![None; site_count];
+        for (index, bounds) in residues.site_starts.windows(2).enumerate() {
             let residue_id = ResidueId::from_index(index);
-            for &site in &residue.atom_sites {
+            for &site in &residues.sites[bounds[0] as usize..bounds[1] as usize] {
                 let slot = site_residue
                     .get_mut(site.index())
                     .ok_or(RawHierarchyError::InvalidAtomSite(site))?;
@@ -722,42 +730,46 @@ impl HierarchyBuilder {
             hierarchy.chain_author_ids.push(chain.author_id);
             hierarchy.chain_residues.push(chain.residues);
         }
-        let mut lists = Vec::with_capacity(residues.len());
-        let mut labels = Vec::with_capacity(residues.len());
-        for (index, (residue, chain)) in residues.into_iter().zip(residue_chain).enumerate() {
-            let id = ResidueId::from_index(index);
-            hierarchy
-                .residue_chains
-                .push(chain.ok_or(RawHierarchyError::ResidueUnlisted(id))?);
-            hierarchy.residue_classes.push(residue.class);
-            hierarchy
-                .residue_explicit
-                .push(residue.explicit.then_some(residue.class));
-            hierarchy.residue_labels.push(index as u32);
-            labels.push(ResidueLabels {
-                name: residue.name.into(),
-                label_comp_id: residue.label_comp_id.map(Arc::from),
-                author_comp_id: residue.author_comp_id.map(Arc::from),
-                label_seq_id: residue.label_seq_id,
-                author_seq_id: residue.author_seq_id.map(Arc::from),
-                insertion_code: residue.insertion_code.map(Arc::from),
-            });
-            lists.push(residue.atom_sites);
-        }
-        hierarchy.labels = labels.into_iter().collect();
-        hierarchy.residue_sites = SiteLists::Staged(lists);
-        let mut lookup = Vec::with_capacity(sites.len());
-        let mut metadata = Vec::with_capacity(sites.len());
-        for (index, (site, residue)) in sites.into_iter().zip(site_residue).enumerate() {
-            let id = AtomSiteId::from_index(index);
-            let residue = residue.ok_or(RawHierarchyError::AtomSiteUnlisted(id))?;
-            lookup.push((site.atom, id));
-            hierarchy.site_residues.push(residue);
-            hierarchy.site_atoms.push(site.atom);
-            hierarchy.site_metadata.push(index as u32);
-            metadata.push(site.metadata);
-        }
-        hierarchy.metadata = metadata.into_iter().collect();
+        hierarchy.residue_chains = residue_chain
+            .into_iter()
+            .enumerate()
+            .map(|(index, chain)| {
+                chain.ok_or(RawHierarchyError::ResidueUnlisted(ResidueId::from_index(
+                    index,
+                )))
+            })
+            .collect::<Result<_, _>>()?;
+        hierarchy.residue_explicit = residues
+            .classes
+            .iter()
+            .zip(&residues.explicit)
+            .map(|(&class, &explicit)| explicit.then_some(class))
+            .collect();
+        hierarchy.residue_classes = residues.classes;
+        hierarchy.residue_labels = residues.label_keys;
+        hierarchy.labels = residues.labels.into_iter().collect();
+        hierarchy.residue_sites = SiteLists::Packed {
+            starts: residues.site_starts,
+            items: residues.sites,
+        };
+        hierarchy.site_residues = site_residue
+            .into_iter()
+            .enumerate()
+            .map(|(index, residue)| {
+                residue.ok_or(RawHierarchyError::AtomSiteUnlisted(AtomSiteId::from_index(
+                    index,
+                )))
+            })
+            .collect::<Result<_, _>>()?;
+        let mut lookup = sites
+            .atoms
+            .iter()
+            .enumerate()
+            .map(|(index, &atom)| (atom, AtomSiteId::from_index(index)))
+            .collect::<Vec<_>>();
+        hierarchy.site_atoms = sites.atoms;
+        hierarchy.site_metadata = sites.metadata_keys;
+        hierarchy.metadata = sites.metadata.into_iter().collect();
         // Sorted entries build the lookup in bulk rather than one insertion
         // at a time.
         lookup.sort_unstable();
@@ -779,26 +791,58 @@ pub(crate) struct RawChain {
     pub(crate) residues: Vec<ResidueId>,
 }
 
-/// One stored residue for [`HierarchyBuilder::from_raw_parts`]; `class` is its
-/// published class and `explicit` whether it was assigned explicitly.
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct RawResidue {
-    pub(crate) name: String,
-    pub(crate) label_comp_id: Option<String>,
-    pub(crate) author_comp_id: Option<String>,
-    pub(crate) label_seq_id: Option<i32>,
-    pub(crate) author_seq_id: Option<String>,
-    pub(crate) insertion_code: Option<String>,
-    pub(crate) class: ResidueClass,
-    pub(crate) explicit: bool,
-    pub(crate) atom_sites: Vec<AtomSiteId>,
+/// The stored residues for [`HierarchyBuilder::from_raw_parts`], by column.
+///
+/// Residue `r` has the labels `labels[label_keys[r]]`, the published class
+/// `classes[r]`, assigned explicitly when `explicit[r]`, and the sites
+/// `sites[site_starts[r]..site_starts[r + 1]]`. Residues may share labels.
+#[derive(Debug, Clone)]
+pub(crate) struct RawResidues {
+    pub(crate) label_keys: Vec<u32>,
+    pub(crate) labels: Vec<ResidueLabels>,
+    pub(crate) classes: Vec<ResidueClass>,
+    pub(crate) explicit: Vec<bool>,
+    pub(crate) site_starts: Vec<u32>,
+    pub(crate) sites: Vec<AtomSiteId>,
 }
 
-/// One stored atom site for [`HierarchyBuilder::from_raw_parts`].
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct RawAtomSite {
-    pub(crate) atom: InstanceAtomId,
-    pub(crate) metadata: AtomSiteMetadata,
+impl RawResidues {
+    /// Whether the columns have one entry per residue, the keys name labels,
+    /// and the site bounds ascend from 0 to the listed sites.
+    fn consistent(&self) -> bool {
+        let count = self.classes.len();
+        self.label_keys.len() == count
+            && self.explicit.len() == count
+            && self.site_starts.len() == count + 1
+            && self
+                .label_keys
+                .iter()
+                .all(|&key| (key as usize) < self.labels.len())
+            && self.site_starts.first() == Some(&0)
+            && self.site_starts.windows(2).all(|pair| pair[0] <= pair[1])
+            && self.site_starts.last().map(|&end| end as usize) == Some(self.sites.len())
+    }
+}
+
+/// The stored atom sites for [`HierarchyBuilder::from_raw_parts`], by
+/// column: site `s` places `atoms[s]` with the metadata
+/// `metadata[metadata_keys[s]]`. Sites may share metadata.
+#[derive(Debug, Clone)]
+pub(crate) struct RawAtomSites {
+    pub(crate) atoms: Vec<InstanceAtomId>,
+    pub(crate) metadata_keys: Vec<u32>,
+    pub(crate) metadata: Vec<AtomSiteMetadata>,
+}
+
+impl RawAtomSites {
+    /// Whether every site has a key and every key names metadata.
+    fn consistent(&self) -> bool {
+        self.metadata_keys.len() == self.atoms.len()
+            && self
+                .metadata_keys
+                .iter()
+                .all(|&key| (key as usize) < self.metadata.len())
+    }
 }
 
 /// Why stored hierarchy node lists do not form a hierarchy.
@@ -812,6 +856,10 @@ pub(crate) enum RawHierarchyError {
     ResidueUnlisted(ResidueId),
     AtomSiteUnlisted(AtomSiteId),
     DuplicateAtomPlacement(InstanceAtomId),
+    /// The residue columns differ in length or name rows they lack.
+    ResidueColumns,
+    /// The atom site columns differ in length or name rows they lack.
+    AtomSiteColumns,
 }
 
 impl fmt::Display for RawHierarchyError {
@@ -834,6 +882,8 @@ impl fmt::Display for RawHierarchyError {
             Self::DuplicateAtomPlacement(atom) => {
                 write!(f, "{} has more than one atom site.", Capitalized(atom))
             }
+            Self::ResidueColumns => f.write_str("The residue columns do not match."),
+            Self::AtomSiteColumns => f.write_str("The atom site columns do not match."),
         }
     }
 }

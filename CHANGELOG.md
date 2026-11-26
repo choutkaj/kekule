@@ -788,6 +788,15 @@ the main branch migrates by the table under "From the SampleSet API".
   skips the correspondence it drops. Appended residues and sites share their
   source's labels, or copies of them when the source's tables hold many more
   rows. The sites a chain rename changes get their new rows in one table.
+- Native files read and write faster, with the same bytes and equal results.
+  The reader takes atoms, bonds, and value columns in bulk, and residues and
+  sites that store equal labels share one row of them. The writer finds each
+  node's labels once, and the checksum takes 16 bytes per step. A structure
+  of a million atoms with full site labels reads about 2.8 times faster,
+  holding less than half the memory, and writes about 1.4 times faster.
+  Input that ends inside a column read in chunks fails at the chunk's start,
+  and a `NativeReadOptions::max_input_bytes` limit inside that chunk is
+  reported instead of the early end.
 
 ### Removed
 

@@ -53,8 +53,9 @@ use crate::structure::{
 };
 use crate::topology::{
     AtomSiteId, AtomSiteMetadata, HierarchyBuilder, InstanceAtomId, MoleculeClass,
-    MoleculeDefinitionId, MoleculeInstanceId, RawAtomSite, RawChain, RawDefinition,
-    RawHierarchyError, RawResidue, ResidueClass, ResidueId, Topology, TopologyParts,
+    MoleculeDefinitionId, MoleculeInstanceId, RawAtomSites, RawChain, RawDefinition,
+    RawHierarchyError, RawResidues, ResidueClass, ResidueId, ResidueLabels, Topology,
+    TopologyParts,
 };
 use crate::units::{
     unit_with_symbol, Dimension, Quantity, Unit, CANONICAL_ENERGY_UNIT, CANONICAL_FORCE_UNIT,
@@ -63,8 +64,12 @@ use crate::units::{
 };
 
 mod report;
+mod rows;
 
-/// Bytes read per chunk of a large array; a multiple of 24 and 8.
+use rows::{distinct_rows, StringColumn};
+
+/// Bytes read per chunk of a large array; a multiple of every record size
+/// read in chunks: 24, 12, 9, 8, 5, and 4.
 const CHUNK_BYTES: usize = 24 * 2730;
 
 type Result<T> = std::result::Result<T, FormatError>;
@@ -303,6 +308,50 @@ impl<R: Read> Decoder<'_, R> {
         Ok(())
     }
 
+    /// Reads `count` records of `N` bytes in bounded chunks, passing each to
+    /// `visit` with the input offset just past it, where its errors point.
+    fn records<const N: usize>(
+        &mut self,
+        count: usize,
+        mut visit: impl FnMut(&Self, &[u8; N], u64) -> Result<()>,
+    ) -> Result<()> {
+        let mut remaining = count;
+        let mut buffer = std::mem::take(&mut self.scratch);
+        while remaining > 0 {
+            let records = remaining.min(CHUNK_BYTES / N);
+            buffer.resize(records * N, 0);
+            self.fill(&mut buffer)?;
+            let start = self.offset - buffer.len() as u64;
+            for (index, record) in buffer.as_chunks::<N>().0.iter().enumerate() {
+                visit(self, record, start + ((index + 1) * N) as u64)?;
+            }
+            remaining -= records;
+        }
+        self.scratch = buffer;
+        Ok(())
+    }
+
+    /// The value of each set flag of `present`, `N` bytes each, in order.
+    fn present<const N: usize, T>(
+        &mut self,
+        present: &[bool],
+        value: impl Fn([u8; N]) -> T,
+    ) -> Result<Vec<Option<T>>> {
+        // Each chunk holds whole values.
+        const { assert!(CHUNK_BYTES.is_multiple_of(N)) };
+        let count = present.iter().filter(|&&present| present).count();
+        let mut stored = Vec::with_capacity(count.min(CHUNK_BYTES / N));
+        self.chunks(count.saturating_mul(N), |bytes| {
+            stored.extend(bytes.as_chunks::<N>().0.iter().map(|raw| value(*raw)));
+            Ok(())
+        })?;
+        let mut stored = stored.into_iter();
+        Ok(present
+            .iter()
+            .map(|&present| if present { stored.next() } else { None })
+            .collect())
+    }
+
     fn bits(&mut self, len: usize) -> Result<Vec<bool>> {
         let mut flags = Vec::with_capacity(len);
         self.chunks(len.div_ceil(8), |bytes| {
@@ -355,6 +404,16 @@ impl<R: Read> Decoder<'_, R> {
     /// A string column of `count` entries; absent entries are rejected when
     /// `required`.
     fn strings(&mut self, count: usize, required: bool) -> Result<Vec<Option<String>>> {
+        let column = self.string_column(count, required)?;
+        Ok(column
+            .entries()
+            .map(|entry| entry.map(str::to_owned))
+            .collect())
+    }
+
+    /// A string column of `count` entries read whole; absent entries are
+    /// rejected when `required`.
+    fn string_column(&mut self, count: usize, required: bool) -> Result<StringColumn> {
         let lengths = self.u32_array(count)?;
         let max = self.options.max_string_bytes();
         let mut total = 0usize;
@@ -374,22 +433,20 @@ impl<R: Read> Decoder<'_, R> {
             bytes.extend_from_slice(chunk);
             Ok(())
         })?;
-        let mut strings = Vec::with_capacity(count);
-        let mut start = 0;
-        for length in lengths {
-            if length == ABSENT_STRING {
-                strings.push(None);
-                continue;
+        // The entries are valid UTF-8 exactly when their concatenation is and
+        // each entry ends on a character boundary.
+        let not_utf8 = |decoder: &Self| decoder.invalid("A string is not valid UTF-8.");
+        let text = String::from_utf8(bytes).map_err(|_| not_utf8(self))?;
+        let mut end = 0;
+        for &length in &lengths {
+            if length != ABSENT_STRING {
+                end += length as usize;
+                if !text.is_char_boundary(end) {
+                    return Err(not_utf8(self));
+                }
             }
-            let end = start + length as usize;
-            let text = bytes
-                .get(start..end)
-                .and_then(|bytes| std::str::from_utf8(bytes).ok())
-                .ok_or_else(|| self.invalid("A string is not valid UTF-8."))?;
-            strings.push(Some(text.to_owned()));
-            start = end;
         }
-        Ok(strings)
+        Ok(StringColumn { text, lengths })
     }
 
     /// A column of `count` ID lists whose total length is at most `limit`.
@@ -422,6 +479,33 @@ impl<R: Read> Decoder<'_, R> {
             start = end;
         }
         Ok(lists)
+    }
+
+    /// A column of `count` ID lists whose total length is at most `limit`,
+    /// packed: list `i` is `ids[starts[i]..starts[i + 1]]`.
+    fn packed_lists(
+        &mut self,
+        count: usize,
+        limit: usize,
+        resource: Resource,
+    ) -> Result<(Vec<u32>, Vec<u32>)> {
+        let lengths = self.u32_array(count)?;
+        let total = lengths.iter().fold(0usize, |total, &length| {
+            total.saturating_add(length as usize)
+        });
+        // Starts are `u32`, as the IDs are.
+        let limit = limit.min(u32::MAX as usize);
+        if total > limit {
+            return Err(self.limit(resource, limit, total));
+        }
+        let mut starts = Vec::with_capacity(count + 1);
+        starts.push(0);
+        let mut end = 0;
+        for length in lengths {
+            end += length;
+            starts.push(end);
+        }
+        Ok((starts, self.u32_array(total)?))
     }
 
     // Framing.
@@ -521,30 +605,36 @@ impl<R: Read> Decoder<'_, R> {
     fn molecule(&mut self) -> Result<Molecule> {
         let atom_count = self.count(self.options.max_atoms(), Resource::Atoms)?;
         let mut editor = MoleculeEditor::new();
-        for _ in 0..atom_count {
-            let atom = self.atom()?;
+        self.records::<12>(atom_count, |decoder, record, end| {
+            let atom = decoder.atom(record).map_err(|error| error.at_byte(end))?;
             editor.add_atom(atom).map_err(|error| {
-                self.rejected(DiagnosticKind::Chemistry, "Cannot add a stored atom.")
+                decoder
+                    .rejected(DiagnosticKind::Chemistry, "Cannot add a stored atom.")
+                    .at_byte(end)
                     .with_source(error)
             })?;
-        }
+            Ok(())
+        })?;
         let bond_count = self.count(self.options.max_bonds(), Resource::Bonds)?;
         let mut degrees = vec![0usize; atom_count];
-        for _ in 0..bond_count {
-            let record = self.array::<9>()?;
+        self.records::<9>(bond_count, |decoder, record, end| {
             let a = u32::from_le_bytes([record[0], record[1], record[2], record[3]]);
             let b = u32::from_le_bytes([record[4], record[5], record[6], record[7]]);
             let order = bond_order(record[8]).ok_or_else(|| {
-                self.invalid(format!("The bond order code {} is unknown.", record[8]))
+                decoder
+                    .invalid(format!("The bond order code {} is unknown.", record[8]))
+                    .at_byte(end)
             })?;
             editor
                 .add_bond(AtomId::new(a), AtomId::new(b), order)
                 .map_err(|error| {
-                    self.rejected(
-                        DiagnosticKind::InvalidReference,
-                        "Cannot add a stored bond.",
-                    )
-                    .with_source(error)
+                    decoder
+                        .rejected(
+                            DiagnosticKind::InvalidReference,
+                            "Cannot add a stored bond.",
+                        )
+                        .at_byte(end)
+                        .with_source(error)
                 })?;
             // The editor accepted both endpoints, so they index `degrees`.
             for endpoint in [a, b] {
@@ -552,16 +642,14 @@ impl<R: Read> Decoder<'_, R> {
                     *degree += 1;
                 }
             }
-        }
+            Ok(())
+        })?;
         let adjacency = if self.tag("adjacency")? {
-            let mut lists = Vec::with_capacity(atom_count);
-            for &degree in &degrees {
-                let mut list = Vec::with_capacity(degree);
-                for _ in 0..degree {
-                    list.push(BondId::new(self.u32()?));
-                }
-                lists.push(list);
-            }
+            let mut ids = self.u32_array(degrees.iter().sum())?.into_iter();
+            let lists = degrees
+                .iter()
+                .map(|&degree| ids.by_ref().take(degree).map(BondId::new).collect())
+                .collect::<Vec<Vec<_>>>();
             Some(lists)
         } else {
             None
@@ -644,8 +732,8 @@ impl<R: Read> Decoder<'_, R> {
         Ok(molecule)
     }
 
-    fn atom(&mut self) -> Result<Atom> {
-        let record = self.array::<12>()?;
+    /// One stored atom record.
+    fn atom(&self, record: &[u8; 12]) -> Result<Atom> {
         let element = Element::from_atomic_number(record[0])
             .ok_or_else(|| self.invalid(format!("The atomic number {} is unknown.", record[0])))?;
         let isotope = NonZeroU16::new(u16::from_le_bytes([record[1], record[2]]));
@@ -796,10 +884,11 @@ impl<R: Read> Decoder<'_, R> {
             };
             let count = self.count(atom_count, Resource::Atoms)?;
             let mut hydrogens = Vec::with_capacity(count);
-            for _ in 0..count {
-                let atom = AtomId::new(self.u32()?);
-                hydrogens.push((atom, self.u8()?));
-            }
+            self.records::<5>(count, |_, record, _| {
+                let atom = u32::from_le_bytes([record[0], record[1], record[2], record[3]]);
+                hydrogens.push((AtomId::new(atom), record[4]));
+                Ok(())
+            })?;
             builder = builder
                 .with_valence(model, validation, hydrogens)
                 .map_err(|error| built(self, error))?;
@@ -966,6 +1055,18 @@ impl<R: Read> Decoder<'_, R> {
         Ok(values)
     }
 
+    /// [`Self::cells`] of values of `N` bytes, read in bulk.
+    fn fixed_cells<const N: usize, T>(
+        &mut self,
+        present: &[bool],
+        value: impl Fn([u8; N]) -> T,
+    ) -> Result<Vec<Option<T>>> {
+        if !present.contains(&true) {
+            return Err(self.invalid("A stored column has no values."));
+        }
+        self.present(present, value)
+    }
+
     fn table(&mut self, rows: usize) -> Result<RawPropertyTable> {
         let stored_rows = self.u32()? as usize;
         if stored_rows != rows {
@@ -989,14 +1090,14 @@ impl<R: Read> Decoder<'_, R> {
                 }
                 1 => {
                     let present = self.bits(rows)?;
-                    PropertyColumn::Int(self.cells(&present, Self::i64)?)
+                    PropertyColumn::Int(self.fixed_cells(&present, i64::from_le_bytes)?)
                 }
                 2 => {
                     let unit = self.unit()?;
                     let present = self.bits(rows)?;
                     PropertyColumn::Real {
                         unit,
-                        values: self.cells(&present, Self::f64)?,
+                        values: self.fixed_cells(&present, f64::from_le_bytes)?,
                     }
                 }
                 3 => {
@@ -1088,38 +1189,7 @@ impl<R: Read> Decoder<'_, R> {
         let residue_count = self.count(max_items, Resource::Residues)?;
         let residues = self.residues(residue_count, atom_total)?;
         let site_count = self.count(atom_total, Resource::Atoms)?;
-        let atoms = self.u32_array(site_count.saturating_mul(2))?;
-        let type_symbols = self.strings(site_count, false)?;
-        let label_asyms = self.strings(site_count, false)?;
-        let auth_asyms = self.strings(site_count, false)?;
-        let label_atoms = self.strings(site_count, false)?;
-        let auth_atoms = self.strings(site_count, false)?;
-        let sites = atoms
-            .as_chunks::<2>()
-            .0
-            .iter()
-            .zip(type_symbols)
-            .zip(label_asyms)
-            .zip(auth_asyms)
-            .zip(label_atoms)
-            .zip(auth_atoms)
-            .map(
-                |(((((atom, type_symbol), label_asym), auth_asym), label_atom), auth_atom)| {
-                    RawAtomSite {
-                        atom: InstanceAtomId::new(
-                            MoleculeInstanceId::new(atom[0]),
-                            AtomId::new(atom[1]),
-                        ),
-                        metadata: AtomSiteMetadata::default()
-                            .with_type_symbol(type_symbol)
-                            .with_label_asym_id(label_asym)
-                            .with_auth_asym_id(auth_asym)
-                            .with_label_atom_id(label_atom)
-                            .with_auth_atom_id(auth_atom),
-                    }
-                },
-            )
-            .collect::<Vec<_>>();
+        let sites = self.sites(site_count)?;
         let mut properties = TopologyProperties::default();
         *properties.owner_mut() = self.owner()?;
         *properties.molecule_instances_mut() = self.table(instance_count)?;
@@ -1146,17 +1216,14 @@ impl<R: Read> Decoder<'_, R> {
         })
     }
 
-    fn residues(&mut self, count: usize, site_limit: usize) -> Result<Vec<RawResidue>> {
-        let names = self.strings(count, true)?;
-        let label_comp_ids = self.strings(count, false)?;
-        let author_comp_ids = self.strings(count, false)?;
+    fn residues(&mut self, count: usize, site_limit: usize) -> Result<RawResidues> {
+        let names = self.string_column(count, true)?;
+        let label_comp_ids = self.string_column(count, false)?;
+        let author_comp_ids = self.string_column(count, false)?;
         let has_label_seq = self.bits(count)?;
-        let mut label_seq_ids = Vec::with_capacity(count);
-        for present in has_label_seq {
-            label_seq_ids.push(if present { Some(self.i32()?) } else { None });
-        }
-        let author_seq_ids = self.strings(count, false)?;
-        let insertion_codes = self.strings(count, false)?;
+        let label_seq_ids = self.present(&has_label_seq, i32::from_le_bytes)?;
+        let author_seq_ids = self.string_column(count, false)?;
+        let insertion_codes = self.string_column(count, false)?;
         let mut codes = Vec::with_capacity(count.min(CHUNK_BYTES));
         self.chunks(count, |bytes| {
             codes.extend_from_slice(bytes);
@@ -1170,33 +1237,80 @@ impl<R: Read> Decoder<'_, R> {
                 })?);
         }
         let explicit = self.bits(count)?;
-        let sites = self.lists(count, site_limit, Resource::Atoms, AtomSiteId::new)?;
-        let mut residues = Vec::with_capacity(count);
-        let mut columns = names
-            .into_iter()
-            .zip(label_comp_ids)
-            .zip(author_comp_ids)
-            .zip(author_seq_ids)
-            .zip(insertion_codes);
-        for (index, sites) in sites.into_iter().enumerate() {
-            let Some(((((name, label_comp_id), author_comp_id), author_seq_id), insertion_code)) =
-                columns.next()
-            else {
-                break;
-            };
-            residues.push(RawResidue {
-                name: name.unwrap_or_default(),
-                label_comp_id,
-                author_comp_id,
-                label_seq_id: label_seq_ids[index],
-                author_seq_id,
-                insertion_code,
-                class: classes[index],
-                explicit: explicit[index],
-                atom_sites: sites,
-            });
-        }
-        Ok(residues)
+        let (site_starts, sites) = self.packed_lists(count, site_limit, Resource::Atoms)?;
+        // Residues of copies of one chain, and of one kind in many chains,
+        // share their labels.
+        let columns = [
+            names,
+            label_comp_ids,
+            author_comp_ids,
+            author_seq_ids,
+            insertion_codes,
+        ];
+        let (label_keys, labels) = distinct_rows(
+            &columns,
+            label_seq_ids,
+            count,
+            |[name, label_comp_id, author_comp_id, author_seq_id, insertion_code], label_seq_id| {
+                ResidueLabels {
+                    name: name.unwrap_or_default().into(),
+                    label_comp_id: label_comp_id.map(Arc::from),
+                    author_comp_id: author_comp_id.map(Arc::from),
+                    label_seq_id,
+                    author_seq_id: author_seq_id.map(Arc::from),
+                    insertion_code: insertion_code.map(Arc::from),
+                }
+            },
+        );
+        Ok(RawResidues {
+            label_keys,
+            labels,
+            classes,
+            explicit,
+            site_starts,
+            sites: sites.into_iter().map(AtomSiteId::new).collect(),
+        })
+    }
+
+    /// The `count` atom sites: their atoms and metadata.
+    fn sites(&mut self, count: usize) -> Result<RawAtomSites> {
+        let atoms = self.u32_array(count.saturating_mul(2))?;
+        // Type symbols, label and author chain IDs, label and author atom
+        // names, in stored order.
+        let columns = [
+            self.string_column(count, false)?,
+            self.string_column(count, false)?,
+            self.string_column(count, false)?,
+            self.string_column(count, false)?,
+            self.string_column(count, false)?,
+        ];
+        // The sites of one atom name in one chain share their metadata.
+        let (metadata_keys, metadata) = distinct_rows(
+            &columns,
+            std::iter::repeat(()),
+            count,
+            |[type_symbol, label_asym_id, auth_asym_id, label_atom_id, auth_atom_id], ()| {
+                AtomSiteMetadata {
+                    type_symbol: type_symbol.map(str::to_owned),
+                    label_asym_id: label_asym_id.map(str::to_owned),
+                    auth_asym_id: auth_asym_id.map(str::to_owned),
+                    label_atom_id: label_atom_id.map(str::to_owned),
+                    auth_atom_id: auth_atom_id.map(str::to_owned),
+                }
+            },
+        );
+        Ok(RawAtomSites {
+            atoms: atoms
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|atom| {
+                    InstanceAtomId::new(MoleculeInstanceId::new(atom[0]), AtomId::new(atom[1]))
+                })
+                .collect(),
+            metadata_keys,
+            metadata,
+        })
     }
 
     fn hierarchy_error(&self, error: RawHierarchyError) -> FormatError {
@@ -1271,7 +1385,7 @@ impl<R: Read> Decoder<'_, R> {
             return Ok(None);
         }
         let present = self.bits(count)?;
-        self.cells(&present, Self::f64).map(Some)
+        self.fixed_cells(&present, f64::from_le_bytes).map(Some)
     }
 
     fn geometry_properties(&mut self, atoms: usize, bonds: usize) -> Result<GeometryProperties> {

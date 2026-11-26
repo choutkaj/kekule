@@ -1,7 +1,10 @@
 use crate::molecule::{AtomId, MoleculeEditor};
 use crate::test_fixtures::carbon;
-use crate::topology::{AtomSiteMetadata, ChainId, HierarchyBuilder, HierarchyError};
+use crate::topology::{AtomSiteId, AtomSiteMetadata, ChainId, HierarchyBuilder, HierarchyError};
 use crate::topology::{InstanceAtomId, MoleculeInstanceId, TopologyBuildError, TopologyBuilder};
+use crate::topology::{
+    RawAtomSites, RawChain, RawHierarchyError, RawResidues, ResidueClass, ResidueId, ResidueLabels,
+};
 
 #[test]
 fn hierarchy_adds_chains_residues_and_atom_sites_in_order() {
@@ -104,4 +107,70 @@ fn topology_publication_validates_hierarchy_references() {
         )
         .unwrap();
     assert_eq!(builder.build().unwrap().atom_sites().count(), 1);
+}
+
+/// One chain of one residue of one site, with `residues` and `sites`
+/// changed by the caller.
+fn raw_parts(
+    residues: impl FnOnce(&mut RawResidues),
+    sites: impl FnOnce(&mut RawAtomSites),
+) -> Result<HierarchyBuilder, RawHierarchyError> {
+    let chains = vec![RawChain {
+        label_id: "A".to_owned(),
+        author_id: None,
+        residues: vec![ResidueId::new(0)],
+    }];
+    let mut raw_residues = RawResidues {
+        label_keys: vec![0],
+        labels: vec![ResidueLabels::new("GLY".to_owned(), None, None, None)],
+        classes: vec![ResidueClass::AminoAcid],
+        explicit: vec![false],
+        site_starts: vec![0, 1],
+        sites: vec![AtomSiteId::new(0)],
+    };
+    let mut raw_sites = RawAtomSites {
+        atoms: vec![InstanceAtomId::new(
+            MoleculeInstanceId::new(0),
+            AtomId::new(0),
+        )],
+        metadata_keys: vec![0],
+        metadata: vec![AtomSiteMetadata::default()],
+    };
+    residues(&mut raw_residues);
+    sites(&mut raw_sites);
+    HierarchyBuilder::from_raw_parts(chains, raw_residues, raw_sites)
+}
+
+#[test]
+fn raw_parts_reject_columns_that_do_not_match() {
+    assert!(raw_parts(|_| {}, |_| {}).is_ok());
+    let residue_cases: [fn(&mut RawResidues); 5] = [
+        |residues| residues.label_keys[0] = 1,
+        |residues| residues.explicit.clear(),
+        |residues| residues.site_starts = vec![0, 2],
+        |residues| residues.site_starts = vec![1, 1],
+        |residues| residues.site_starts = vec![0],
+    ];
+    for (index, case) in residue_cases.into_iter().enumerate() {
+        assert!(
+            matches!(
+                raw_parts(case, |_| {}),
+                Err(RawHierarchyError::ResidueColumns)
+            ),
+            "residue case {index}"
+        );
+    }
+    let site_cases: [fn(&mut RawAtomSites); 2] = [
+        |sites| sites.metadata_keys[0] = 1,
+        |sites| sites.metadata_keys.clear(),
+    ];
+    for (index, case) in site_cases.into_iter().enumerate() {
+        assert!(
+            matches!(
+                raw_parts(|_| {}, case),
+                Err(RawHierarchyError::AtomSiteColumns)
+            ),
+            "site case {index}"
+        );
+    }
 }

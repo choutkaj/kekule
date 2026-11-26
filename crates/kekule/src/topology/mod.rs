@@ -90,7 +90,7 @@ pub use hierarchy::{
     ResidueId,
 };
 pub(crate) use hierarchy::{
-    Hierarchy, RawAtomSite, RawChain, RawHierarchyError, RawResidue, ResidueLabels,
+    Hierarchy, RawAtomSites, RawChain, RawHierarchyError, RawResidues, ResidueLabels,
 };
 use hierarchy_index::HierarchyIndex;
 pub(crate) use hierarchy_index::SiteNames;

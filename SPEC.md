@@ -1069,7 +1069,8 @@ binary encoding of molecules, topologies, structures, structure sets,
 ensembles, and distributions. It stores each owner's authoritative state and reconstructs it only
 through the owners' validating paths; stored perception is reinstalled or
 discarded. A decoded topology keeps every semantic ID but is a new publication
-with a fresh layout identity. Decoding is bounded before allocation and never
+with a fresh layout identity. Its residues that store equal labels share one
+row of them, as do its sites. Decoding is bounded before allocation and never
 trusts the input. Semantic IDs have a stable encoding so applications can
 persist references next to native files. The writer writes only the newest
 format version. A version freezes when a Kekule release ships it: until then,
