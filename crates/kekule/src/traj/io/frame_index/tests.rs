@@ -26,7 +26,10 @@ fn index_of(
             starts,
             end: byte_count,
         }),
-        true,
+        IndexFacts {
+            precision_mixed: true,
+            ..IndexFacts::default()
+        },
     )
 }
 
@@ -99,6 +102,54 @@ fn version_1_encodings_are_refused() {
         TrajectoryFrameIndex::from_bytes(&bytes, &TrajectoryIoLimits::default()).unwrap_err();
     assert_eq!(error.kind(), TrajectoryIoErrorKind::InvalidIndex);
     assert!(error.to_string().contains("version 1"));
+}
+
+#[test]
+fn frame_counts_round_trip_for_their_own_format_alone() {
+    let limits = TrajectoryIoLimits::default();
+    let counted = |format, stamped, skipped_frames, extra_column_frames| {
+        let index = index_of(format, vec![0, 100], 400, stamped);
+        TrajectoryFrameIndex::new(
+            format,
+            index.fingerprint.clone(),
+            index.offsets,
+            IndexFacts {
+                skipped_frames,
+                extra_column_frames,
+                ..IndexFacts::default()
+            },
+        )
+    };
+    for original in [
+        counted(TrajectoryFormat::Trr, true, 3, 0),
+        counted(TrajectoryFormat::Xyz, false, 0, 2),
+    ] {
+        let decoded = TrajectoryFrameIndex::from_bytes(&original.to_bytes(), &limits).unwrap();
+        assert_eq!(decoded, original);
+        assert_eq!(decoded.into_parts().1, original.into_parts().1);
+    }
+    // A count of another format's frames is not recorded.
+    let xtc = counted(TrajectoryFormat::Xtc, true, 3, 2);
+    assert_eq!(xtc.into_parts().1, IndexFacts::default());
+
+    let with_counts = |format, stamped, skipped: u64, extra_columns: u64| {
+        let mut bytes = index_of(format, vec![0, 100], 400, stamped).to_bytes();
+        bytes[56..64].copy_from_slice(&skipped.to_le_bytes());
+        bytes[64..72].copy_from_slice(&extra_columns.to_le_bytes());
+        reencode(&mut bytes);
+        bytes
+    };
+    for bytes in [
+        with_counts(TrajectoryFormat::Xtc, true, 1, 0),
+        with_counts(TrajectoryFormat::Trr, true, 0, 1),
+        with_counts(TrajectoryFormat::Trr, true, 401, 0),
+        with_counts(TrajectoryFormat::Xyz, false, 1, 0),
+        with_counts(TrajectoryFormat::Xyz, false, 0, 3),
+    ] {
+        let error = TrajectoryFrameIndex::from_bytes(&bytes, &limits).unwrap_err();
+        assert_eq!(error.kind(), TrajectoryIoErrorKind::InvalidIndex);
+        assert!(error.to_string().contains("counts frames"), "{error}");
+    }
 }
 
 #[test]
@@ -210,12 +261,14 @@ fn malformed_encodings_are_typed_errors() {
     corrupt[60] ^= 1;
     assert_eq!(kind(&corrupt, &limits), TrajectoryIoErrorKind::InvalidIndex);
 
-    let mut version = bytes.clone();
-    version[8] = 3;
-    reencode(&mut version);
-    let error = TrajectoryFrameIndex::from_bytes(&version, &limits).unwrap_err();
-    assert_eq!(error.kind(), TrajectoryIoErrorKind::InvalidIndex);
-    assert!(error.to_string().contains("version 3"));
+    for previous in [2, 4] {
+        let mut version = bytes.clone();
+        version[8] = previous;
+        reencode(&mut version);
+        let error = TrajectoryFrameIndex::from_bytes(&version, &limits).unwrap_err();
+        assert_eq!(error.kind(), TrajectoryIoErrorKind::InvalidIndex);
+        assert!(error.to_string().contains(&format!("version {previous}")));
+    }
 
     for (position, value) in [(12, 9), (13, 2), (14, 2), (15, 1)] {
         let mut field = bytes.clone();

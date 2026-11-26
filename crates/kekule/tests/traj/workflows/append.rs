@@ -16,11 +16,11 @@ use kekule::structure::Positions;
 use kekule::topology::Topology;
 use kekule::traj::io::dcd::DcdWriteOptions;
 use kekule::traj::io::trr::{TrrLambdaPolicy, TrrScalarPrecision, TrrWriteOptions};
-use kekule::traj::io::xtc::{XtcCellPolicy, XtcReadOptions, XtcWriteOptions};
+use kekule::traj::io::xtc::{XtcReadOptions, XtcWriteOptions};
 use kekule::traj::io::{
     append_trajectory, append_trajectory_with, create_trajectory_stream_writer,
     open_indexed_trajectory, KeepFrames, TrajectoryAppendReport, TrajectoryFileFingerprint,
-    TrajectoryOpenOptions, TrajectoryWriteOptions,
+    TrajectoryOpenOptions, TrajectoryWriteOptions, ZeroBoxPolicy,
 };
 use kekule::traj::{
     FrameView, SeekableTrajectoryReader, TrajectoryFormat, TrajectoryIoErrorKind, TrajectoryReader,
@@ -288,9 +288,8 @@ fn a_run_restarted_from_checkpoints_again_and_again_writes_one_trajectory() {
 #[test]
 fn a_non_periodic_xtc_run_continues_under_the_writer_cell_policy() {
     let format = TrajectoryFormat::Xtc;
-    let zero_boxes = options(format).with_xtc_options(
-        XtcWriteOptions::default().with_cell_policy(XtcCellPolicy::ZeroMatrixAsAbsent),
-    );
+    let zero_boxes = options(format)
+        .with_xtc_options(XtcWriteOptions::default().with_zero_box(ZeroBoxPolicy::NoCell));
     let open_frame = |index: u64| {
         let mut frame = frame(index);
         frame.set_cell(None);
@@ -311,9 +310,8 @@ fn a_non_periodic_xtc_run_continues_under_the_writer_cell_policy() {
         fs::read(&path).unwrap()
     };
     let straight = write(4);
-    let zero_box_reads = TrajectoryOpenOptions::default().with_xtc_options(
-        XtcReadOptions::default().with_cell_policy(XtcCellPolicy::ZeroMatrixAsAbsent),
-    );
+    let zero_box_reads = TrajectoryOpenOptions::default()
+        .with_xtc_options(XtcReadOptions::default().with_zero_box(ZeroBoxPolicy::NoCell));
     let (_, ends) = frame_ends_read(&path, zero_box_reads);
     // Cut inside the third frame, as a run killed while writing it.
     let cut = usize::try_from(ends[1]).unwrap() + 3;

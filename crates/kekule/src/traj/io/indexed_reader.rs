@@ -35,6 +35,59 @@ pub(crate) struct IndexFacts {
     pub(crate) declared_frames: Option<usize>,
     /// Whether the indexed TRR frames mix scalar widths.
     pub(crate) precision_mixed: bool,
+    /// The TRR frames without positions before indexed frames, which the
+    /// scans skipped.
+    pub(crate) skipped_frames: usize,
+    /// The TRR frames without positions after the last indexed frame, which
+    /// the last scan skipped.
+    pub(crate) trailing_frames: usize,
+    /// The XYZ frames whose columns after the coordinates the scans omitted.
+    pub(crate) extra_column_frames: usize,
+}
+
+/// Ends a scan of `codec` whose index of `indexed` frames has no room for
+/// another: cleanly at the end of the stream, otherwise with an error.
+pub(crate) fn end_full_index<C: IndexedCodec + ?Sized>(
+    codec: &mut C,
+    indexed: usize,
+    limit: LimitExceeded,
+) -> Result<u64, TrajectoryIoError> {
+    let clean_eof = !codec.frame_pending() && {
+        let (stream, source) = codec.stream_and_source();
+        probe_seekable_eof(
+            stream,
+            TrajectoryIoOperation::Index,
+            C::FORMAT,
+            &source.label,
+        )?
+    };
+    if clean_eof {
+        return Ok(0);
+    }
+    Err(full_index_error(
+        C::FORMAT,
+        &codec.source().label,
+        indexed,
+        limit,
+    ))
+}
+
+/// The error of a scan that finds another frame where its index of
+/// `indexed` frames has no room for it.
+pub(crate) fn full_index_error(
+    format: TrajectoryFormat,
+    source_label: &str,
+    indexed: usize,
+    limit: LimitExceeded,
+) -> TrajectoryIoError {
+    limit_error(
+        format,
+        TrajectoryIoOperation::ReadFrame,
+        source_label,
+        Some(indexed),
+        None,
+    )
+    .exceeding(Part::FrameIndex, limit)
 }
 
 /// A sequential reader that an [`IndexedReader`] scans and seeks.
@@ -88,33 +141,16 @@ pub(crate) trait IndexedCodec: TrajectoryReader {
     }
 
     /// Ends a scan whose index has no room for another frame: cleanly at the
-    /// end of the stream, otherwise with an error.
+    /// end of the stream, otherwise with an error. A codec that reads on
+    /// past frames it skips polls `control` while it does.
     fn index_full(
         &mut self,
         indexed: usize,
         _growing: bool,
         limit: LimitExceeded,
+        _control: &IndexBuildControl<'_>,
     ) -> Result<u64, TrajectoryIoError> {
-        let clean_eof = !self.frame_pending() && {
-            let (stream, source) = self.stream_and_source();
-            probe_seekable_eof(
-                stream,
-                TrajectoryIoOperation::Index,
-                Self::FORMAT,
-                &source.label,
-            )?
-        };
-        if clean_eof {
-            return Ok(0);
-        }
-        Err(limit_error(
-            Self::FORMAT,
-            TrajectoryIoOperation::ReadFrame,
-            &self.source().label,
-            Some(indexed),
-            None,
-        )
-        .exceeding(Part::FrameIndex, limit))
+        end_full_index(self, indexed, limit)
     }
 
     /// Where the next frame starts.
@@ -123,12 +159,14 @@ pub(crate) trait IndexedCodec: TrajectoryReader {
     }
 
     /// Decodes the frame after `indexed` ones, which starts at `offset`, and
-    /// returns its stamp, or `None` at the end of the stream.
+    /// returns its stamp, or `None` at the end of the stream. A codec that
+    /// skips frames polls `control` while it does.
     fn index_next(
         &mut self,
         indexed: usize,
         offset: u64,
         growing: bool,
+        control: &IndexBuildControl<'_>,
     ) -> Result<Option<FrameStamp>, TrajectoryIoError>;
 
     /// Prepares to decode the frame at `offset`, where the stream now is.
@@ -254,22 +292,17 @@ impl<C: IndexedCodec> IndexedReader<C> {
             if let Some(pending) = self.codec.before_frame(indexed, growing)? {
                 return Ok(pending);
             }
-            if let Some(limit) = projected_index_limit(indexed, &self.codec.source().limits) {
-                return self.codec.index_full(indexed, growing, limit);
-            }
             let offset = self.codec.frame_offset()?;
-            let stamp = match self.codec.index_next(indexed, offset, growing) {
+            if let Some(limit) = projected_index_limit(indexed, &self.codec.source().limits) {
+                return match self.codec.index_full(indexed, growing, limit, control) {
+                    Ok(pending) => Ok(pending),
+                    Err(error) => self.unfinished_tail(error, growing, offset),
+                };
+            }
+            let stamp = match self.codec.index_next(indexed, offset, growing, control) {
                 Ok(Some(stamp)) => stamp,
                 Ok(None) => return Ok(0),
-                Err(error) if growing && error.kind() == TrajectoryIoErrorKind::TruncatedRecord => {
-                    let file_end = seek(
-                        &mut self.codec,
-                        SeekFrom::End(0),
-                        TrajectoryIoOperation::Index,
-                    )?;
-                    return Ok(file_end.saturating_sub(offset));
-                }
-                Err(error) => return Err(error),
+                Err(error) => return self.unfinished_tail(error, growing, offset),
             };
             let end = position(&mut self.codec, TrajectoryIoOperation::Index)?;
             Arc::make_mut(&mut self.offsets).push(
@@ -282,6 +315,25 @@ impl<C: IndexedCodec> IndexedReader<C> {
             )?;
             control.checkpoint(self.offsets.len(), end, C::FORMAT, &label)?;
         }
+    }
+
+    /// The bytes pending from `offset` in a growing stream that `error`
+    /// found unfinished there. Any other error fails the scan.
+    fn unfinished_tail(
+        &mut self,
+        error: TrajectoryIoError,
+        growing: bool,
+        offset: u64,
+    ) -> Result<u64, TrajectoryIoError> {
+        if !growing || error.kind() != TrajectoryIoErrorKind::TruncatedRecord {
+            return Err(error);
+        }
+        let file_end = seek(
+            &mut self.codec,
+            SeekFrom::End(0),
+            TrajectoryIoOperation::Index,
+        )?;
+        Ok(file_end.saturating_sub(offset))
     }
 
     /// Decodes and verifies frame `index` into the codec reader's buffers.

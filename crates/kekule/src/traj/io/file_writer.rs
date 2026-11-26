@@ -186,7 +186,7 @@ impl TrajectoryWriteOptions {
 
     /// Sets the `cell` policy of the XYZ and DCD options, for the cells XYZ,
     /// and DCD without unit cells, cannot carry. TRR carries cells, and XTC
-    /// follows its [`xtc::XtcCellPolicy`].
+    /// follows its [`xtc::XtcWriteOptions::zero_box`].
     #[must_use]
     pub fn with_cell(mut self, policy: UnrepresentablePolicy) -> Self {
         self.xyz = self.xyz.with_cell(policy);

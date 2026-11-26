@@ -16,9 +16,11 @@ use kekule::traj::io::dcd::{DcdReadOptions, DcdReader, DcdTimePolicy, DcdWriteOp
 use kekule::traj::io::trr::{
     TrrLambdaPolicy, TrrReadOptions, TrrReader, TrrWriteOptions, TrrWriter, TRR_LAMBDA_PROPERTY,
 };
-use kekule::traj::io::xtc::{XtcCellPolicy, XtcReadOptions, XtcReader, XtcWriteOptions, XtcWriter};
+use kekule::traj::io::xtc::{XtcReadOptions, XtcReader, XtcWriteOptions, XtcWriter};
 use kekule::traj::io::xyz::XyzWriter;
-use kekule::traj::io::{write_structure_set_to, FrameTimingPolicy, TrajectoryWriteOptions};
+use kekule::traj::io::{
+    write_structure_set_to, FrameTimingPolicy, TrajectoryWriteOptions, ZeroBoxPolicy,
+};
 use kekule::traj::{
     FrameView, TrajectoryFormat, TrajectoryIoErrorKind, TrajectoryIoOperation, TrajectoryWriter,
 };
@@ -562,8 +564,7 @@ fn xtc_and_trr_number_frames_without_a_time_or_step() {
         frame
     }));
 
-    let xtc_options =
-        XtcWriteOptions::default().with_cell_policy(XtcCellPolicy::ZeroMatrixAsAbsent);
+    let xtc_options = XtcWriteOptions::default().with_zero_box(ZeroBoxPolicy::NoCell);
     let (expected, _) = xtc(xtc_options, &explicit);
     let numbered_xtc = xtc_options
         .with_frame_timing(numbered)
@@ -576,7 +577,7 @@ fn xtc_and_trr_number_frames_without_a_time_or_step() {
         &mut XtcReader::new(
             Cursor::new(bytes),
             topology(),
-            XtcReadOptions::default().with_cell_policy(XtcCellPolicy::ZeroMatrixAsAbsent),
+            XtcReadOptions::default().with_zero_box(ZeroBoxPolicy::NoCell),
         )
         .unwrap(),
     );

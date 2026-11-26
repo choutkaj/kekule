@@ -1,5 +1,6 @@
 //! XYZ: frame parsing and interpretation with inferred bonds.
 
+pub(crate) mod atom_line;
 mod document;
 pub(crate) mod entry_points;
 mod interpret;

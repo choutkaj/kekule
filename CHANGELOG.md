@@ -744,6 +744,39 @@ the main branch migrates by the table under "From the SampleSet API".
   names the first atom outside the valence model and its source line
   (`atom`, `location`). Its `ValenceError` names atoms of the published
   molecule.
+- **Breaking:** `traj::io::ZeroBoxPolicy` (`Reject`, `NoCell`) replaces
+  `xtc::XtcCellPolicy`, and `with_zero_box` replaces `with_cell_policy` on
+  `XtcReadOptions` and `XtcWriteOptions`. `TrrReadOptions::with_zero_box`
+  reads the box of zeros GROMACS writes without periodic boundaries as a
+  frame without a cell.
+- `TrrReadOptions::with_frames_without_positions` skips TRR frames that hold
+  only velocities or forces under `UnsupportedContent::Report`. An indexed
+  reader's open report counts them
+  (`TrajectoryOpenNote::TrrFramesWithoutPositions`). They count against
+  `TrajectoryIoLimits::max_frames`.
+- **Breaking:** frame indexes are version 3. They record how many TRR frames
+  without positions and XYZ frames with extra columns their frames cover. A
+  reader opened from an index notes them and counts them against
+  `max_frames`. Options that reject them refuse the index. Indexes of version
+  1 or 2 fail with `InvalidIndex`.
+- **Breaking:** DCD readers read every complete frame in the file, whatever
+  frame count `NSET` the header declares, as VMD and MDAnalysis do. An
+  indexed reader's open report notes another count
+  (`TrajectoryOpenNote::DcdFrameCount`). An imported index of fewer frames
+  than `NSET` scans the rest.
+- **Breaking:** XYZ trajectory readers read atom lines as `kekule::xyz`
+  parses them: element symbols in any letter case, atomic numbers, LF, CRLF
+  or CR line ends, and blank lines after the last frame.
+  `XyzReadOptions::with_extra_columns` omits extended XYZ columns under
+  `UnsupportedContent::Report`, and an indexed reader's open report counts
+  those frames (`TrajectoryOpenNote::XyzExtraColumns`).
+- **Breaking:** XTC and TRR steps read as unsigned 32-bit numbers, the low 32
+  bits GROMACS writes, and the writers take steps up to 2^32 - 1.
+- **Breaking:** XTC and TRR writers refuse a cell outside the GROMACS
+  orientation, vector a along +x and b in the xy plane, as the DCD writer
+  does. GROMACS reads only the lower triangle of the box. All three writers
+  take elements above the diagonal within a billionth of the longest
+  vector, such as a fit's rounding, as zeros.
 
 ### Removed
 
@@ -1135,6 +1168,11 @@ the main branch migrates by the table under "From the SampleSet API".
   `12.345(3)` parse.
 - The PDB writer lists a polymer link stretched beyond bonding distance in
   any geometry as `CONECT`.
+- XTC and TRR frames at steps from 2^31 on read. They failed as negative
+  steps.
+- A TRR file whose frames GROMACS wrote without positions, or with the box of
+  zeros of a run without periodic boundaries, opens under the new options.
+  It failed as a whole.
 - Appending structures one after another to a `StructureEditor` no longer
   takes time quadratic in the draft's size: an append whose property columns
   cannot clash with the draft's runs in place, without a copy.

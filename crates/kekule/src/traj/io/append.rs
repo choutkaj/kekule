@@ -108,7 +108,7 @@ struct Kept {
 /// header, is started again, and corrupt data anywhere is an error. XTC
 /// frames are read under the cell policy of the write options, so the zero
 /// boxes of frames without a cell continue under
-/// [`super::xtc::XtcCellPolicy::ZeroMatrixAsAbsent`] alone, and TRR frames
+/// [`super::ZeroBoxPolicy::NoCell`] alone, and TRR frames
 /// under their lambda policy, so nonzero lambdas do not continue under
 /// [`super::trr::TrrLambdaPolicy::RequireZero`]. Where the file
 /// records its writer's settings they must be those of the write options: the
@@ -239,7 +239,7 @@ pub fn append_trajectory_with(
     // cell exactly when the writer writes one for a frame without a cell,
     // and a TRR lambda must be zero when the writer writes zero. The other
     // readers accept every frame their writers write.
-    let xtc = XtcReadOptions::default().with_cell_policy(options.xtc_options().cell_policy());
+    let xtc = XtcReadOptions::default().with_zero_box(options.xtc_options().zero_box());
     let trr = TrrReadOptions::default().with_lambda_policy(options.trr_options().lambda_policy());
     let scan = TrajectoryOpenOptions::default()
         .with_format_hint(TrajectoryFormatHint::Explicit(format))

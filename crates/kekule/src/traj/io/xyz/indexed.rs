@@ -69,10 +69,11 @@ impl<R: BufRead + Seek> IndexedXyzReader<R> {
         Ok(Self { inner })
     }
 
-    /// Opens the stream with previously verified `offsets` instead of
-    /// scanning it; frame 0 is verified here, and random reads verify each
-    /// frame against the offsets. A `growing` stream is extended as in
-    /// [`Self::build`].
+    /// Opens the stream with previously verified `offsets` and the `facts`
+    /// of their scans instead of scanning it; frame 0 is verified here, and
+    /// random reads verify each frame against the offsets. A `growing`
+    /// stream is extended as in [`Self::build`]. Offsets of frames with
+    /// columns after their coordinates need options that omit those.
     pub(crate) fn from_offsets(
         mut reader: R,
         topology: Arc<Topology>,
@@ -80,7 +81,17 @@ impl<R: BufRead + Seek> IndexedXyzReader<R> {
         source: ReadSource,
         offsets: Arc<FrameOffsets>,
         growing: bool,
+        facts: IndexFacts,
     ) -> Result<Self, TrajectoryIoError> {
+        if facts.extra_column_frames > 0 && options.extra_columns != UnsupportedContent::Report {
+            return Err(codec_context(
+                TrajectoryIoErrorKind::UnsupportedVariant,
+                TrajectoryIoOperation::Open,
+                Some(FORMAT),
+                &source.label,
+                Reason::IndexedExtraColumns(facts.extra_column_frames),
+            ));
+        }
         let stream_start = reader.stream_position().map_err(|error| {
             io_context(
                 TrajectoryIoOperation::Open,
@@ -93,6 +104,7 @@ impl<R: BufRead + Seek> IndexedXyzReader<R> {
         reader.growing = growing;
         offsets.verify_start(stream_start, TrajectoryFormat::Xyz, &reader.source.label)?;
         reader.validate_first_frame()?;
+        reader.set_index_facts(facts);
         Ok(Self {
             inner: IndexedReader::new(reader, offsets),
         })
@@ -110,6 +122,7 @@ impl<R: BufRead + Seek> IndexedXyzReader<R> {
             reader.source.clone(),
             Arc::clone(self.inner.shared_offsets()),
             reader.growing,
+            reader.index_facts(),
         )
     }
 }
@@ -147,6 +160,17 @@ impl<R: BufRead + Seek> IndexedCodec for XyzReader<R> {
 
     fn restore_state(&mut self, (): ()) {}
 
+    fn index_facts(&self) -> IndexFacts {
+        IndexFacts {
+            extra_column_frames: self.index_extra_columns,
+            ..IndexFacts::default()
+        }
+    }
+
+    fn set_index_facts(&mut self, facts: IndexFacts) {
+        self.index_extra_columns = facts.extra_column_frames;
+    }
+
     fn start_scan(&mut self, end: u64, growing: bool) -> Result<(), TrajectoryIoError> {
         self.growing = growing;
         self.seek_to(SeekFrom::Start(end), TrajectoryIoOperation::Index)
@@ -158,16 +182,14 @@ impl<R: BufRead + Seek> IndexedCodec for XyzReader<R> {
         _indexed: usize,
         _growing: bool,
         limit: LimitExceeded,
+        control: &IndexBuildControl<'_>,
     ) -> Result<u64, TrajectoryIoError> {
-        let label = &self.source.label;
-        if self
-            .reader
-            .fill_buf()
-            .map_err(|error| io_context(TrajectoryIoOperation::Index, Some(FORMAT), label, error))?
-            .is_empty()
-        {
+        let offset = self.frame_offset()?;
+        let scan = ScanPoll { control, offset };
+        if self.at_end(TrajectoryIoOperation::Index, Some(scan))? {
             return Ok(0);
         }
+        let label = &self.source.label;
         Err(codec_context(
             TrajectoryIoErrorKind::LimitExceeded,
             TrajectoryIoOperation::Index,
@@ -181,11 +203,15 @@ impl<R: BufRead + Seek> IndexedCodec for XyzReader<R> {
     fn index_next(
         &mut self,
         _indexed: usize,
-        _offset: u64,
+        offset: u64,
         _growing: bool,
+        control: &IndexBuildControl<'_>,
     ) -> Result<Option<FrameStamp>, TrajectoryIoError> {
-        if !self.parse_next(false)? {
+        if !self.parse_next(false, Some(ScanPoll { control, offset }))? {
             return Ok(None);
+        }
+        if self.extra_columns {
+            self.index_extra_columns = self.index_extra_columns.saturating_add(1);
         }
         self.frame_cursor = self.frame_cursor.checked_add(1).ok_or_else(|| {
             frame_error(
@@ -201,7 +227,8 @@ impl<R: BufRead + Seek> IndexedCodec for XyzReader<R> {
     }
 
     fn read_frame(&mut self) -> Result<Option<()>, TrajectoryIoError> {
-        self.parse_next(true).map(|parsed| parsed.then_some(()))
+        self.parse_next(true, None)
+            .map(|parsed| parsed.then_some(()))
     }
 
     fn frame_context(error: TrajectoryIoError, _frame: usize, _offset: u64) -> TrajectoryIoError {

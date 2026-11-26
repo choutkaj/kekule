@@ -4,8 +4,11 @@
 //! frames; [`XtcWriter`] writes them at an explicit lossy precision. XTC
 //! stores positions, a box, a step and a time in picoseconds; frames of more
 //! than nine atoms are compressed with nominal resolution `1 / precision`
-//! nanometres, smaller frames are stored as plain f32. The box follows an
-//! [`XtcCellPolicy`]. A frame without a time or step can be numbered under
+//! nanometres, smaller frames are stored as plain f32. A box of zeros
+//! follows a [`ZeroBoxPolicy`], and the writer writes cells in the GROMACS
+//! orientation only: vector a along +x, b in the xy plane. The step field
+//! holds the low 32 bits of the GROMACS step and reads as an unsigned
+//! number. A frame without a time or step can be numbered under
 //! [`XtcWriteOptions::frame_timing`]; the velocities, forces, occupancies,
 //! B-factors, and properties XTC cannot carry are rejected unless
 //! [`XtcWriteOptions::geometry_metadata`] and
@@ -25,8 +28,9 @@
 //! use kekule::units::{Quantity, NANOMETER, PICOSECOND};
 //! use kekule::{smiles, topology::Topology};
 //! use kekule::traj::io::xtc::{
-//!     XtcCellPolicy, XtcReadOptions, XtcReader, XtcWriteOptions, XtcWriter,
+//!     XtcReadOptions, XtcReader, XtcWriteOptions, XtcWriter,
 //! };
+//! use kekule::traj::io::ZeroBoxPolicy;
 //! use kekule::traj::{FrameBuffer, TrajectoryReader, TrajectoryWriter};
 //!
 //! let molecule = smiles::to_molecules("[He]")?.pop().unwrap();
@@ -38,13 +42,12 @@
 //! frame.set_time(Some(Quantity::new(0.5, PICOSECOND)))?;
 //!
 //! // A frame without a cell is written as the GROMACS zero box.
-//! let options = XtcWriteOptions::default().with_cell_policy(XtcCellPolicy::ZeroMatrixAsAbsent);
+//! let options = XtcWriteOptions::default().with_zero_box(ZeroBoxPolicy::NoCell);
 //! let mut writer = XtcWriter::new(Vec::new(), Arc::clone(&topology), options)?;
 //! writer.write_frame(frame.frame_view())?;
 //! let bytes = writer.finish()?;
 //!
-//! let read_options =
-//!     XtcReadOptions::default().with_cell_policy(XtcCellPolicy::ZeroMatrixAsAbsent);
+//! let read_options = XtcReadOptions::default().with_zero_box(ZeroBoxPolicy::NoCell);
 //! let mut reader = XtcReader::new(Cursor::new(bytes), topology, read_options)?;
 //! let mut buffer = reader.frame_buffer();
 //! assert!(reader.read_next(&mut buffer)?);
@@ -74,6 +77,7 @@ use crate::traj::{
 };
 use crate::units::{Quantity, NANOMETER, PER_NANOMETER, PICOSECOND};
 
+use super::cell::{gromacs_cell, standard_orientation};
 use super::codec::{
     frame_error, header_error, limit_error, read_exact, stream_error, validate_atom_count,
 };
@@ -86,7 +90,7 @@ use super::TrajectoryWriteOptions;
 use super::{
     codec_context, frame_offset_context, io_context, probe_seekable_eof, require_no_partial_frame,
     require_nonempty_writer, validation_cause, FrameOffsets, FrameStamp, FrameTimingPolicy,
-    IndexBuildControl, TrajectoryIoLimits, TrajectoryOpenOptions,
+    IndexBuildControl, TrajectoryIoLimits, TrajectoryOpenOptions, ZeroBoxPolicy,
 };
 
 /// The format of this codec's streams.
@@ -102,8 +106,8 @@ use read::*;
 pub(crate) use write::check_append_frames;
 pub use write::XtcWriter;
 
-/// What an XTC frame carries: a cell, which a zero box makes absent
-/// under [`XtcCellPolicy::ZeroMatrixAsAbsent`].
+/// What an XTC frame carries: a cell, which a box of zeros makes absent
+/// under [`ZeroBoxPolicy::NoCell`].
 pub(super) const FIELDS: TrajectoryFieldAvailability = TrajectoryFieldAvailability {
     positions: FieldAvailability::Required,
     cell: FieldAvailability::Required,
@@ -161,42 +165,24 @@ impl XtcMagic {
     }
 }
 
-/// Explicit handling for the mandatory XTC box matrix.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum XtcCellPolicy {
-    /// Require a finite, nondegenerate, fully periodic cell.
-    RequirePeriodic,
-    /// Treat an exactly zero matrix as explicitly absent; validate all others.
-    ZeroMatrixAsAbsent,
-}
-
 /// XTC reader policy.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct XtcReadOptions {
-    cell_policy: XtcCellPolicy,
-}
-
-impl Default for XtcReadOptions {
-    fn default() -> Self {
-        Self {
-            cell_policy: XtcCellPolicy::RequirePeriodic,
-        }
-    }
+    zero_box: ZeroBoxPolicy,
 }
 
 impl XtcReadOptions {
-    /// Sets [`Self::cell_policy`].
+    /// Sets [`Self::zero_box`].
     #[must_use]
-    pub const fn with_cell_policy(mut self, cell_policy: XtcCellPolicy) -> Self {
-        self.cell_policy = cell_policy;
+    pub const fn with_zero_box(mut self, zero_box: ZeroBoxPolicy) -> Self {
+        self.zero_box = zero_box;
         self
     }
 
-    /// How the box matrix is interpreted; [`XtcCellPolicy::RequirePeriodic`]
-    /// by default.
-    pub const fn cell_policy(&self) -> XtcCellPolicy {
-        self.cell_policy
+    /// How a box of zeros reads; [`ZeroBoxPolicy::Reject`] by default. Every
+    /// other box must be a finite, nondegenerate cell.
+    pub const fn zero_box(&self) -> ZeroBoxPolicy {
+        self.zero_box
     }
 }
 
@@ -208,7 +194,7 @@ impl XtcReadOptions {
 pub struct XtcWriteOptions {
     magic: XtcMagic,
     precision: f32,
-    cell_policy: XtcCellPolicy,
+    zero_box: ZeroBoxPolicy,
     geometry_metadata: UnrepresentablePolicy,
     properties: UnrepresentablePolicy,
     frame_timing: FrameTimingPolicy,
@@ -220,7 +206,7 @@ impl Default for XtcWriteOptions {
         Self {
             magic: XtcMagic::Xtc1995,
             precision: 1000.0,
-            cell_policy: XtcCellPolicy::RequirePeriodic,
+            zero_box: ZeroBoxPolicy::Reject,
             geometry_metadata: UnrepresentablePolicy::Fail,
             properties: UnrepresentablePolicy::Fail,
             frame_timing: FrameTimingPolicy::Require,
@@ -262,13 +248,10 @@ impl XtcWriteOptions {
         Ok(self)
     }
 
-    /// Chooses how frames without a cell are written, mirroring the reader's
-    /// [`XtcCellPolicy`]. [`XtcCellPolicy::ZeroMatrixAsAbsent`] writes the
-    /// zero box that GROMACS uses for non-periodic systems; the default,
-    /// [`XtcCellPolicy::RequirePeriodic`], rejects such frames.
+    /// Sets [`Self::zero_box`].
     #[must_use]
-    pub const fn with_cell_policy(mut self, cell_policy: XtcCellPolicy) -> Self {
-        self.cell_policy = cell_policy;
+    pub const fn with_zero_box(mut self, zero_box: ZeroBoxPolicy) -> Self {
+        self.zero_box = zero_box;
         self
     }
 
@@ -317,10 +300,14 @@ impl XtcWriteOptions {
         Quantity::new(f64::from(self.precision), PER_NANOMETER)
     }
 
-    /// How frames without a cell are written;
-    /// [`XtcCellPolicy::RequirePeriodic`] by default.
-    pub const fn cell_policy(self) -> XtcCellPolicy {
-        self.cell_policy
+    /// How a frame without a cell is written, mirroring the reader's
+    /// [`XtcReadOptions::zero_box`]: [`ZeroBoxPolicy::NoCell`] writes the box
+    /// of zeros GROMACS writes for systems without periodic boundaries, and
+    /// the default, [`ZeroBoxPolicy::Reject`], refuses the frame. A cell
+    /// must be in the orientation GROMACS assumes: vector a along +x, b in
+    /// the xy plane with positive y, c with positive z.
+    pub const fn zero_box(self) -> ZeroBoxPolicy {
+        self.zero_box
     }
 
     /// A frame's velocities, forces, occupancies, and B-factors, which XTC

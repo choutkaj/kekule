@@ -612,10 +612,12 @@ fn dcd_exact_frame_and_index_limits_still_allow_clean_eof() {
 }
 
 #[test]
-fn dcd_declared_frame_count_is_strict_in_sequential_and_indexed_modes() {
+fn dcd_frames_are_counted_in_the_file_whatever_nset_declares() {
+    // VMD and MDAnalysis read the frames on disk too: writers that never
+    // update NSET leave 0 there, and others may count frames not written.
     let topology = topology();
     let valid = fixed_atom_fixture(DcdEndian::Little);
-    for (declared, frames_before_error) in [(1_i32, 1_usize), (3_i32, 2_usize)] {
+    for declared in [0_i32, 1, 3] {
         let mut bytes = valid.clone();
         bytes[8..12].copy_from_slice(&declared.to_le_bytes());
 
@@ -628,28 +630,47 @@ fn dcd_declared_frame_count_is_strict_in_sequential_and_indexed_modes() {
         )
         .unwrap();
         let mut destination = FrameBuffer::new(Arc::clone(&topology));
-        for _ in 0..frames_before_error {
-            assert!(sequential.read_next(&mut destination).unwrap());
-        }
-        assert_eq!(
-            codec_kind(&sequential.read_next(&mut destination).unwrap_err()),
-            Some(TrajectoryIoErrorKind::InconsistentMetadata)
+        assert!(
+            sequential.read_next(&mut destination).unwrap(),
+            "NSET {declared}"
+        );
+        assert!(
+            sequential.read_next(&mut destination).unwrap(),
+            "NSET {declared}"
+        );
+        assert!(
+            !sequential.read_next(&mut destination).unwrap(),
+            "NSET {declared}"
         );
 
-        let error = IndexedDcdReader::new(
+        let mut indexed = IndexedDcdReader::new(
             Cursor::new(bytes),
             Arc::clone(&topology),
             TrajectoryOpenOptions::default()
                 .with_limits(TrajectoryIoLimits::default())
                 .with_source_label("declared-indexed.dcd"),
         )
-        .err()
         .unwrap();
-        assert_eq!(
-            codec_kind(&error),
-            Some(TrajectoryIoErrorKind::InconsistentMetadata)
-        );
+        assert_eq!(indexed.frame_count(), Some(2), "NSET {declared}");
+        indexed.read_frame(1, &mut destination).unwrap();
     }
+
+    // A partial final frame is still truncated.
+    let mut partial = valid;
+    partial.truncate(partial.len() - 4);
+    let error = IndexedDcdReader::new(
+        Cursor::new(partial),
+        Arc::clone(&topology),
+        TrajectoryOpenOptions::default()
+            .with_limits(TrajectoryIoLimits::default())
+            .with_source_label("partial.dcd"),
+    )
+    .err()
+    .unwrap();
+    assert_eq!(
+        codec_kind(&error),
+        Some(TrajectoryIoErrorKind::TruncatedRecord)
+    );
 }
 
 #[test]
@@ -796,22 +817,6 @@ fn dcd_ordinary_frames_do_not_require_backward_eof_probe_seeks() {
 fn dcd_truncation_marker_counts_limits_and_publication_are_strict() {
     let topology = topology();
     let valid = fixed_atom_fixture(DcdEndian::Big);
-
-    let mut wrong_count = valid.clone();
-    wrong_count[8..12].copy_from_slice(&3_i32.to_be_bytes());
-    let error = IndexedDcdReader::new(
-        Cursor::new(wrong_count),
-        Arc::clone(&topology),
-        TrajectoryOpenOptions::default()
-            .with_limits(TrajectoryIoLimits::default())
-            .with_source_label("count.dcd"),
-    )
-    .err()
-    .unwrap();
-    assert_eq!(
-        codec_kind(&error),
-        Some(TrajectoryIoErrorKind::InconsistentMetadata)
-    );
 
     let mut bad_marker = valid.clone();
     *bad_marker.last_mut().unwrap() ^= 1;

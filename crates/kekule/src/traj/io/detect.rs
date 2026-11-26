@@ -8,6 +8,7 @@ use crate::traj::{
 };
 
 use super::{codec_context, io_context, TrajectoryIoLimits};
+use crate::io::xyz::atom_line::{element_of_token, parse_atom_line};
 
 /// Explicit selection or bounded automatic trajectory format detection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -284,7 +285,10 @@ fn xyz_signature(prefix: &[u8]) -> bool {
     let Ok(text) = std::str::from_utf8(prefix) else {
         return false;
     };
-    let mut lines = text.lines();
+    // Every terminator (`\r\n`, `\r`, `\n`) ends one line.
+    let mut lines = text
+        .split('\n')
+        .flat_map(|chunk| chunk.strip_suffix('\r').unwrap_or(chunk).split('\r'));
     let Some(count) = lines.next() else {
         return false;
     };
@@ -297,20 +301,7 @@ fn xyz_signature(prefix: &[u8]) -> bool {
     let Some(atom) = lines.next() else {
         return false;
     };
-    let mut fields = atom.split_whitespace();
-    let (Some(symbol), Some(x), Some(y), Some(z), None) = (
-        fields.next(),
-        fields.next(),
-        fields.next(),
-        fields.next(),
-        fields.next(),
-    ) else {
-        return false;
-    };
-    crate::molecule::Element::from_symbol(symbol).is_some()
-        && [x, y, z]
-            .into_iter()
-            .all(|value| value.parse::<f64>().is_ok_and(f64::is_finite))
+    parse_atom_line(atom).is_ok_and(|atom| element_of_token(atom.element).is_some())
 }
 
 pub(super) fn extension_format(path: &Path) -> Option<TrajectoryFormat> {

@@ -122,18 +122,9 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
             .with_counts(atom_count as u64, repeated as u64)
             .with_reason(Reason::RepeatedAtomCountDiffers));
         }
-        let step_raw = i32::from_be_bytes(header[8..12].try_into().expect("step"));
-        let step = u64::try_from(step_raw).map_err(|_| {
-            TrajectoryIoError::codec(
-                TrajectoryIoErrorKind::NegativeOrUnrepresentableStep,
-                TrajectoryIoOperation::ReadHeader,
-                Some(FORMAT),
-            )
-            .with_source_label(source_label)
-            .with_frame(frame_index)
-            .with_byte_offset(start + 8)
-            .with_reason(Reason::Negative(Part::Step))
-        })?;
+        // GROMACS writes the low 32 bits of its 64-bit step, so a step from
+        // 2^31 on reads as a negative signed field.
+        let step = u64::from(u32::from_be_bytes(header[8..12].try_into().expect("step")));
         let time = f64::from(f32::from_be_bytes(header[12..16].try_into().expect("time")));
         if !time.is_finite() {
             return Err(frame_error(
@@ -152,7 +143,7 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
         {
             *value = f64::from(f32::from_be_bytes(*chunk));
         }
-        let cell = decode_cell(box_values, options.cell_policy, source_label, frame_index)?;
+        let cell = decode_cell(box_values, options.zero_box, source_label, frame_index)?;
         let coordinate_scalars = atom_count.checked_mul(3).ok_or_else(|| {
             limit_error(
                 FORMAT,
@@ -1434,7 +1425,7 @@ pub(super) fn decode_checked_triplet(
 
 pub(super) fn decode_cell(
     values: [f64; 9],
-    policy: XtcCellPolicy,
+    policy: ZeroBoxPolicy,
     source_label: &str,
     frame: usize,
 ) -> Result<Option<PeriodicCell>, TrajectoryIoError> {
@@ -1448,36 +1439,12 @@ pub(super) fn decode_cell(
             Reason::BoxNotFinite,
         ));
     }
-    if values.iter().all(|value| *value == 0.0) {
-        return match policy {
-            XtcCellPolicy::ZeroMatrixAsAbsent => Ok(None),
-            XtcCellPolicy::RequirePeriodic => Err(codec_context(
-                TrajectoryIoErrorKind::UnsupportedVariant,
-                TrajectoryIoOperation::ReadFrame,
-                Some(FORMAT),
-                source_label,
-                Reason::BoxZero,
-            )),
-        };
-    }
     let vectors = [
         Vector3::new(values[0], values[1], values[2]),
         Vector3::new(values[3], values[4], values[5]),
         Vector3::new(values[6], values[7], values[8]),
     ];
-    PeriodicCell::new(Quantity::new(vectors, NANOMETER), [true; 3])
-        .map(Some)
-        .map_err(|error| {
-            frame_error(
-                FORMAT,
-                TrajectoryIoErrorKind::InvalidFrame,
-                TrajectoryIoOperation::ReadFrame,
-                source_label,
-                frame,
-                Reason::InvalidPeriodicCell,
-            )
-            .with_source(error)
-        })
+    gromacs_cell(vectors, policy, FORMAT, source_label, frame)
 }
 
 pub(super) fn read_nbytes<R: Read>(

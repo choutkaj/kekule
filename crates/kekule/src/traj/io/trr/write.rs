@@ -202,7 +202,9 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
                 Reason::FrameLacks(Datum::Step, Need::Format(FORMAT)),
             )
         })?;
-        let step = i32::try_from(step).map_err(|_| {
+        // The field holds the step as an unsigned 32-bit number, written as
+        // GROMACS writes its low 32 bits.
+        let step = u32::try_from(step).map(u32::cast_signed).map_err(|_| {
             codec_context(
                 TrajectoryIoErrorKind::NegativeOrUnrepresentableStep,
                 TrajectoryIoOperation::WriteFrame,
@@ -294,7 +296,9 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
             let factor = CANONICAL_LENGTH_UNIT
                 .conversion_factor_to(NANOMETER)
                 .map_err(|error| writer_unit(&self.source_label, UnitOf::Of(Datum::Cell), error))?;
-            Some((cell.vectors().into_value(), factor))
+            let vectors =
+                standard_orientation(cell.vectors().into_value(), FORMAT, &self.source_label)?;
+            Some((vectors, factor))
         } else {
             None
         };
@@ -341,6 +345,7 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
             decode_cell(
                 &self.raw,
                 self.options.precision,
+                ZeroBoxPolicy::Reject,
                 &self.source_label,
                 self.frame_count,
             )

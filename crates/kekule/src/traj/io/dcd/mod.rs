@@ -1,7 +1,11 @@
 //! Strict common-profile CHARMM/NAMD/OpenMM DCD trajectory I/O.
 //!
 //! [`DcdReader`] and [`IndexedDcdReader`] read 32-bit-record `CORD` files in
-//! either byte order, with optional unit cells and fixed atoms. [`DcdWriter`]
+//! either byte order, with optional unit cells and fixed atoms. They read
+//! every complete frame in the file, as VMD and MDAnalysis do, whatever
+//! frame count `NSET` the header declares; an indexed reader's open report
+//! notes a count that differs ([`TrajectoryOpenNote::DcdFrameCount`]).
+//! [`DcdWriter`]
 //! writes canonical all-atom files. DCD stores f32 coordinates in angstrom and
 //! one step per frame on the `ISTART`/`NSAVC` sequence; time is derived from
 //! the header `DELTA` only under an explicit [`DcdTimePolicy`]. The writer
@@ -16,6 +20,8 @@
 //!
 //! The scratch limit bounds the combined capacities of the coordinates, the
 //! record bytes, and the fixed-atom buffers.
+//!
+//! [`TrajectoryOpenNote::DcdFrameCount`]: super::TrajectoryOpenNote::DcdFrameCount
 //!
 //! # Examples
 //!
@@ -80,6 +86,7 @@ use crate::traj::{
 };
 use crate::units::{Quantity, Unit, ANGSTROM, CANONICAL_LENGTH_UNIT, CANONICAL_TIME_UNIT};
 
+use super::cell::standard_orientation;
 use super::codec::{
     frame_error, header_error, limit_error, read_exact, stream_error, validate_atom_count,
     writer_limit,
@@ -93,9 +100,9 @@ use super::metadata::{FieldAvailability, TrajectoryFieldAvailability};
 use super::options::ReadSource;
 use super::TrajectoryWriteOptions;
 use super::{
-    codec_context, frame_offset_context, index_mismatch, io_context, probe_seekable_eof,
-    require_no_partial_frame, require_nonempty_writer, validation_cause, FrameOffsets, FrameStamp,
-    FrameTimingPolicy, IndexBuildControl, TrajectoryIoLimits, TrajectoryOpenOptions,
+    codec_context, frame_offset_context, io_context, probe_seekable_eof, require_no_partial_frame,
+    require_nonempty_writer, validation_cause, FrameOffsets, FrameStamp, FrameTimingPolicy,
+    IndexBuildControl, TrajectoryIoLimits, TrajectoryOpenOptions,
 };
 
 /// The format of this codec's streams.
