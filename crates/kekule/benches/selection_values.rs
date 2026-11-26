@@ -1,20 +1,25 @@
-//! Informational cost of selections with long value lists over a million
-//! atoms, as a viewer's rectangle selection writes them: one object's host
-//! term and thousands of index runs.
+//! Informational cost of selections with long value lists over about a
+//! million atoms, as a viewer's rectangle selection writes them: one
+//! object's host term and thousands of index runs.
+//!
+//! The structure is 656 copies of PDB 9UOH (KRas G12C with GDP, Mg2+ and an
+//! inhibitor, 1,526 atoms) from the test fixtures, appended as separate
+//! chains and molecules: 1,001,056 atoms.
 
 use std::error::Error;
 use std::hint::black_box;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use kekule::mmcif;
 use kekule::parallel::Run;
 use kekule::select::{
     self, HostRequest, HostTerm, HostTermError, HostValue, SelectEvaluateOptions,
     SelectParseOptions, SelectionResolver,
 };
-use kekule::smiles;
-use kekule::topology::{AtomSelection, Topology, TopologyBuilder};
+use kekule::topology::{AtomSelection, Topology};
 
+/// The runs span this many atoms, and the structure has at least as many.
 const ATOMS: usize = 1_000_000;
 const RUNS: usize = 5_000;
 /// At most this many passes, and at least three.
@@ -42,12 +47,14 @@ impl SelectionResolver for Objects {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
+    let topology = topology()?;
     println!(
-        "informational only; target={}-{}; atoms={ATOMS}; runs={RUNS}; median of 3 to {PASSES} passes within {BUDGET:?}",
+        "informational only; target={}-{}; atoms={}; instances={}; runs={RUNS}; median of 3 to {PASSES} passes within {BUDGET:?}",
         std::env::consts::OS,
         std::env::consts::ARCH,
+        topology.atom_count(),
+        topology.instance_count(),
     );
-    let topology = topology()?;
     // Runs of 100 atoms, 200 apart.
     let step = ATOMS / RUNS;
     let values = (0..RUNS)
@@ -99,13 +106,15 @@ fn main() -> Result<(), Box<dyn Error>> {
 }
 
 fn topology() -> Result<Arc<Topology>, Box<dyn Error>> {
-    let molecule = smiles::to_molecules("C")?.pop().expect("one molecule");
-    let mut builder = TopologyBuilder::new();
-    let definition = builder.add_molecule_definition(molecule)?;
-    for _ in 0..ATOMS {
-        builder.add_instance(definition)?;
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/mmcif/9UOH.cif");
+    let kras = mmcif::parse_str(&std::fs::read_to_string(path)?, Default::default())?
+        .interpret(Default::default())?
+        .into_structure();
+    let mut editor = kras.to_editor();
+    for _ in 1..ATOMS.div_ceil(kras.atom_count()) {
+        editor.append_structure(&kras)?;
     }
-    Ok(Arc::new(builder.build()?))
+    Ok(editor.finish()?.shared_topology())
 }
 
 fn median(mut pass: impl FnMut() -> Duration) -> Duration {
