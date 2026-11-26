@@ -944,3 +944,31 @@ fn streamed_limits_count_the_input_read_so_far() {
     assert_eq!(error.kind(), DiagnosticKind::Io);
     assert_eq!(error.location().map(|at| at.line()), Some(2));
 }
+
+/// A reader of `x` without end, and no line end.
+struct Endless;
+
+impl std::io::Read for Endless {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        buffer.fill(b'x');
+        Ok(buffer.len())
+    }
+}
+
+#[test]
+fn an_endless_line_ends_at_the_input_limit() {
+    let options = xyz::XyzParseOptions::default().with_max_input_bytes(64);
+    let error = xyz::frames(Endless, options).next().unwrap().unwrap_err();
+    assert_eq!(error.kind(), DiagnosticKind::Limit);
+    assert_eq!(error.location().map(|at| at.line()), Some(1));
+
+    // After a complete frame, the line that runs on fails and ends the stream.
+    let first = "1\n\nHe 0 0 0\n";
+    let reader = std::io::Read::chain(first.as_bytes(), Endless);
+    let mut frames = xyz::frames(reader, options);
+    assert!(frames.next().unwrap().is_ok());
+    let error = frames.next().unwrap().unwrap_err();
+    assert_eq!(error.kind(), DiagnosticKind::Limit);
+    assert_eq!(error.location().map(|at| at.line()), Some(4));
+    assert!(frames.next().is_none());
+}

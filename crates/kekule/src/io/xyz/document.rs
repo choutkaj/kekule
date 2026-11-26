@@ -393,9 +393,12 @@ struct ReadLines<R> {
 
 impl<R: Read> Lines for ReadLines<R> {
     fn next_line(&mut self) -> Result<Option<(usize, &str)>, FormatError> {
-        // A line longer than the bytes left is kept only up to them.
+        // A line is read no further than the bytes left and one more, which
+        // tells that the input exceeds them, so an endless line ends too.
         let room = self.max_bytes.saturating_sub(self.reader.consumed);
-        let read = read_line(&mut self.reader, &mut self.line, room).map_err(|error| {
+        let bound = u64::try_from(room).map_or(u64::MAX, |room| room.saturating_add(1));
+        let mut bounded = (&mut self.reader).take(bound);
+        let read = read_line(&mut bounded, &mut self.line, room).map_err(|error| {
             xyz_parse_error(DiagnosticKind::Io, self.number + 1, "").with_source(error)
         })?;
         if read.is_none() {
