@@ -142,6 +142,36 @@ impl Bits {
         self.trim();
     }
 
+    /// Sets the indices of `range`, a word at a time.
+    fn set_range(&mut self, range: Range<usize>) {
+        let (start, end) = (range.start, range.end.min(self.len));
+        if start >= end {
+            return;
+        }
+        let (first, last) = (start / 64, (end - 1) / 64);
+        let low = !0u64 << (start % 64);
+        let high = !0u64 >> (63 - (end - 1) % 64);
+        if first == last {
+            self.words[first] |= low & high;
+            return;
+        }
+        self.words[first] |= low;
+        for word in &mut self.words[first + 1..last] {
+            *word = !0;
+        }
+        self.words[last] |= high;
+    }
+
+    fn is_empty(&self) -> bool {
+        self.words.iter().all(|&word| word == 0)
+    }
+
+    fn is_full(&self) -> bool {
+        let whole = self.len / 64;
+        self.words[..whole].iter().all(|&word| word == !0)
+            && (self.len.is_multiple_of(64) || self.words[whole] == (1u64 << (self.len % 64)) - 1)
+    }
+
     /// The bits of a selection; a selection of every atom fills whole
     /// words without reading its indices.
     fn of_selection(selection: &AtomSelection) -> Self {
@@ -288,17 +318,30 @@ impl<'a> Evaluator<'a> {
             NodeKind::None => Bits::empty(len),
             NodeKind::And(operands) => {
                 let mut bits = Bits::full(len);
+                let mut empty = false;
                 for operand in operands {
+                    // Nothing left to remove: an operand that cannot fail
+                    // changes nothing.
+                    if empty && cannot_fail(operand) {
+                        continue;
+                    }
                     let other = self.node(operand)?;
                     bits.and(&other);
+                    empty = empty || bits.is_empty();
                 }
                 bits
             }
             NodeKind::Or(operands) => {
                 let mut bits = Bits::empty(len);
+                let mut full = false;
                 for operand in operands {
+                    // Nothing left to add.
+                    if full && cannot_fail(operand) {
+                        continue;
+                    }
                     let other = self.node(operand)?;
                     bits.or(&other);
+                    full = full || bits.is_full();
                 }
                 bits
             }
@@ -327,17 +370,18 @@ impl<'a> Evaluator<'a> {
                 self.bonded(&inner)
             }
             NodeKind::Flag(flag) => self.flag(node, *flag)?,
-            NodeKind::Match { field, values } => self.field(node, field, |value, literals| {
-                values.iter().any(|candidate| match candidate {
-                    ValueMatch::Exact(literal) => {
-                        literals(literal).is_some_and(|ordering| ordering == Ordering::Equal)
-                    }
-                    ValueMatch::Range(low, high) => {
-                        literals(low).is_some_and(|ordering| ordering != Ordering::Less)
-                            && literals(high).is_some_and(|ordering| ordering != Ordering::Greater)
-                    }
-                }) && value
-            })?,
+            NodeKind::Match { field, values } => match ValueRanges::new(values) {
+                Some(ranges) if matches!(field, Field::Index) => ranges.indices(len),
+                Some(ranges) => self.field(node, field, |present, literals| {
+                    present && ranges.contains(literals)
+                })?,
+                None => self.field(node, field, |present, literals| {
+                    values
+                        .iter()
+                        .any(|candidate| value_matches(candidate, literals))
+                        && present
+                })?,
+            },
             NodeKind::Compare { field, op, value } => {
                 self.field(node, field, |present, literals| {
                     present && literals(value).is_some_and(|ordering| op.holds(ordering))
@@ -1110,6 +1154,140 @@ fn compare(value: Value<'_>, literal: &Literal, factor: f64) -> Option<Ordering>
                 Ordering::Less
             })
         }
+        _ => None,
+    }
+}
+
+/// Whether the value `compare` orders matches one value of a list.
+fn value_matches(candidate: &ValueMatch, compare: Compare<'_>) -> bool {
+    match candidate {
+        ValueMatch::Exact(literal) => {
+            compare(literal).is_some_and(|ordering| ordering == Ordering::Equal)
+        }
+        ValueMatch::Range(low, high) => {
+            compare(low).is_some_and(|ordering| ordering != Ordering::Less)
+                && compare(high).is_some_and(|ordering| ordering != Ordering::Greater)
+        }
+    }
+}
+
+/// Whether evaluating `node` cannot fail, other than by cancellation, so
+/// skipping it where its atoms cannot change the result changes nothing.
+fn cannot_fail(node: &Node) -> bool {
+    match &node.kind {
+        NodeKind::All | NodeKind::None => true,
+        NodeKind::And(operands) | NodeKind::Or(operands) => operands.iter().all(cannot_fail),
+        NodeKind::Not(inner) | NodeKind::Expand { inner, .. } | NodeKind::Bonded(inner) => {
+            cannot_fail(inner)
+        }
+        // Chemistry flags need perception.
+        NodeKind::Flag(flag) => !matches!(flag, Flag::Aromatic | Flag::Ring),
+        // Properties need one scope and a type; site values need a structure.
+        NodeKind::Match { field, .. } | NodeKind::Compare { field, .. } => !matches!(
+            field,
+            Field::Property(_) | Field::BFactor | Field::Occupancy
+        ),
+        NodeKind::Within { .. }
+        | NodeKind::PropertyTrue(_)
+        | NodeKind::Smarts(_)
+        | NodeKind::Host(..) => false,
+    }
+}
+
+/// A value list of a field whose literals are totally ordered, as sorted,
+/// disjoint, inclusive ranges, so an entity's value is found by binary
+/// search rather than tried against every value.
+#[derive(Debug)]
+struct ValueRanges<'n> {
+    ranges: Vec<(&'n Literal, &'n Literal)>,
+}
+
+impl<'n> ValueRanges<'n> {
+    /// The ranges of `values`, or `None` when their literals have no total
+    /// order: classes, and properties, whose type each cell decides.
+    fn new(values: &'n [ValueMatch]) -> Option<Self> {
+        let mut ranges = values
+            .iter()
+            .map(|value| match value {
+                ValueMatch::Exact(literal) => (literal, literal),
+                ValueMatch::Range(low, high) => (low, high),
+            })
+            .collect::<Vec<_>>();
+        let (first, _) = ranges.first()?;
+        if ranges
+            .iter()
+            .any(|&(low, high)| order(first, low).is_none() || order(first, high).is_none())
+        {
+            return None;
+        }
+        let order = |a: &Literal, b: &Literal| order(a, b).expect("literals of one order");
+        // A range whose low end lies above its high end matches nothing.
+        ranges.retain(|&(low, high)| order(low, high) != Ordering::Greater);
+        ranges.sort_by(|a, b| order(a.0, b.0));
+        let mut merged = Vec::<(&Literal, &Literal)>::with_capacity(ranges.len());
+        for (low, high) in ranges {
+            match merged.last_mut() {
+                Some((_, end)) if order(low, end) != Ordering::Greater => {
+                    if order(high, end) == Ordering::Greater {
+                        *end = high;
+                    }
+                }
+                _ => merged.push((low, high)),
+            }
+        }
+        Some(Self { ranges: merged })
+    }
+
+    /// Whether the value `compare` orders lies in a range.
+    fn contains(&self, compare: Compare<'_>) -> bool {
+        // The first range whose high end is not below the value.
+        let at = self
+            .ranges
+            .partition_point(|&(_, high)| compare(high) == Some(Ordering::Greater));
+        self.ranges.get(at).is_some_and(|&(low, high)| {
+            compare(low).is_some_and(|ordering| ordering != Ordering::Less)
+                && compare(high).is_some_and(|ordering| ordering != Ordering::Greater)
+        })
+    }
+
+    /// The dense atoms below `len` in ranges of integer indices.
+    fn indices(&self, len: usize) -> Bits {
+        let mut bits = Bits::empty(len);
+        for &(low, high) in &self.ranges {
+            let (&Literal::Integer(low), &Literal::Integer(high)) = (low, high) else {
+                continue;
+            };
+            if high < 0 {
+                continue;
+            }
+            let start = usize::try_from(low.max(0)).unwrap_or(usize::MAX);
+            let end = usize::try_from(high).map_or(usize::MAX, |high| high.saturating_add(1));
+            bits.set_range(start..end);
+        }
+        bits
+    }
+}
+
+/// The order of two literals of a totally ordered kind, the order that
+/// [`compare`] places values in; `None` for other kinds or mixed kinds.
+fn order(a: &Literal, b: &Literal) -> Option<Ordering> {
+    match (a, b) {
+        (Literal::Integer(a), Literal::Integer(b)) => Some(a.cmp(b)),
+        (Literal::Text(a), Literal::Text(b)) => Some(a.cmp(b)),
+        (Literal::Element(a), Literal::Element(b)) => Some(a.cmp(b)),
+        (
+            Literal::ResId {
+                number: a,
+                insertion_code: a_code,
+            },
+            Literal::ResId {
+                number: b,
+                insertion_code: b_code,
+            },
+        ) => Some(
+            a.cmp(b)
+                .then_with(|| a_code.as_deref().cmp(&b_code.as_deref())),
+        ),
         _ => None,
     }
 }

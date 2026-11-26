@@ -1022,8 +1022,10 @@ sets `UnrepresentablePolicy::Omit` for that kind of content, each kind with its
 own policy, and the writer's `WriteReport` names every omission. The PDB and
 mmCIF writers treat represented chemistry the same way: fixed
 implicit-hydrogen counts have one policy, and stereo, radicals, atom maps,
-isotopes the format cannot name, and bonds its connectivity records cannot
-state have another, the chemistry policy. Each writer
+isotopes the format cannot name, bonds its connectivity records cannot
+state, and atoms the structure leaves unbonded that a reader bonds from
+distance, a standard polymer link or a disulfide within bonding distance,
+have another, the chemistry policy. Each writer
 states what its format carries as one constant, and one shared check builds
 both the error and the report entries, in one order: cell; place on an order;
 time and step; velocities and forces; occupancies and B factors; properties.

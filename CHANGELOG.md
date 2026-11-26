@@ -404,6 +404,11 @@ the main branch migrates by the table under "From the SampleSet API".
   and reader failure types live in `traj`.
 - `measure::within` searches large selections through a spatial grid instead
   of comparing every pair.
+- Selection value lists of integers, names, elements, and residue numbers
+  match by binary search over their merged ranges, and `index` lists fill
+  whole words; `and` and `or` skip operands that can no longer change the
+  result and cannot fail. A pick of 5,000 index runs over a million atoms
+  takes about a millisecond instead of tens of seconds.
 - **Breaking:** `Model` becomes `Structure`, with `StructureBuilder`,
   `StructureEditor` (`append_structure`), `StructureView`, `AsStructureView`,
   `StructureAtomView`, `StructureError`, and the other `Model*` items.
@@ -695,6 +700,12 @@ the main branch migrates by the table under "From the SampleSet API".
   neutral lysine `NZ` without hydrogens, fails under strict chemistry
   (`ChargeNotReadBack`) and is otherwise reported as
   `WriteOmission::FormalCharges`, which names the first such atom.
+- **Breaking:** The PDB and mmCIF writers check for atoms the structure
+  leaves unbonded that their reader bonds from distance: a standard polymer
+  link or a disulfide whose atoms lie within bonding distance, as after an
+  edit deletes the bond. Such a pair fails under strict chemistry
+  (`InferredBond`) and is otherwise reported as
+  `WriteOmission::InferredBonds`.
 - **Breaking:** A PDB atom name starting in column 14 reads a one-letter
   element only in an entry that follows the alignment convention, where some
   short name starts in column 13 with a two-letter element. In an entry that
@@ -1162,6 +1173,9 @@ the main branch migrates by the table under "From the SampleSet API".
 - A TRR file whose frames GROMACS wrote without positions, or with the box of
   zeros of a run without periodic boundaries, opens under the new options.
   It failed as a whole.
+- Appending structures one after another to a `StructureEditor` no longer
+  takes time quadratic in the draft's size: an append whose property columns
+  cannot clash with the draft's runs in place, without a copy.
 
 ### From the SampleSet API
 

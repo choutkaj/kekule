@@ -245,19 +245,24 @@ impl BuiltMolecule {
             ..
         } = self;
         // Metal coordination records between residues, by the atoms they name.
-        let coordination = provenance
-            .atoms
-            .iter()
-            .filter_map(|atom| {
-                coordinated
-                    .get(&super::atom_site::atom_key(
-                        &atom.asym_id,
-                        &atom.residue_key,
-                        &atom.atom_name,
-                    ))
-                    .map(|&records| (atom.atom, records))
-            })
-            .collect::<BTreeMap<_, _>>();
+        // Most files have none, and keying every atom costs a string each.
+        let coordination = if coordinated.is_empty() {
+            BTreeMap::new()
+        } else {
+            provenance
+                .atoms
+                .iter()
+                .filter_map(|atom| {
+                    coordinated
+                        .get(&super::atom_site::atom_key(
+                            &atom.asym_id,
+                            &atom.residue_key,
+                            &atom.atom_name,
+                        ))
+                        .map(|&records| (atom.atom, records))
+                })
+                .collect::<BTreeMap<_, _>>()
+        };
         let atoms = provenance
             .atoms
             .iter()
