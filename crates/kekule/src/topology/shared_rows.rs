@@ -24,6 +24,17 @@ impl<T> SharedRow<T> {
             index: 0,
         }
     }
+
+    /// The rows of one new table of `values`, in order. Publication adopts a
+    /// large table whole instead of copying its rows one at a time.
+    pub(crate) fn table(values: Vec<T>) -> impl Iterator<Item = Self> {
+        let table = Arc::new(values);
+        let rows = u32::try_from(table.len()).expect("rows fit keys");
+        (0..rows).map(move |index| Self {
+            table: Arc::clone(&table),
+            index,
+        })
+    }
 }
 
 impl<T> Clone for SharedRow<T> {

@@ -126,48 +126,40 @@ impl TopologyEditor {
                 renamed.insert(
                     id,
                     (
-                        (chain.label_id().to_owned(), label.clone()),
-                        (chain.author_id().map(str::to_owned), author.clone()),
+                        (chain.label_id(), chain.author_id()),
+                        (label.clone(), author.clone()),
                     ),
                 );
             }
             let handle = self.add_chain(label, author)?;
             mapping.chains.insert(id, handle);
         }
+        // Residues and sites share the source's label and metadata rows.
+        let hierarchy = source.hierarchy();
         for residue in source.residues() {
-            let handle = self.add_residue(
+            let handle = self.insert_residue(
                 mapping.chains[&residue.chain().id()],
-                residue.name(),
-                residue.label_seq_id(),
-                residue.author_seq_id().map(str::to_owned),
-                residue.insertion_code().map(str::to_owned),
-            )?;
-            self.set_residue_component_ids(
-                handle,
-                residue.label_comp_id().map(str::to_owned),
-                residue.author_comp_id().map(str::to_owned),
+                hierarchy.shared_residue_labels(residue.id()),
             )?;
             mapping.residues.insert(residue.id(), handle);
         }
+        let mut retargeted = Vec::new();
         for site in source.atom_sites() {
-            let mut metadata = site.metadata().clone();
-            if let Some(((old_label, new_label), (old_author, new_author))) =
-                renamed.get(&site.residue().chain().id())
-            {
-                if metadata.label_asym_id.as_ref() == Some(old_label) {
-                    metadata.label_asym_id = Some(new_label.clone());
-                }
-                if metadata.auth_asym_id.is_some() && metadata.auth_asym_id == *old_author {
-                    metadata.auth_asym_id = new_author.clone();
-                }
-            }
-            let handle = self.add_atom_site(
+            let handle = self.insert_atom_site(
                 mapping.residues[&site.residue().id()],
                 mapping.atoms[&site.atom().id()],
-                metadata,
+                hierarchy.shared_site_metadata(site.id()),
             )?;
+            if let Some((old, (label, author))) = renamed.get(&site.residue().chain().id()) {
+                if let Some(metadata) =
+                    retargeted_site_ids(site.metadata(), *old, (label, author.as_deref()))
+                {
+                    retargeted.push((handle, metadata));
+                }
+            }
             mapping.sites.insert(site.id(), handle);
         }
+        self.set_site_rows(retargeted);
         // Insertion invalidates classification while the residue is incomplete.
         for residue in source.residues() {
             let assignment = residue.class_assignment();

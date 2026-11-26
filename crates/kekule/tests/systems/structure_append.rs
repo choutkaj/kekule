@@ -1173,3 +1173,64 @@ fn a_class_edit_of_one_water_leaves_the_others() {
         .all(|water| water.definition_id() == others[0].definition_id()));
     assert_ne!(ion.definition_id(), others[0].definition_id());
 }
+
+/// Appended copies whose chains are renamed keep every residue label and
+/// site metadata of their source, except that a site's chain identifiers
+/// take the new ones where they named the old ones.
+#[test]
+fn renamed_copies_keep_their_labels_and_site_metadata() {
+    let kras = kras();
+    // The first site names a chain of its own, which renaming keeps.
+    let mut editor = kras.to_editor();
+    let odd = kras.topology().atom_sites().next().unwrap();
+    let handle = editor.topology().atom_site_handle(odd.id()).unwrap();
+    let metadata = odd.metadata().clone().with_label_asym_id(Some("Z".into()));
+    editor.set_atom_site_metadata(handle, metadata).unwrap();
+    let source = editor.finish().unwrap();
+
+    let copies = 3;
+    let mut editor = StructureEditor::new();
+    for copy in 0..copies {
+        let appended = editor.append_structure(&source).unwrap();
+        for chain in source.topology().chains().filter(|_| copy > 0) {
+            editor
+                .set_chain_identifiers(
+                    appended.chain(chain.id()).unwrap(),
+                    format!("{}{copy}", chain.label_id()),
+                    chain.author_id().map(|author| format!("{author}{copy}")),
+                )
+                .unwrap();
+        }
+    }
+    let merged = editor.finish().unwrap();
+    let sites = source.topology().atom_sites().collect::<Vec<_>>();
+    assert_eq!(merged.topology().atom_sites().len(), copies * sites.len());
+    for (index, site) in merged.topology().atom_sites().enumerate() {
+        let (copy, original) = (index / sites.len(), sites[index % sites.len()]);
+        let (residue, from) = (site.residue(), original.residue());
+        assert_eq!(residue.name(), from.name());
+        assert_eq!(residue.label_comp_id(), from.label_comp_id());
+        assert_eq!(residue.author_comp_id(), from.author_comp_id());
+        assert_eq!(residue.label_seq_id(), from.label_seq_id());
+        assert_eq!(residue.author_seq_id(), from.author_seq_id());
+        assert_eq!(residue.insertion_code(), from.insertion_code());
+        let chain = from.chain();
+        let mut expected = original.metadata().clone();
+        if copy > 0 {
+            if expected.label_asym_id() == Some(chain.label_id()) {
+                expected = expected.with_label_asym_id(Some(format!("{}{copy}", chain.label_id())));
+            }
+            if expected.auth_asym_id().is_some() && expected.auth_asym_id() == chain.author_id() {
+                let author = chain.author_id().map(|author| format!("{author}{copy}"));
+                expected = expected.with_auth_asym_id(author);
+            }
+        }
+        assert_eq!(site.metadata(), &expected, "site {index}");
+    }
+    let first = merged.topology().atom_sites().nth(sites.len()).unwrap();
+    assert_eq!(first.metadata().label_asym_id(), Some("Z"));
+    assert_ne!(
+        first.metadata().auth_asym_id(),
+        odd.metadata().auth_asym_id()
+    );
+}
