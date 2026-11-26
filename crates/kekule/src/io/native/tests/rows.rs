@@ -1,20 +1,29 @@
 //! A decoded hierarchy keeps each distinct row of residue labels and of
 //! site metadata once, and every node reads the labels it was written with.
+//! No truncation or corruption of a stored hierarchy panics.
 
 use std::collections::HashSet;
 
+use super::reports::{read, resealed};
+use crate::diagnostics::Format;
+use crate::math::Point3;
 use crate::molecule::AtomId;
 use crate::native::{self, NativeReadOptions, NativeWriteOptions};
+use crate::properties::{PropertyKey, PropertyValue};
 use crate::smiles;
-use crate::topology::{AtomSiteMetadata, InstanceAtomId, Topology, TopologyBuilder};
+use crate::structure::{Positions, Structure};
+use crate::topology::{
+    AtomSiteId, AtomSiteMetadata, InstanceAtomId, ResidueId, Topology, TopologyBuilder,
+};
+use crate::units::{Quantity, DIMENSIONLESS, NANOMETER};
 
-/// Waters in two chains whose residues and sites repeat labels, with
+/// `count` waters in two chains whose residues and sites repeat labels, with
 /// absent, empty and non-ASCII strings side by side.
-fn waters() -> Topology {
+fn waters(count: usize) -> Topology {
     let water = smiles::to_molecules("[H]O[H]").unwrap().remove(0);
     let mut builder = TopologyBuilder::new();
     let definition = builder.add_molecule_definition(water).unwrap();
-    let instances = (0..12)
+    let instances = (0..count)
         .map(|_| builder.add_instance(definition).unwrap())
         .collect::<Vec<_>>();
     let hierarchy = builder.hierarchy_mut();
@@ -60,7 +69,7 @@ fn waters() -> Topology {
 
 #[test]
 fn decoded_nodes_share_rows_of_equal_labels() {
-    let source = waters();
+    let source = waters(12);
     let bytes = native::write(&source, NativeWriteOptions::default()).unwrap();
     let decoded = native::read(bytes.as_slice(), NativeReadOptions::default())
         .unwrap()
@@ -99,4 +108,67 @@ fn decoded_nodes_share_rows_of_equal_labels() {
     assert_eq!(hierarchy.metadata_rows().len(), distinct_metadata.len());
     assert!(distinct_labels.len() < written.residue_ids().len());
     assert!(distinct_metadata.len() < written.atom_site_ids().len());
+}
+
+/// Four [`waters`] with integer and real values on some residues and sites,
+/// in a structure with occupancies on some atoms.
+fn waters_structure() -> Structure {
+    let mut topology = waters(4);
+    let mut properties = topology.properties_mut();
+    properties
+        .residues_mut()
+        .set_value(
+            PropertyKey::new("count").unwrap(),
+            ResidueId::new(1),
+            Some(PropertyValue::Int(-3)),
+        )
+        .unwrap();
+    properties
+        .atom_sites_mut()
+        .set_value(
+            PropertyKey::new("charge").unwrap(),
+            AtomSiteId::new(4),
+            Some(PropertyValue::Real {
+                value: 0.5,
+                unit: DIMENSIONLESS,
+            }),
+        )
+        .unwrap();
+    let atoms = topology.atom_count();
+    let points = (0..atoms)
+        .map(|index| Point3::new(index as f64 * 0.1, 0.0, 0.0))
+        .collect::<Vec<_>>();
+    let positions = Positions::new(Quantity::new(points, NANOMETER)).unwrap();
+    let mut structure = Structure::new(topology, positions).unwrap();
+    structure
+        .geometry_mut()
+        .set_occupancies(Some(
+            (0..atoms)
+                .map(|index| (index % 2 == 0).then_some(0.5))
+                .collect(),
+        ))
+        .unwrap();
+    structure
+}
+
+#[test]
+fn every_truncation_and_resealed_corruption_of_a_hierarchy_fails_cleanly() {
+    let bytes = native::write(&waters_structure(), NativeWriteOptions::default()).unwrap();
+    for len in 0..bytes.len() {
+        let error = read(&bytes[..len]).unwrap_err();
+        assert_eq!(error.format(), Format::Native);
+    }
+    // With the checksum resealed, corrupt lengths, keys, and labels reach the
+    // column readers and the hierarchy; any result but a panic is clean.
+    for index in 0..bytes.len() {
+        for flip in [0x01, 0x80, 0xFF] {
+            let mut corrupted = bytes.clone();
+            corrupted[index] ^= flip;
+            assert!(
+                read(&corrupted).is_err(),
+                "corrupting byte {index} with {flip:#04x} went unnoticed"
+            );
+            let _ = read(&resealed(corrupted));
+        }
+    }
 }
