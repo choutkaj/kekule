@@ -292,22 +292,17 @@ impl<C: IndexedCodec> IndexedReader<C> {
             if let Some(pending) = self.codec.before_frame(indexed, growing)? {
                 return Ok(pending);
             }
-            if let Some(limit) = projected_index_limit(indexed, &self.codec.source().limits) {
-                return self.codec.index_full(indexed, growing, limit, control);
-            }
             let offset = self.codec.frame_offset()?;
+            if let Some(limit) = projected_index_limit(indexed, &self.codec.source().limits) {
+                return match self.codec.index_full(indexed, growing, limit, control) {
+                    Ok(pending) => Ok(pending),
+                    Err(error) => self.unfinished_tail(error, growing, offset),
+                };
+            }
             let stamp = match self.codec.index_next(indexed, offset, growing, control) {
                 Ok(Some(stamp)) => stamp,
                 Ok(None) => return Ok(0),
-                Err(error) if growing && error.kind() == TrajectoryIoErrorKind::TruncatedRecord => {
-                    let file_end = seek(
-                        &mut self.codec,
-                        SeekFrom::End(0),
-                        TrajectoryIoOperation::Index,
-                    )?;
-                    return Ok(file_end.saturating_sub(offset));
-                }
-                Err(error) => return Err(error),
+                Err(error) => return self.unfinished_tail(error, growing, offset),
             };
             let end = position(&mut self.codec, TrajectoryIoOperation::Index)?;
             Arc::make_mut(&mut self.offsets).push(
@@ -320,6 +315,25 @@ impl<C: IndexedCodec> IndexedReader<C> {
             )?;
             control.checkpoint(self.offsets.len(), end, C::FORMAT, &label)?;
         }
+    }
+
+    /// The bytes pending from `offset` in a growing stream that `error`
+    /// found unfinished there. Any other error fails the scan.
+    fn unfinished_tail(
+        &mut self,
+        error: TrajectoryIoError,
+        growing: bool,
+        offset: u64,
+    ) -> Result<u64, TrajectoryIoError> {
+        if !growing || error.kind() != TrajectoryIoErrorKind::TruncatedRecord {
+            return Err(error);
+        }
+        let file_end = seek(
+            &mut self.codec,
+            SeekFrom::End(0),
+            TrajectoryIoOperation::Index,
+        )?;
+        Ok(file_end.saturating_sub(offset))
     }
 
     /// Decodes and verifies frame `index` into the codec reader's buffers.

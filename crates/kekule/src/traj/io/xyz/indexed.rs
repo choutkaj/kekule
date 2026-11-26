@@ -169,9 +169,11 @@ impl<R: BufRead + Seek> IndexedCodec for XyzReader<R> {
         _indexed: usize,
         _growing: bool,
         limit: LimitExceeded,
-        _control: &IndexBuildControl<'_>,
+        control: &IndexBuildControl<'_>,
     ) -> Result<u64, TrajectoryIoError> {
-        if self.at_end(TrajectoryIoOperation::Index)? {
+        let offset = self.frame_offset()?;
+        let scan = ScanPoll { control, offset };
+        if self.at_end(TrajectoryIoOperation::Index, Some(scan))? {
             return Ok(0);
         }
         let label = &self.source.label;
@@ -188,11 +190,11 @@ impl<R: BufRead + Seek> IndexedCodec for XyzReader<R> {
     fn index_next(
         &mut self,
         _indexed: usize,
-        _offset: u64,
+        offset: u64,
         _growing: bool,
-        _control: &IndexBuildControl<'_>,
+        control: &IndexBuildControl<'_>,
     ) -> Result<Option<FrameStamp>, TrajectoryIoError> {
-        if !self.parse_next(false)? {
+        if !self.parse_next(false, Some(ScanPoll { control, offset }))? {
             return Ok(None);
         }
         if self.extra_columns {
@@ -212,7 +214,8 @@ impl<R: BufRead + Seek> IndexedCodec for XyzReader<R> {
     }
 
     fn read_frame(&mut self) -> Result<Option<()>, TrajectoryIoError> {
-        self.parse_next(true).map(|parsed| parsed.then_some(()))
+        self.parse_next(true, None)
+            .map(|parsed| parsed.then_some(()))
     }
 
     fn frame_context(error: TrajectoryIoError, _frame: usize, _offset: u64) -> TrajectoryIoError {

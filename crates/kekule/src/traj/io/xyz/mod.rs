@@ -94,6 +94,7 @@ mod read;
 mod write;
 
 pub use indexed::IndexedXyzReader;
+use read::ScanPoll;
 pub use read::XyzReader;
 pub use write::XyzWriter;
 

@@ -1304,6 +1304,36 @@ fn a_cancelled_trr_scan_stops_in_frames_without_positions() {
 }
 
 #[test]
+fn a_growing_trr_with_a_full_index_keeps_an_unfinished_tail_pending() {
+    let topology = topology();
+    let complete = raw_frame(0, None, true, true);
+    let tail = raw_frame(5, None, false, true);
+    let options = skipping_options()
+        .with_growing(true)
+        .with_limits(TrajectoryIoLimits::default().with_max_index_entries(1));
+    let path = std::env::temp_dir().join(format!(
+        "kekule-trr-growing-full-{}.trr",
+        std::process::id()
+    ));
+    // The tail ends inside its header, then inside its velocities.
+    let mut opened = Vec::new();
+    for cut in [8, tail.len() - 4] {
+        let mut bytes = complete.clone();
+        bytes.extend(&tail[..cut]);
+        fs::write(&path, &bytes).unwrap();
+        let reader = open_indexed_trajectory(&path, Arc::clone(&topology), options.clone());
+        opened.push((
+            cut,
+            reader.map(|reader| (reader.frame_count(), reader.pending_byte_count())),
+        ));
+    }
+    fs::remove_file(&path).unwrap();
+    for (cut, opened) in opened {
+        assert_eq!(opened.unwrap(), (Some(1), cut as u64), "{cut}");
+    }
+}
+
+#[test]
 fn trr_steps_read_as_the_unsigned_low_32_bits_gromacs_writes() {
     let topology = topology();
     let mut bytes = raw_frame(i32::MAX, None, true, false);

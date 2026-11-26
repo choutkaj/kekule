@@ -94,14 +94,21 @@ impl<R: BufRead> XyzReader<R> {
         self.topology.as_ref()
     }
 
-    pub(super) fn parse_next(&mut self, retain_positions: bool) -> Result<bool, TrajectoryIoError> {
+    /// Reads the next frame, or returns `false` at the end of the stream. A
+    /// scan passes its control and the offset the frame starts at, which
+    /// the blank lines after the last frame poll.
+    pub(super) fn parse_next(
+        &mut self,
+        retain_positions: bool,
+        scan: Option<ScanPoll<'_, '_>>,
+    ) -> Result<bool, TrajectoryIoError> {
         let operation = if self.frame_cursor == 0 {
             TrajectoryIoOperation::ReadHeader
         } else {
             TrajectoryIoOperation::ReadFrame
         };
         if self.frame_cursor >= self.source.limits.max_frames() {
-            if self.at_end(operation)? {
+            if self.at_end(operation, scan)? {
                 return Ok(false);
             }
             return Err(frame_error(
@@ -138,7 +145,7 @@ impl<R: BufRead> XyzReader<R> {
         };
         if count_line.trim().is_empty() {
             // Blank lines may only trail the last frame.
-            self.read_blank_tail(operation)?;
+            self.read_blank_tail(operation, scan.map(|scan| scan.after(consumed)))?;
             return Ok(false);
         }
         let mut frame_bytes = checked_frame_add(
@@ -334,10 +341,11 @@ impl<R: BufRead> XyzReader<R> {
 
     /// Whether the stream holds no frame after the last one read: it ends,
     /// or holds only blank lines. A line that starts with no whitespace
-    /// starts a frame and is not consumed.
+    /// starts a frame and is not consumed. A scan's blank lines poll `scan`.
     pub(super) fn at_end(
         &mut self,
         operation: TrajectoryIoOperation,
+        scan: Option<ScanPoll<'_, '_>>,
     ) -> Result<bool, TrajectoryIoError> {
         let next = loop {
             match self.reader.fill_buf() {
@@ -361,7 +369,7 @@ impl<R: BufRead> XyzReader<R> {
         }
         // An atom-count line may begin with spaces; reading it tells.
         let position_bytes = filled_bytes(&self.positions, self.topology().atom_count());
-        let Some((line, _)) = read_line(
+        let Some((line, consumed)) = read_line(
             &mut self.reader,
             &mut self.line,
             self.source.limits.max_text_line_bytes(),
@@ -378,18 +386,20 @@ impl<R: BufRead> XyzReader<R> {
         if !line.trim().is_empty() {
             return Ok(false);
         }
-        self.read_blank_tail(operation)?;
+        self.read_blank_tail(operation, scan.map(|scan| scan.after(consumed)))?;
         Ok(true)
     }
 
     /// Reads the lines after a blank line where a frame would start, which
-    /// must all be blank too.
-    pub(super) fn read_blank_tail(
+    /// must all be blank too. After each line, a scan's control reports
+    /// progress and fails a cancelled scan.
+    fn read_blank_tail(
         &mut self,
         operation: TrajectoryIoOperation,
+        mut scan: Option<ScanPoll<'_, '_>>,
     ) -> Result<(), TrajectoryIoError> {
         let position_bytes = filled_bytes(&self.positions, self.topology().atom_count());
-        while let Some((line, _)) = read_line(
+        while let Some((line, consumed)) = read_line(
             &mut self.reader,
             &mut self.line,
             self.source.limits.max_text_line_bytes(),
@@ -410,6 +420,15 @@ impl<R: BufRead> XyzReader<R> {
                     Reason::ContentAfterBlankLine,
                 ));
             }
+            if let Some(poll) = &mut scan {
+                *poll = poll.after(consumed);
+                poll.control.checkpoint(
+                    self.frame_cursor,
+                    poll.offset,
+                    FORMAT,
+                    &self.source.label,
+                )?;
+            }
         }
         Ok(())
     }
@@ -421,6 +440,26 @@ impl<R: BufRead> XyzReader<R> {
                 self.options.length_unit,
             )))
             .map_err(Into::into)
+    }
+}
+
+/// The control of a scan, which the blank lines after the last frame poll,
+/// and the offset the stream is at.
+#[derive(Clone, Copy)]
+pub(super) struct ScanPoll<'a, 'b> {
+    pub(super) control: &'a IndexBuildControl<'b>,
+    pub(super) offset: u64,
+}
+
+impl ScanPoll<'_, '_> {
+    /// The poll at `consumed` bytes further on.
+    fn after(self, consumed: usize) -> Self {
+        Self {
+            offset: self
+                .offset
+                .saturating_add(u64::try_from(consumed).unwrap_or(u64::MAX)),
+            ..self
+        }
     }
 }
 
@@ -439,7 +478,7 @@ impl<R: BufRead> TrajectoryReader for XyzReader<R> {
                 TrajectoryIoErrorKind::TopologyMismatch,
             ));
         }
-        if !self.parse_next(true)? {
+        if !self.parse_next(true, None)? {
             return Ok(false);
         }
         self.publish(destination)?;
@@ -476,7 +515,7 @@ impl<R: BufRead + Seek> XyzReader<R> {
                 error,
             )
         })?;
-        let result = self.parse_next(false);
+        let result = self.parse_next(false, None);
         self.reader.seek(SeekFrom::Start(start)).map_err(|error| {
             io_context(
                 TrajectoryIoOperation::ReadHeader,

@@ -1,19 +1,22 @@
 use std::io::{self, BufRead, BufReader, Cursor, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use kekule::diagnostics::{
-    LimitExceeded, Resource, UnsupportedContent, WriteOmission, WriteReport,
+    Cancellation, LimitExceeded, Resource, UnsupportedContent, WriteOmission, WriteReport,
 };
 use kekule::math::{PeriodicCell, Point3, Vector3};
+use kekule::parallel::Run;
 use kekule::properties::{PropertyColumn, PropertyKey, PropertyValue};
 use kekule::topology::Topology;
 use kekule::traj::io::xyz::{IndexedXyzReader, XyzReadOptions, XyzReader, XyzWriter};
 use kekule::traj::io::{
-    create_trajectory_writer, detect_trajectory_format, open_indexed_trajectory, open_trajectory,
-    FieldAvailability, FormatDetectionEvidence, RandomAccessCapability, TrajectoryFormatHint,
-    TrajectoryIoLimits, TrajectoryOpenNote, TrajectoryOpenOptions, TrajectoryWriteOptions,
+    create_trajectory_writer, detect_trajectory_format, open_indexed_trajectory,
+    open_indexed_trajectory_with, open_trajectory, FieldAvailability, FormatDetectionEvidence,
+    RandomAccessCapability, TrajectoryFormatHint, TrajectoryIoLimits, TrajectoryOpenNote,
+    TrajectoryOpenOptions, TrajectoryWriteOptions,
 };
 use kekule::traj::{
     FrameBuffer, FrameData, SeekableTrajectoryReader, TrajectoryFormat, TrajectoryIoError,
@@ -1244,4 +1247,47 @@ fn a_growing_xyz_line_ending_in_cr_waits_for_its_lf() {
         TrajectoryIoErrorKind::Incomplete
     );
     assert_eq!(complete.unwrap().frame_count(), Some(1));
+}
+
+#[test]
+fn a_cancelled_xyz_scan_stops_in_the_blank_lines_after_the_last_frame() {
+    let path = temporary_path(Some("xyz"));
+    std::fs::write(&path, "2\nframe\nC 0 0 0\nH 1 0 0\n\n\n\n\n").unwrap();
+    // The scan polls before frame 0 and after it. The third poll follows a
+    // blank line, read for the next frame or, in a full index, for the end.
+    let mut stopped = Vec::new();
+    for limits in [
+        TrajectoryIoLimits::default(),
+        TrajectoryIoLimits::default().with_max_index_entries(1),
+    ] {
+        let options = TrajectoryOpenOptions::default().with_limits(limits);
+        let polls = Arc::new(AtomicUsize::new(0));
+        let counted = Arc::clone(&polls);
+        let cancellation = Cancellation::new(move || counted.fetch_add(1, Ordering::Relaxed) >= 2);
+        let cancelled = open_indexed_trajectory_with(
+            &path,
+            topology(),
+            options.clone(),
+            Run::new().with_cancellation(&cancellation),
+        );
+        let never = Cancellation::new(|| false);
+        let finished = open_indexed_trajectory_with(
+            &path,
+            topology(),
+            options,
+            Run::new().with_cancellation(&never),
+        );
+        stopped.push((
+            cancelled.err().map(|error| error.kind()),
+            polls.load(Ordering::Relaxed),
+            finished.map(|reader| reader.frame_count()).ok(),
+        ));
+    }
+    std::fs::remove_file(&path).unwrap();
+    for outcome in stopped {
+        assert_eq!(
+            outcome,
+            (Some(TrajectoryIoErrorKind::Cancelled), 3, Some(Some(1)))
+        );
+    }
 }
