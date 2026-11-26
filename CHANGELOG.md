@@ -404,6 +404,11 @@ the main branch migrates by the table under "From the SampleSet API".
   and reader failure types live in `traj`.
 - `measure::within` searches large selections through a spatial grid instead
   of comparing every pair.
+- Selection value lists of integers, names, elements, and residue numbers
+  match by binary search over their merged ranges, and `index` lists fill
+  whole words; `and` and `or` skip operands that can no longer change the
+  result and cannot fail. A pick of 5,000 index runs over a million atoms
+  takes about a millisecond instead of tens of seconds.
 - **Breaking:** `Model` becomes `Structure`, with `StructureBuilder`,
   `StructureEditor` (`append_structure`), `StructureView`, `AsStructureView`,
   `StructureAtomView`, `StructureError`, and the other `Model*` items.

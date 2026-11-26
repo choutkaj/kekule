@@ -519,6 +519,122 @@ fn topology_evaluation_reports_terms_that_need_more() {
 }
 
 #[test]
+fn value_lists_select_what_any_of_their_values_selects() {
+    let structure = structure("mmcif/1AKE.cif");
+    let atoms = structure
+        .topology()
+        .atoms()
+        .map(|view| Atom {
+            view,
+            structure: &structure,
+        })
+        .collect::<Vec<_>>();
+    let evaluate = |text: &str| {
+        parse(text)
+            .evaluate_structure(&structure, SelectEvaluateOptions::default())
+            .unwrap_or_else(|error| panic!("{text}: {error}"))
+            .indices()
+            .iter()
+            .map(|index| index.index())
+            .collect::<Vec<_>>()
+    };
+    let expected = |member: &dyn Fn(usize, &Atom<'_>) -> bool| {
+        atoms
+            .iter()
+            .enumerate()
+            .filter_map(|(index, atom)| member(index, atom).then_some(index))
+            .collect::<Vec<_>>()
+    };
+    let within = |value: i64, ranges: &[(i64, i64)]| {
+        ranges
+            .iter()
+            .any(|&(low, high)| low <= value && value <= high)
+    };
+    let list = |ranges: &[(i64, i64)]| {
+        ranges
+            .iter()
+            .map(|&(low, high)| {
+                if low == high {
+                    low.to_string()
+                } else {
+                    format!("{low}-{high}")
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    // Overlapping, repeated, reversed, and out-of-range values.
+    let index = [
+        (900, 1000),
+        (950, 1100),
+        (5, 5),
+        (3, 3),
+        (5, 5),
+        (2000, 1990),
+        (63, 64),
+        (3300, 99_999),
+    ];
+    let selected = evaluate(&format!("index {}", list(&index)));
+    assert_eq!(selected, expected(&|dense, _| within(dense as i64, &index)));
+    assert!(!selected.is_empty());
+    let resid = [(10, 20), (15, 30), (5, 5), (120, 118), (200, 9999), (2, 2)];
+    assert_eq!(
+        evaluate(&format!("resid {}", list(&resid))),
+        expected(&|_, atom| atom
+            .resid()
+            .is_some_and(|(number, code)| code.is_none() && within(number, &resid)))
+    );
+    assert_eq!(
+        evaluate("name CA C N CA OXT"),
+        expected(&|_, atom| matches!(atom.name(), Some("CA" | "C" | "N" | "OXT")))
+    );
+    assert_eq!(
+        evaluate("resname LYS ALA GLY ALA"),
+        expected(&|_, atom| matches!(atom.resname(), Some("LYS" | "ALA" | "GLY")))
+    );
+}
+
+#[test]
+fn boolean_terms_skip_nothing_that_could_fail() {
+    let structure = structure("mmcif/1CRN.cif");
+    let topology = structure.shared_topology();
+    let on_topology =
+        |text: &str| parse(text).evaluate(topology.clone(), SelectEvaluateOptions::default());
+    // Terms that need a structure still fail once the result is settled.
+    for text in [
+        "none and bfactor > 10",
+        "none and within 5 of water",
+        "all or occupancy < 1",
+        "all or within 5 of water",
+    ] {
+        assert!(
+            matches!(
+                on_topology(text),
+                Err(SelectEvaluateError::RequiresStructure { .. })
+            ),
+            "{text}"
+        );
+    }
+    let unperceived = smiles::to_topology("c1ccccc1O").unwrap();
+    assert!(matches!(
+        parse("none and aromatic").evaluate(unperceived.clone(), SelectEvaluateOptions::default()),
+        Err(SelectEvaluateError::MissingPerception { .. })
+    ));
+    assert!(matches!(
+        parse("all or property charge > 0").evaluate(unperceived, SelectEvaluateOptions::default()),
+        Err(SelectEvaluateError::UnknownProperty { .. })
+    ));
+    // Results stay those of every operand.
+    let count = |text: &str| on_topology(text).unwrap().len();
+    let atoms = topology.atom_count();
+    assert_eq!(count("name SG and none and index 1-10"), 0);
+    assert_eq!(count("none and not (resid 3 or bonded to name SG)"), 0);
+    assert_eq!(count("index 5 or all or byres (name SG)"), atoms);
+    assert_eq!(count("all or (resname CYS and name SG)"), atoms);
+    assert_eq!(count("name SG and (name CB or index 0-10000)"), 6);
+}
+
+#[test]
 fn chemistry_terms_read_installed_perception() {
     let topology = Arc::new(
         smiles::to_topology("c1ccccc1CC(=O)[OH].[Na+]")
