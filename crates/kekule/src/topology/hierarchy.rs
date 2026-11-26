@@ -679,15 +679,20 @@ impl HierarchyBuilder {
     /// chain and each site by exactly one residue; those lists give every
     /// residue its chain and every site its residue, in stored child order.
     /// Atom placements must be unique. Atoms are checked against a topology
-    /// only at publication.
+    /// only at publication. The columns of residues and of sites must match.
     pub(crate) fn from_raw_parts(
         chains: Vec<RawChain>,
         residues: RawResidues,
         sites: RawAtomSites,
     ) -> Result<Self, RawHierarchyError> {
+        if !residues.consistent() {
+            return Err(RawHierarchyError::ResidueColumns);
+        }
+        if !sites.consistent() {
+            return Err(RawHierarchyError::AtomSiteColumns);
+        }
         let residue_count = residues.classes.len();
         let site_count = sites.atoms.len();
-        debug_assert!(residues.consistent() && sites.consistent());
         for (len, kind) in [
             (chains.len(), Countable::Chain),
             (residue_count, Countable::Residue),
@@ -791,7 +796,7 @@ pub(crate) struct RawChain {
 /// Residue `r` has the labels `labels[label_keys[r]]`, the published class
 /// `classes[r]`, assigned explicitly when `explicit[r]`, and the sites
 /// `sites[site_starts[r]..site_starts[r + 1]]`. Residues may share labels.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub(crate) struct RawResidues {
     pub(crate) label_keys: Vec<u32>,
     pub(crate) labels: Vec<ResidueLabels>,
@@ -822,7 +827,7 @@ impl RawResidues {
 /// The stored atom sites for [`HierarchyBuilder::from_raw_parts`], by
 /// column: site `s` places `atoms[s]` with the metadata
 /// `metadata[metadata_keys[s]]`. Sites may share metadata.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub(crate) struct RawAtomSites {
     pub(crate) atoms: Vec<InstanceAtomId>,
     pub(crate) metadata_keys: Vec<u32>,
@@ -851,6 +856,10 @@ pub(crate) enum RawHierarchyError {
     ResidueUnlisted(ResidueId),
     AtomSiteUnlisted(AtomSiteId),
     DuplicateAtomPlacement(InstanceAtomId),
+    /// The residue columns differ in length or name rows they lack.
+    ResidueColumns,
+    /// The atom site columns differ in length or name rows they lack.
+    AtomSiteColumns,
 }
 
 impl fmt::Display for RawHierarchyError {
@@ -873,6 +882,8 @@ impl fmt::Display for RawHierarchyError {
             Self::DuplicateAtomPlacement(atom) => {
                 write!(f, "{} has more than one atom site.", Capitalized(atom))
             }
+            Self::ResidueColumns => f.write_str("The residue columns do not match."),
+            Self::AtomSiteColumns => f.write_str("The atom site columns do not match."),
         }
     }
 }
