@@ -1310,6 +1310,32 @@ impl RawPropertyTable {
         Ok(())
     }
 
+    /// Whether [`Self::copy_rows_from`] takes every value of `source`: each
+    /// source column whose key this table has matches its type, and its real
+    /// values convert to its unit and stay finite.
+    pub(crate) fn accepts_rows_of(&self, source: &Self) -> bool {
+        source.columns.iter().all(|(key, column)| {
+            let Some(own) = self.columns.get(key) else {
+                return true;
+            };
+            match (own, column) {
+                (PropertyColumn::Bool(_), PropertyColumn::Bool(_))
+                | (PropertyColumn::Int(_), PropertyColumn::Int(_))
+                | (PropertyColumn::String(_), PropertyColumn::String(_)) => true,
+                (
+                    PropertyColumn::Real { unit, .. },
+                    PropertyColumn::Real { unit: from, values },
+                ) => from.conversion_factor_to(*unit).is_ok_and(|factor| {
+                    values
+                        .iter()
+                        .flatten()
+                        .all(|value| (value * factor).is_finite())
+                }),
+                _ => false,
+            }
+        })
+    }
+
     pub(crate) fn clear_index(&mut self, index: usize) {
         if index >= self.len {
             return;
@@ -1615,6 +1641,15 @@ impl TopologyProperties {
         self.bonds.raw.resize_missing(len);
     }
 
+    /// Whether every table takes the rows of `source`'s; see
+    /// [`RawPropertyTable::accepts_rows_of`].
+    pub(crate) fn accepts_rows_of(&self, source: &Self) -> bool {
+        self.tables()
+            .into_iter()
+            .zip(source.tables())
+            .all(|(own, from)| own.accepts_rows_of(from))
+    }
+
     pub(crate) fn resize_domains(&mut self, dimensions: [usize; 6]) {
         for (table, len) in self.tables_mut().into_iter().zip(dimensions) {
             // Extension appends missing values. A shorter hierarchy replacement
@@ -1815,6 +1850,16 @@ impl GeometryProperties {
 
     pub(crate) fn bonds_raw_mut(&mut self) -> &mut RawPropertyTable {
         &mut self.bonds.raw
+    }
+
+    /// Whether the atom and bond tables take the rows of `source`'s, which
+    /// has a row for each of `atoms` and `bonds`; see
+    /// [`RawPropertyTable::accepts_rows_of`].
+    pub(crate) fn accepts_rows_of(&self, source: &Self, atoms: usize, bonds: usize) -> bool {
+        source.atoms.len() == atoms
+            && source.bonds.len() == bonds
+            && self.atoms.raw.accepts_rows_of(&source.atoms.raw)
+            && self.bonds.raw.accepts_rows_of(&source.bonds.raw)
     }
 
     // Typed tables, for the guards of an editing draft.

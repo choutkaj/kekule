@@ -15,6 +15,13 @@ pub(crate) struct AppendMapping {
 }
 
 impl TopologyEditor {
+    /// Whether [`Self::append_topology`] takes every annotation of `source`:
+    /// no column of the draft clashes with one of the same key in `source`.
+    /// It fails only on such a clash.
+    pub(crate) fn accepts_properties_of(&self, source: &Topology) -> bool {
+        self.properties.accepts_rows_of(source.properties())
+    }
+
     /// The coordinating structure operation owns rollback. Source identity is
     /// local to this import, separate from the editor's original source
     /// correspondence. `chain_ids` gives each source chain's label and author

@@ -39,6 +39,8 @@ impl StructureEditor {
     /// axes and canonical cell vectors within floating-point conversion roundoff
     /// (16 machine epsilons times the largest vector component). Callers can set
     /// the intended cell before retrying. Failure leaves the entire editor unchanged.
+    /// Unless a property column of the source clashes with the draft's, the
+    /// append works in place, without copying the draft.
     ///
     /// ```
     /// use kekule::{smiles, structure::{Structure, Positions}, math::Point3,
@@ -85,10 +87,25 @@ impl StructureEditor {
             omitted_geometry_properties: source.properties().owner().keys().cloned().collect(),
             colliding_chains: colliding_chains(&self.topology, source.topology()),
         };
+        let same_ids: &ChainIds<'_> =
+            &|label, author| (label.to_owned(), author.map(str::to_owned));
+        // Past its first step, which reserves the atoms, an append fails only
+        // when a property column clashes or lacks rows. Without either it
+        // runs in place: staging copies the whole draft, which would make
+        // appending many parts cost the square of their size.
+        if self.topology.accepts_properties_of(source.topology())
+            && self.slots.properties.accepts_rows_of(
+                source.properties(),
+                source.atom_count(),
+                source.topology().bond_ids().len(),
+            )
+        {
+            let (mapping, _) = self.append_unstaged(source, same_ids)?;
+            self.slots.cell = cell;
+            return Ok(StructureAppend { mapping, report });
+        }
         let mut staged = self.clone();
-        let (mapping, _) = staged.append_unstaged(source, &|label, author| {
-            (label.to_owned(), author.map(str::to_owned))
-        })?;
+        let (mapping, _) = staged.append_unstaged(source, same_ids)?;
         staged.slots.cell = cell;
         *self = staged;
         Ok(StructureAppend { mapping, report })
