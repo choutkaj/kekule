@@ -2,7 +2,8 @@
 //! million atoms with full per-site metadata: the time to write and read its
 //! topology alone and the whole structure, in memory and through a buffered
 //! file, the encoding's size and SHA-256, and the heap a read holds at its
-//! peak and keeps.
+//! peak and keeps. Writing the structure a read returns, whose nodes share
+//! their labels, must give the same bytes.
 //!
 //! The structure is merged copies of an externally supplied mmCIF entry, as
 //! a host merges them: each copy after the first takes fresh chain
@@ -260,11 +261,12 @@ impl Row {
 
 /// The operations measured, in order; each read reads what the write
 /// before it wrote.
-const OPERATIONS: [&str; 6] = [
+const OPERATIONS: [&str; 7] = [
     "write topology",
     "read topology",
     "write structure",
     "read structure",
+    "write the read structure",
     "write structure to file",
     "read structure from file",
 ];
@@ -298,11 +300,15 @@ fn round(
     drop(bytes);
     let bytes = rows[2].measure(mode, || Ok(native::write(structure, write)?))?;
     let decoded = rows[3].measure(mode, || Ok(native::read(bytes.as_slice(), read)?))?;
-    check(&decoded, structure)?;
+    let decoded = check(decoded, structure)?;
+    let again = rows[4].measure(mode, || Ok(native::write(&decoded, write)?))?;
+    if again != bytes {
+        return Err("writing the read structure changed its bytes".into());
+    }
     drop(black_box(decoded));
-    drop(bytes);
-    rows[4].measure(mode, || write_file(file, structure.into()))?;
-    let decoded = rows[5].measure(mode, || {
+    drop((bytes, again));
+    rows[5].measure(mode, || write_file(file, structure.into()))?;
+    let decoded = rows[6].measure(mode, || {
         Ok(native::read(BufReader::new(File::open(file)?), read)?)
     })?;
     drop(black_box(decoded));
@@ -316,9 +322,9 @@ fn write_file(file: &Path, source: NativeSource<'_>) -> Result<(), Box<dyn Error
     Ok(())
 }
 
-/// Fails unless `decoded` is a structure of as many atoms and sites as
-/// `source`.
-fn check(decoded: &NativeObject, source: &Structure) -> Result<(), Box<dyn Error>> {
+/// The structure `decoded` holds; fails unless it has as many atoms and
+/// sites as `source`.
+fn check(decoded: NativeObject, source: &Structure) -> Result<Structure, Box<dyn Error>> {
     let NativeObject::Structure(decoded) = decoded else {
         return Err("the input decoded to another kind".into());
     };
@@ -327,5 +333,5 @@ fn check(decoded: &NativeObject, source: &Structure) -> Result<(), Box<dyn Error
     {
         return Err("the decoded structure differs in size".into());
     }
-    Ok(())
+    Ok(decoded)
 }
