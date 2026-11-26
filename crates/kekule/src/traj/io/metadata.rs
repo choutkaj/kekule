@@ -403,6 +403,9 @@ pub enum TrajectoryOpenNote {
     /// This many TRR frames have no positions and were skipped
     /// ([`super::trr::TrrReadOptions::frames_without_positions`]).
     TrrFramesWithoutPositions(usize),
+    /// This many XYZ frames have columns after the coordinates, which were
+    /// omitted ([`super::xyz::XyzReadOptions::extra_columns`]).
+    XyzExtraColumns(usize),
 }
 
 impl std::fmt::Display for TrajectoryOpenNote {
@@ -452,6 +455,10 @@ impl std::fmt::Display for TrajectoryOpenNote {
                     "{count} TRR frames without positions were skipped"
                 )
             }
+            Self::XyzExtraColumns(count) => write!(
+                formatter,
+                "{count} XYZ frames have columns after the coordinates, which were omitted"
+            ),
         }
     }
 }

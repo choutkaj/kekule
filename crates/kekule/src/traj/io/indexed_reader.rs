@@ -41,6 +41,8 @@ pub(crate) struct IndexFacts {
     /// The TRR frames without positions after the last indexed frame, which
     /// the last scan skipped.
     pub(crate) trailing_frames: usize,
+    /// The XYZ frames whose columns after the coordinates the scans omitted.
+    pub(crate) extra_column_frames: usize,
 }
 
 /// A sequential reader that an [`IndexedReader`] scans and seeks.

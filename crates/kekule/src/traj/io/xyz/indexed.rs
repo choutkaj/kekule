@@ -147,6 +147,17 @@ impl<R: BufRead + Seek> IndexedCodec for XyzReader<R> {
 
     fn restore_state(&mut self, (): ()) {}
 
+    fn index_facts(&self) -> IndexFacts {
+        IndexFacts {
+            extra_column_frames: self.index_extra_columns,
+            ..IndexFacts::default()
+        }
+    }
+
+    fn set_index_facts(&mut self, facts: IndexFacts) {
+        self.index_extra_columns = facts.extra_column_frames;
+    }
+
     fn start_scan(&mut self, end: u64, growing: bool) -> Result<(), TrajectoryIoError> {
         self.growing = growing;
         self.seek_to(SeekFrom::Start(end), TrajectoryIoOperation::Index)
@@ -159,15 +170,10 @@ impl<R: BufRead + Seek> IndexedCodec for XyzReader<R> {
         _growing: bool,
         limit: LimitExceeded,
     ) -> Result<u64, TrajectoryIoError> {
-        let label = &self.source.label;
-        if self
-            .reader
-            .fill_buf()
-            .map_err(|error| io_context(TrajectoryIoOperation::Index, Some(FORMAT), label, error))?
-            .is_empty()
-        {
+        if self.at_end(TrajectoryIoOperation::Index)? {
             return Ok(0);
         }
+        let label = &self.source.label;
         Err(codec_context(
             TrajectoryIoErrorKind::LimitExceeded,
             TrajectoryIoOperation::Index,
@@ -186,6 +192,9 @@ impl<R: BufRead + Seek> IndexedCodec for XyzReader<R> {
     ) -> Result<Option<FrameStamp>, TrajectoryIoError> {
         if !self.parse_next(false)? {
             return Ok(None);
+        }
+        if self.extra_columns {
+            self.index_extra_columns = self.index_extra_columns.saturating_add(1);
         }
         self.frame_cursor = self.frame_cursor.checked_add(1).ok_or_else(|| {
             frame_error(

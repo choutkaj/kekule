@@ -3,7 +3,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use kekule::diagnostics::{LimitExceeded, Resource, WriteOmission, WriteReport};
+use kekule::diagnostics::{
+    LimitExceeded, Resource, UnsupportedContent, WriteOmission, WriteReport,
+};
 use kekule::math::{PeriodicCell, Point3, Vector3};
 use kekule::properties::{PropertyColumn, PropertyKey, PropertyValue};
 use kekule::topology::Topology;
@@ -11,14 +13,14 @@ use kekule::traj::io::xyz::{IndexedXyzReader, XyzReadOptions, XyzReader, XyzWrit
 use kekule::traj::io::{
     create_trajectory_writer, detect_trajectory_format, open_indexed_trajectory, open_trajectory,
     FieldAvailability, FormatDetectionEvidence, RandomAccessCapability, TrajectoryFormatHint,
-    TrajectoryIoLimits, TrajectoryOpenOptions, TrajectoryWriteOptions,
+    TrajectoryIoLimits, TrajectoryOpenNote, TrajectoryOpenOptions, TrajectoryWriteOptions,
 };
 use kekule::traj::{
     FrameBuffer, FrameData, SeekableTrajectoryReader, TrajectoryFormat, TrajectoryIoError,
     TrajectoryIoErrorKind, TrajectoryIoOperation, TrajectoryReader, TrajectoryWriter,
 };
 use kekule::units::{Quantity, ANGSTROM, CANONICAL_VELOCITY_UNIT, NANOMETER, PICOSECOND};
-use kekule::xyz::XyzWriteOptions;
+use kekule::xyz::{XyzParseOptions, XyzWriteOptions};
 use sha2::{Digest, Sha256};
 
 use crate::support;
@@ -1108,4 +1110,138 @@ fn xyz_options_refuse_invalid_values_when_set() {
                 .to_owned()
         )
     );
+}
+
+/// The x coordinates, in nanometres, of every frame `text` holds, read
+/// sequentially and indexed under `options`, after checking that the
+/// structure parser takes the text too.
+fn frame_xs(text: &str, options: &XyzReadOptions) -> Result<Vec<Vec<f64>>, TrajectoryIoError> {
+    let topology = build_topology(&["C", "Cl"], &[(0, 1)]);
+    let mut reader = XyzReader::new(
+        Cursor::new(text.as_bytes()),
+        Arc::clone(&topology),
+        TrajectoryOpenOptions::from(options.clone()),
+    )?;
+    let mut buffer = reader.frame_buffer();
+    let mut frames = Vec::new();
+    while reader.read_next(&mut buffer)? {
+        frames.push(point_xs(&buffer));
+    }
+    let mut indexed = IndexedXyzReader::new(
+        Cursor::new(text.as_bytes()),
+        topology,
+        TrajectoryOpenOptions::from(options.clone()),
+    )?;
+    assert_eq!(indexed.frame_count(), Some(frames.len()), "{text:?}");
+    for (index, xs) in frames.iter().enumerate() {
+        indexed.read_frame(index, &mut buffer)?;
+        assert_eq!(&point_xs(&buffer), xs, "{text:?}");
+    }
+    let document = kekule::xyz::parse_str(text, XyzParseOptions::default()).unwrap();
+    assert_eq!(document.frames().len(), frames.len(), "{text:?}");
+    Ok(frames)
+}
+
+/// Fails unless `frames` holds the x coordinates `expected`, in angstrom.
+fn assert_frames(frames: &[Vec<f64>], expected: &[[f64; 2]], context: &str) {
+    assert_eq!(frames.len(), expected.len(), "{context}");
+    for (frame, expected) in frames.iter().zip(expected) {
+        assert_eq!(frame.len(), 2, "{context}");
+        for (x, expected) in frame.iter().zip(expected) {
+            assert!((x * 10.0 - expected).abs() < 1e-12, "{context}: {frame:?}");
+        }
+    }
+}
+
+#[test]
+fn xyz_trajectories_read_the_atom_lines_the_structure_parser_reads() {
+    let strict = XyzReadOptions::default();
+    for text in [
+        // Blank lines after the last frame.
+        "2\nfirst\nC 0 0 0\nCl 1 0 0\n\n \n",
+        // Element symbols in any letter case, and atomic numbers.
+        "2\nfirst\nc 0 0 0\nCL 1 0 0\n",
+        "2\nfirst\n6 0 0 0\n17 1 0 0\n",
+        // Lines that end with CR alone, or a mix.
+        "2\rfirst\rC 0 0 0\rCl 1 0 0\r",
+        "2\r\nfirst\rC 0 0 0\nCl 1 0 0",
+    ] {
+        assert_frames(&frame_xs(text, &strict).unwrap(), &[[0.0, 1.0]], text);
+    }
+    let two = "2\rfirst\rC 0 0 0\rCl 1 0 0\r2\r\nsecond\r\nC 2 0 0\r\nCl 3 0 0\r\n";
+    assert_frames(
+        &frame_xs(two, &strict).unwrap(),
+        &[[0.0, 1.0], [2.0, 3.0]],
+        two,
+    );
+
+    // Columns after the coordinates, as extended XYZ writes them.
+    let extended = "2\nProperties=species:S:1:pos:R:3:charge:R:1\nC 0 0 0 0.5\nCl 1 0 0 -0.5\n";
+    let error = frame_xs(extended, &strict).unwrap_err();
+    assert_eq!(
+        codec_kind(&error),
+        Some(TrajectoryIoErrorKind::UnsupportedVariant)
+    );
+    assert!(error
+        .to_string()
+        .contains("Atom line 0 has columns after its coordinates."));
+    let report = XyzReadOptions::default().with_extra_columns(UnsupportedContent::Report);
+    assert_frames(
+        &frame_xs(extended, &report).unwrap(),
+        &[[0.0, 1.0]],
+        extended,
+    );
+
+    // Content after a blank line is not a frame.
+    let error = frame_xs("2\nfirst\nC 0 0 0\nCl 1 0 0\n\n2\n", &strict).unwrap_err();
+    assert_eq!(
+        codec_kind(&error),
+        Some(TrajectoryIoErrorKind::InvalidFrame)
+    );
+    assert!(error
+        .to_string()
+        .contains("Content follows a blank line after the last frame."));
+    let error = frame_xs("2\nfirst\nXx 0 0 0\nCl 1 0 0\n", &strict).unwrap_err();
+    assert!(error.to_string().contains("neither an element symbol"));
+}
+
+#[test]
+fn xyz_open_reports_count_the_frames_with_extra_columns() {
+    let path = temporary_path(Some("xyz"));
+    std::fs::write(
+        &path,
+        "2\none\nC 0 0 0 a\nCl 1 0 0\n2\ntwo\nC 0 0 0\nCl 1 0 0\n2\nthree\nC 0 0 0\nCl 1 0 0 b\n",
+    )
+    .unwrap();
+    let reader = open_indexed_trajectory(
+        &path,
+        build_topology(&["C", "Cl"], &[(0, 1)]),
+        TrajectoryOpenOptions::from(
+            XyzReadOptions::default().with_extra_columns(UnsupportedContent::Report),
+        ),
+    );
+    std::fs::remove_file(&path).unwrap();
+    let reader = reader.unwrap();
+    assert_eq!(reader.frame_count(), Some(3));
+    assert!(reader
+        .open_report()
+        .notes()
+        .contains(&TrajectoryOpenNote::XyzExtraColumns(2)));
+}
+
+#[test]
+fn a_growing_xyz_line_ending_in_cr_waits_for_its_lf() {
+    let path = temporary_path(Some("xyz"));
+    std::fs::write(&path, "2\r\nfirst\r\nC 0 0 0\r\nCl 1 0 0\r").unwrap();
+    let topology = build_topology(&["C", "Cl"], &[(0, 1)]);
+    let growing = TrajectoryOpenOptions::default().with_growing(true);
+    let reader = open_indexed_trajectory(&path, Arc::clone(&topology), growing.clone());
+    let complete = open_indexed_trajectory(&path, topology, TrajectoryOpenOptions::default());
+    std::fs::remove_file(&path).unwrap();
+    // The writer may not have written the LF of the last CRLF yet.
+    assert_eq!(
+        reader.unwrap_err().kind(),
+        TrajectoryIoErrorKind::Incomplete
+    );
+    assert_eq!(complete.unwrap().frame_count(), Some(1));
 }

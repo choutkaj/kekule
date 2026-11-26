@@ -631,6 +631,8 @@ pub(crate) enum Reason {
     NoCommentLine,
     EndsBeforeAtomLine(usize),
     AtomLineFields(usize),
+    ExtraColumns(usize),
+    ContentAfterBlankLine,
     UnknownElement {
         line: usize,
         symbol: Box<str>,
@@ -1150,12 +1152,23 @@ impl fmt::Display for Reason {
                 return write!(formatter, "The frame ends before atom line {line}.")
             }
             Self::AtomLineFields(line) => {
-                return write!(formatter, "Atom line {line} does not have four fields.")
+                return write!(
+                    formatter,
+                    "Atom line {line} lacks an element or one of three coordinates."
+                )
             }
+            Self::ExtraColumns(line) => {
+                return write!(
+                    formatter,
+                    "Atom line {line} has columns after its coordinates."
+                )
+            }
+            Self::ContentAfterBlankLine => "Content follows a blank line after the last frame.",
             Self::UnknownElement { line, symbol } => {
                 return write!(
                     formatter,
-                    "Atom line {line} has the unknown element symbol {symbol:?}."
+                    "Atom line {line} names {symbol:?}. It is neither an element symbol nor an \
+                     atomic number."
                 )
             }
             Self::ElementMismatch {

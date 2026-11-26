@@ -11,9 +11,11 @@
 //! [`XyzWriter::report`]. To
 //! obtain a topology from an XYZ file itself, interpret one of its frames
 //! with `kekule::xyz`, which keeps atom-line order as dense order and infers
-//! bonds from distances. This reader accepts element symbols in their
-//! standard letter case only, while interpretation also accepts other cases
-//! and atomic numbers.
+//! bonds from distances. These readers read atom lines as `kekule::xyz`
+//! parses them: an element symbol in any letter case or an atomic number,
+//! three coordinates, and columns after them as
+//! [`XyzReadOptions::extra_columns`] allows. Lines end with LF, CRLF, or CR,
+//! and blank lines may trail the last frame.
 //!
 //! The scratch limit bounds the dense position array, one point per atom,
 //! and the reusable line buffer, which grows to hold the longest line read so
@@ -52,7 +54,8 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
-use crate::diagnostics::{LimitExceeded, Resource, WriteOmission, WriteReport};
+use crate::diagnostics::{LimitExceeded, Resource, UnsupportedContent, WriteOmission, WriteReport};
+use crate::io::xyz::atom_line::{element_of_token, parse_atom_line, AtomLineError};
 use crate::traj::trajectory::reason::Reason;
 use crate::traj::FrameView;
 use std::fmt;
@@ -60,7 +63,6 @@ use std::io::{self, BufRead, Seek, SeekFrom, Write};
 use std::sync::Arc;
 
 use crate::math::Point3;
-use crate::molecule::Element;
 use crate::structure::Positions;
 use crate::topology::Topology;
 use crate::traj::io::DecodedGeometry;
@@ -72,7 +74,9 @@ use crate::units::{Quantity, Unit, ANGSTROM, CANONICAL_LENGTH_UNIT};
 
 use super::codec::frame_error;
 use super::frame_state::{check_frame_state, record};
-use super::indexed_reader::{indexed_reader_traits, IndexedCodec, IndexedReader, IndexedSource};
+use super::indexed_reader::{
+    indexed_reader_traits, IndexFacts, IndexedCodec, IndexedReader, IndexedSource,
+};
 use super::limits::{exceeded_bytes, filled_bytes, reserve_scratch};
 use super::metadata::{FieldAvailability, TrajectoryFieldAvailability};
 use super::options::ReadSource;
@@ -122,16 +126,19 @@ fn validate_length_unit(unit: Unit, source_label: &str) -> Result<(), Trajectory
         })
 }
 
-/// XYZ length-unit interpretation.
+/// XYZ length-unit interpretation, and what happens to columns after the
+/// coordinates.
 #[derive(Debug, Clone, PartialEq)]
 pub struct XyzReadOptions {
     length_unit: Unit,
+    extra_columns: UnsupportedContent,
 }
 
 impl Default for XyzReadOptions {
     fn default() -> Self {
         Self {
             length_unit: ANGSTROM,
+            extra_columns: UnsupportedContent::Reject,
         }
     }
 }
@@ -153,5 +160,25 @@ impl XyzReadOptions {
     /// converted to the canonical length unit on publication.
     pub const fn length_unit(&self) -> Unit {
         self.length_unit
+    }
+
+    /// Sets [`Self::extra_columns`].
+    #[must_use]
+    pub const fn with_extra_columns(mut self, extra_columns: UnsupportedContent) -> Self {
+        self.extra_columns = extra_columns;
+        self
+    }
+
+    /// What happens to columns after the coordinates, such as extended XYZ
+    /// per-atom properties, which Kekule does not read.
+    /// [`UnsupportedContent::Reject`] by default: such a frame fails to read
+    /// with [`TrajectoryIoErrorKind::UnsupportedVariant`].
+    /// [`UnsupportedContent::Report`] omits them, and an indexed reader's
+    /// open report counts the frames that have them
+    /// ([`TrajectoryOpenNote::XyzExtraColumns`]).
+    ///
+    /// [`TrajectoryOpenNote::XyzExtraColumns`]: super::TrajectoryOpenNote::XyzExtraColumns
+    pub const fn extra_columns(&self) -> UnsupportedContent {
+        self.extra_columns
     }
 }

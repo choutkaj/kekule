@@ -747,6 +747,12 @@ the main branch migrates by the table under "From the SampleSet API".
   indexed reader's open report notes another count
   (`TrajectoryOpenNote::DcdFrameCount`). An imported index of fewer frames
   than `NSET` scans the rest.
+- **Breaking:** XYZ trajectory readers read atom lines as `kekule::xyz`
+  parses them: element symbols in any letter case, atomic numbers, LF, CRLF
+  or CR line ends, and blank lines after the last frame.
+  `XyzReadOptions::with_extra_columns` omits extended XYZ columns under
+  `UnsupportedContent::Report`, and an indexed reader's open report counts
+  those frames (`TrajectoryOpenNote::XyzExtraColumns`).
 - **Breaking:** XTC and TRR steps read as unsigned 32-bit numbers, the low 32
   bits GROMACS writes, and the writers take steps up to 2^32 - 1.
 - **Breaking:** XTC and TRR writers refuse a cell outside the GROMACS

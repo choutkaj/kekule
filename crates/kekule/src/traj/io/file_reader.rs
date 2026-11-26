@@ -1256,6 +1256,9 @@ fn content_notes(
             counted: count,
         }),
         (skipped > 0).then_some(TrajectoryOpenNote::TrrFramesWithoutPositions(skipped)),
+        (facts.extra_column_frames > 0).then_some(TrajectoryOpenNote::XyzExtraColumns(
+            facts.extra_column_frames,
+        )),
     ]
     .into_iter()
     .flatten()

@@ -13,6 +13,11 @@ pub struct XyzReader<R> {
     /// Whether a line counts only once its line break is written, as in a
     /// file still being written.
     pub(super) growing: bool,
+    /// Whether the last frame read has columns after the coordinates.
+    pub(super) extra_columns: bool,
+    /// The frames with columns after the coordinates that the scans of an
+    /// indexed reader indexed.
+    pub(super) index_extra_columns: usize,
 }
 
 impl<R> fmt::Debug for XyzReader<R> {
@@ -79,6 +84,8 @@ impl<R: BufRead> XyzReader<R> {
             line: Vec::new(),
             positions,
             growing: false,
+            extra_columns: false,
+            index_extra_columns: 0,
         })
     }
 
@@ -94,12 +101,7 @@ impl<R: BufRead> XyzReader<R> {
             TrajectoryIoOperation::ReadFrame
         };
         if self.frame_cursor >= self.source.limits.max_frames() {
-            if self
-                .reader
-                .fill_buf()
-                .map_err(|error| io_context(operation, Some(FORMAT), &self.source.label, error))?
-                .is_empty()
-            {
+            if self.at_end(operation)? {
                 return Ok(false);
             }
             return Err(frame_error(
@@ -134,6 +136,11 @@ impl<R: BufRead> XyzReader<R> {
         else {
             return Ok(false);
         };
+        if count_line.trim().is_empty() {
+            // Blank lines may only trail the last frame.
+            self.read_blank_tail(operation)?;
+            return Ok(false);
+        }
         let mut frame_bytes = checked_frame_add(
             0,
             consumed,
@@ -219,6 +226,7 @@ impl<R: BufRead> XyzReader<R> {
         // allocates its own on the thread that reads.
         self.positions.clear();
         self.positions.reserve_exact(atom_count);
+        self.extra_columns = false;
         for atom_index in 0..atom_count {
             let atom_id = self.topology().atom_ids()[atom_index];
             let expected_element = self
@@ -261,24 +269,23 @@ impl<R: BufRead> XyzReader<R> {
                 self.frame_cursor,
                 operation,
             )?;
-            let mut fields = line.split_whitespace();
-            let (Some(symbol), Some(x), Some(y), Some(z), None) = (
-                fields.next(),
-                fields.next(),
-                fields.next(),
-                fields.next(),
-                fields.next(),
-            ) else {
-                return Err(frame_error(
+            let atom = parse_atom_line(line).map_err(|error| {
+                frame_error(
                     FORMAT,
                     TrajectoryIoErrorKind::InvalidFrame,
                     operation,
                     &self.source.label,
                     self.frame_cursor,
-                    Reason::AtomLineFields(atom_index),
-                ));
-            };
-            let element = Element::from_symbol(symbol).ok_or_else(|| {
+                    match error {
+                        AtomLineError::MissingField => Reason::AtomLineFields(atom_index),
+                        AtomLineError::NotNumber(_) => Reason::CoordinateNotNumber(atom_index),
+                        AtomLineError::NotFinite(_) => {
+                            Reason::CoordinateNotFiniteOnLine(atom_index)
+                        }
+                    },
+                )
+            })?;
+            let element = element_of_token(atom.element).ok_or_else(|| {
                 frame_error(
                     FORMAT,
                     TrajectoryIoErrorKind::InvalidFrame,
@@ -287,7 +294,7 @@ impl<R: BufRead> XyzReader<R> {
                     self.frame_cursor,
                     Reason::UnknownElement {
                         line: atom_index,
-                        symbol: symbol.into(),
+                        symbol: atom.element.into(),
                     },
                 )
             })?;
@@ -305,36 +312,106 @@ impl<R: BufRead> XyzReader<R> {
                     },
                 ));
             }
-            let parse_coordinate = |value: &str| {
-                value.parse::<f64>().map_err(|_| {
-                    frame_error(
+            if atom.extra.is_some() {
+                if self.options.extra_columns != UnsupportedContent::Report {
+                    return Err(frame_error(
                         FORMAT,
-                        TrajectoryIoErrorKind::InvalidFrame,
+                        TrajectoryIoErrorKind::UnsupportedVariant,
                         operation,
                         &self.source.label,
                         self.frame_cursor,
-                        Reason::CoordinateNotNumber(atom_index),
-                    )
-                })
-            };
-            let x = parse_coordinate(x)?;
-            let y = parse_coordinate(y)?;
-            let z = parse_coordinate(z)?;
-            if ![x, y, z].into_iter().all(f64::is_finite) {
+                        Reason::ExtraColumns(atom_index),
+                    ));
+                }
+                self.extra_columns = true;
+            }
+            if retain_positions {
+                self.positions.push(atom.position);
+            }
+        }
+        Ok(true)
+    }
+
+    /// Whether the stream holds no frame after the last one read: it ends,
+    /// or holds only blank lines. A line that starts with no whitespace
+    /// starts a frame and is not consumed.
+    pub(super) fn at_end(
+        &mut self,
+        operation: TrajectoryIoOperation,
+    ) -> Result<bool, TrajectoryIoError> {
+        let next = loop {
+            match self.reader.fill_buf() {
+                Ok(available) => break available.first().copied(),
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+                Err(error) => {
+                    return Err(io_context(
+                        operation,
+                        Some(FORMAT),
+                        &self.source.label,
+                        error,
+                    ))
+                }
+            }
+        };
+        let Some(next) = next else {
+            return Ok(true);
+        };
+        if !next.is_ascii_whitespace() {
+            return Ok(false);
+        }
+        // An atom-count line may begin with spaces; reading it tells.
+        let position_bytes = filled_bytes(&self.positions, self.topology().atom_count());
+        let Some((line, _)) = read_line(
+            &mut self.reader,
+            &mut self.line,
+            self.source.limits.max_text_line_bytes(),
+            position_bytes,
+            &self.source.limits,
+            &self.source.label,
+            self.frame_cursor,
+            operation,
+            self.growing,
+        )?
+        else {
+            return Ok(true);
+        };
+        if !line.trim().is_empty() {
+            return Ok(false);
+        }
+        self.read_blank_tail(operation)?;
+        Ok(true)
+    }
+
+    /// Reads the lines after a blank line where a frame would start, which
+    /// must all be blank too.
+    pub(super) fn read_blank_tail(
+        &mut self,
+        operation: TrajectoryIoOperation,
+    ) -> Result<(), TrajectoryIoError> {
+        let position_bytes = filled_bytes(&self.positions, self.topology().atom_count());
+        while let Some((line, _)) = read_line(
+            &mut self.reader,
+            &mut self.line,
+            self.source.limits.max_text_line_bytes(),
+            position_bytes,
+            &self.source.limits,
+            &self.source.label,
+            self.frame_cursor,
+            operation,
+            self.growing,
+        )? {
+            if !line.trim().is_empty() {
                 return Err(frame_error(
                     FORMAT,
                     TrajectoryIoErrorKind::InvalidFrame,
                     operation,
                     &self.source.label,
                     self.frame_cursor,
-                    Reason::CoordinateNotFiniteOnLine(atom_index),
+                    Reason::ContentAfterBlankLine,
                 ));
             }
-            if retain_positions {
-                self.positions.push(Point3::new(x, y, z));
-            }
         }
-        Ok(true)
+        Ok(())
     }
 
     pub(super) fn publish(&self, destination: &mut FrameBuffer) -> Result<(), TrajectoryIoError> {
@@ -528,14 +605,16 @@ pub(super) fn checked_frame_add(
         })
 }
 
-/// Reads one line and returns it without its LF or CRLF terminator, together
-/// with the exact number of source bytes consumed, terminator included.
+/// Reads one line and returns it without its LF, CRLF, or CR terminator,
+/// together with the exact number of source bytes consumed, terminator
+/// included.
 ///
 /// The line, terminator included, must fit `limit`. The retained `line` buffer
 /// grows only while its capacity plus `other_scratch_bytes` stays within
 /// `max_scratch_bytes`, so whether a line fits depends only on its length.
 /// With `terminated`, a line the stream ends inside, without its line break,
-/// is truncated: its writer may not have finished it.
+/// is truncated: its writer may not have finished it. A CR the stream ends
+/// with is such a line too, since its LF may follow.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn read_line<'a, R: BufRead>(
     reader: &mut R,
@@ -548,7 +627,25 @@ pub(super) fn read_line<'a, R: BufRead>(
     operation: TrajectoryIoOperation,
     terminated: bool,
 ) -> Result<Option<(&'a str, usize)>, TrajectoryIoError> {
+    let too_long = |needed: usize| {
+        codec_context(
+            TrajectoryIoErrorKind::LimitExceeded,
+            operation,
+            Some(FORMAT),
+            source_label,
+            None,
+        )
+        .exceeding(
+            Part::Line,
+            LimitExceeded::new(Resource::RecordBytes, limit, needed),
+        )
+    };
     line.clear();
+    // The LF of a CRLF that the buffered chunk ends between, consumed but
+    // not kept.
+    let mut split_lf = false;
+    // Whether the stream ends right after a CR.
+    let mut cr_at_end = false;
     loop {
         let available = match reader.fill_buf() {
             Ok(available) => available,
@@ -560,23 +657,19 @@ pub(super) fn read_line<'a, R: BufRead>(
         }
         // Scan at most one byte past the limit, enough to detect an overlong line.
         let window = &available[..available.len().min((limit - line.len()).saturating_add(1))];
-        let (chunk, complete) = match window.iter().position(|byte| *byte == b'\n') {
+        let (chunk, complete) = match window
+            .iter()
+            .position(|byte| *byte == b'\n' || *byte == b'\r')
+        {
+            Some(end) if window[end] == b'\r' && window.get(end + 1) == Some(&b'\n') => {
+                (&window[..end + 2], true)
+            }
             Some(end) => (&window[..=end], true),
             None => (window, false),
         };
         let needed = line.len() + chunk.len();
         if needed > limit {
-            return Err(codec_context(
-                TrajectoryIoErrorKind::LimitExceeded,
-                operation,
-                Some(FORMAT),
-                source_label,
-                None,
-            )
-            .exceeding(
-                Part::Line,
-                LimitExceeded::new(Resource::RecordBytes, limit, needed),
-            ));
+            return Err(too_long(needed));
         }
         if needed > line.capacity() {
             // Grow geometrically so a long line is not copied once per buffered
@@ -611,14 +704,38 @@ pub(super) fn read_line<'a, R: BufRead>(
         let consumed = chunk.len();
         reader.consume(consumed);
         if complete {
+            if line.ends_with(b"\r") {
+                // The LF of a CRLF may start the next buffered chunk.
+                let next = loop {
+                    match reader.fill_buf() {
+                        Ok(next) => break next,
+                        Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+                        Err(error) => {
+                            return Err(io_context(operation, Some(FORMAT), source_label, error))
+                        }
+                    }
+                };
+                match next.first() {
+                    Some(b'\n') => {
+                        if line.len() + 1 > limit {
+                            return Err(too_long(line.len() + 1));
+                        }
+                        reader.consume(1);
+                        split_lf = true;
+                    }
+                    Some(_) => {}
+                    None => cr_at_end = true,
+                }
+            }
             break;
         }
     }
-    let read = line.len();
+    let read = line.len() + usize::from(split_lf);
     if read == 0 {
         return Ok(None);
     }
-    if terminated && !line.ends_with(b"\n") {
+    let broken = line.ends_with(b"\n") || (line.ends_with(b"\r") && !cr_at_end);
+    if terminated && !broken {
         return Err(frame_error(
             FORMAT,
             TrajectoryIoErrorKind::TruncatedRecord,
@@ -629,9 +746,8 @@ pub(super) fn read_line<'a, R: BufRead>(
         ));
     }
     let mut content = line.as_slice();
-    if let Some(stripped) = content.strip_suffix(b"\n") {
-        content = stripped.strip_suffix(b"\r").unwrap_or(stripped);
-    }
+    content = content.strip_suffix(b"\n").unwrap_or(content);
+    content = content.strip_suffix(b"\r").unwrap_or(content);
     let content = std::str::from_utf8(content).map_err(|_| {
         io_context(
             operation,

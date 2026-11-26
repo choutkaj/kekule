@@ -55,7 +55,7 @@
 //!
 //! | Format | Reader | Writer |
 //! |---|---|---|
-//! | XYZ | strict constant-count multi-frame element/x/y/z text; configured length unit (angstrom by default) | deterministic strict text; optional frame state is rejected unless omitted, and omitted frame state and topology content are reported |
+//! | XYZ | constant-count multi-frame text with the atom lines `kekule::xyz` parses; configured length unit (angstrom by default) | deterministic strict text; optional frame state is rejected unless omitted, and omitted frame state and topology content are reported |
 //! | DCD | common 32-bit-record `CORD` files in either byte order, common unit cells, fixed-atom reconstruction; frames counted in the file, whatever `NSET` says | canonical all-atom `CORD` in either byte order with optional unit cells; velocities, forces, properties, and times without a `DELTA` policy rejected unless omitted |
 //! | TRR | GROMACS XDR frames with f32 or f64 position, box, velocity, and force blocks; zero boxes and frames without positions as options allow | one explicit f32 or f64 precision with per-frame optional blocks; properties rejected unless omitted; frames without a time or step rejected unless numbered |
 //! | XTC | GROMACS magic 1995/2023, nonnegative i32 counts, unsigned 32-bit steps, small uncompressed and ordinary compressed coordinates; zero boxes as options allow | magic 1995/2023 at explicit lossy precision, bounding scaled coordinates and per-axis spans as GROMACS does; velocities, forces, and properties rejected unless omitted; frames without a time or step rejected unless numbered |
