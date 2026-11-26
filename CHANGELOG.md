@@ -743,6 +743,11 @@ the main branch migrates by the table under "From the SampleSet API".
   reader's open report counts them
   (`TrajectoryOpenNote::TrrFramesWithoutPositions`). They count against
   `TrajectoryIoLimits::max_frames`.
+- **Breaking:** frame indexes are version 3. They record how many TRR frames
+  without positions and XYZ frames with extra columns their frames cover. A
+  reader opened from an index notes them and counts them against
+  `max_frames`. Options that reject them refuse the index. Indexes of version
+  1 or 2 fail with `InvalidIndex`.
 - **Breaking:** DCD readers read every complete frame in the file, whatever
   frame count `NSET` the header declares, as VMD and MDAnalysis do. An
   indexed reader's open report notes another count

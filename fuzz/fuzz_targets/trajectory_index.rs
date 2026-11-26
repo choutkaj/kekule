@@ -163,12 +163,15 @@ fuzz_target!(|data: &[u8]| {
                 .unwrap_or(forged % offsets.len())
         })
         .collect::<Vec<_>>();
-    let mut forged = case.index.to_bytes()[..48].to_vec();
+    let canonical = case.index.to_bytes();
+    let mut forged = canonical[..48].to_vec();
     if starts.is_empty() {
         // An empty index records no steps or times.
         forged[13] &= 1;
     }
     forged.extend_from_slice(&(starts.len() as u64).to_le_bytes());
+    // The fixtures hold no frames without positions or extra columns.
+    forged.extend_from_slice(&canonical[56..72]);
     for start in &starts {
         forged.extend_from_slice(&start.to_le_bytes());
     }

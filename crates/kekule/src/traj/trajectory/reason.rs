@@ -530,6 +530,9 @@ pub(crate) enum Reason {
         format: TrajectoryFormat,
     },
     IndexLength,
+    IndexFrameCounts(TrajectoryFormat),
+    IndexedFramesWithoutPositions(usize),
+    IndexedExtraColumns(usize),
     OffsetOutOfOrder(usize),
     IndexTimeNotFinite(usize),
     EncodingTruncated(Encoding),
@@ -933,6 +936,27 @@ impl fmt::Display for Reason {
                 )
             }
             Self::IndexLength => "The frame index's length does not match its frame count.",
+            Self::IndexFrameCounts(format) => {
+                return write!(
+                    formatter,
+                    "The frame index counts frames without positions or with extra columns \
+                     that {format} frames cannot hold."
+                )
+            }
+            Self::IndexedFramesWithoutPositions(count) => {
+                return write!(
+                    formatter,
+                    "The frame index covers {count} frames without positions. The read \
+                     options reject them."
+                )
+            }
+            Self::IndexedExtraColumns(count) => {
+                return write!(
+                    formatter,
+                    "The frame index covers {count} frames with columns after their \
+                     coordinates. The read options reject them."
+                )
+            }
             Self::OffsetOutOfOrder(entry) => {
                 return write!(
                     formatter,

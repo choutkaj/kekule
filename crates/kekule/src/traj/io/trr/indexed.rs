@@ -52,16 +52,18 @@ impl<R: Read + Seek> IndexedTrrReader<R> {
         Ok(Self { inner })
     }
 
-    /// Opens the stream with previously verified `offsets` instead of
-    /// scanning it; random reads verify each frame against them, including
-    /// that its scalar width is the first frame's unless `precision_mixed`.
+    /// Opens the stream with previously verified `offsets` and the `facts`
+    /// of their scans instead of scanning it; random reads verify each frame
+    /// against them, including that its scalar width is the first frame's
+    /// unless the frames mix widths. Offsets whose frames follow frames
+    /// without positions need options that skip those.
     pub(crate) fn from_offsets(
         reader: R,
         topology: Arc<Topology>,
         options: TrrReadOptions,
         source: ReadSource,
         offsets: Arc<FrameOffsets>,
-        precision_mixed: bool,
+        facts: IndexFacts,
     ) -> Result<Self, TrajectoryIoError> {
         let mut inner = TrrReader::open(reader, topology, options, source)?;
         offsets.verify_start(
@@ -69,8 +71,19 @@ impl<R: Read + Seek> IndexedTrrReader<R> {
             TrajectoryFormat::Trr,
             &inner.source.label,
         )?;
-        inner.precision_mixed = precision_mixed;
-        inner.index_mixed = precision_mixed;
+        if facts.skipped_frames > 0
+            && inner.options.frames_without_positions != UnsupportedContent::Report
+        {
+            return Err(codec_context(
+                TrajectoryIoErrorKind::UnsupportedVariant,
+                TrajectoryIoOperation::Open,
+                Some(FORMAT),
+                &inner.source.label,
+                Reason::IndexedFramesWithoutPositions(facts.skipped_frames),
+            ));
+        }
+        inner.precision_mixed = facts.precision_mixed;
+        inner.set_index_facts(facts);
         Ok(Self {
             inner: IndexedReader::new(inner, offsets),
         })
@@ -87,7 +100,7 @@ impl<R: Read + Seek> IndexedTrrReader<R> {
             reader.options.clone(),
             reader.source.clone(),
             Arc::clone(self.inner.shared_offsets()),
-            reader.index_mixed,
+            reader.index_facts(),
         )
     }
 

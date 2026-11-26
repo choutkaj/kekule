@@ -16,8 +16,9 @@ use kekule::traj::io::trr::{
 };
 use kekule::traj::io::TrajectoryWriteOptions;
 use kekule::traj::io::{
-    open_indexed_trajectory, open_indexed_trajectory_with, open_trajectory, CoordinateEncoding,
-    ScalarPrecision, TrajectoryFormatHint, TrajectoryIoLimits, TrajectoryOpenNote,
+    open_indexed_structure_set, open_indexed_trajectory, open_indexed_trajectory_from_index,
+    open_indexed_trajectory_with, open_trajectory, CoordinateEncoding, ScalarPrecision,
+    TrajectoryFormatHint, TrajectoryFrameIndex, TrajectoryIoLimits, TrajectoryOpenNote,
     TrajectoryOpenOptions, ZeroBoxPolicy,
 };
 use kekule::traj::{
@@ -1331,6 +1332,90 @@ fn a_growing_trr_with_a_full_index_keeps_an_unfinished_tail_pending() {
     for (cut, opened) in opened {
         assert_eq!(opened.unwrap(), (Some(1), cut as u64), "{cut}");
     }
+}
+
+#[test]
+fn a_trr_reopened_from_its_index_keeps_the_frames_without_positions_it_covers() {
+    let topology = topology();
+    let mut bytes = raw_frame(0, None, true, true);
+    bytes.extend(raw_frame(5, None, false, true));
+    bytes.extend(raw_frame(10, None, true, true));
+    let limited = |max_frames| {
+        skipping_options().with_limits(TrajectoryIoLimits::default().with_max_frames(max_frames))
+    };
+    let path = std::env::temp_dir().join(format!("kekule-trr-reopened-{}.trr", std::process::id()));
+    fs::write(&path, &bytes).unwrap();
+    let index = open_indexed_trajectory(&path, Arc::clone(&topology), limited(3))
+        .unwrap()
+        .to_frame_index()
+        .to_bytes();
+    let reopen = |options| {
+        let index =
+            TrajectoryFrameIndex::from_bytes(&index, &TrajectoryIoLimits::default()).unwrap();
+        open_indexed_trajectory_from_index(&path, Arc::clone(&topology), index, options)
+    };
+    // The reopened reader notes the skipped frame and reads the frame after it.
+    let reopened = reopen(limited(3)).map(|mut reader| {
+        let noted = reader
+            .open_report()
+            .notes()
+            .contains(&TrajectoryOpenNote::TrrFramesWithoutPositions(1));
+        let mut buffer = reader.frame_buffer();
+        let read = reader
+            .read_frame(1, &mut buffer)
+            .map(|_| buffer.frame_view().step());
+        (noted, read.ok().flatten())
+    });
+    // Options that reject frames without positions refuse the index, and a
+    // limit below the three frames it covers refuses it as it fails a scan.
+    let strict = reopen(TrajectoryOpenOptions::default()).err();
+    let covered = [
+        open_indexed_trajectory(&path, Arc::clone(&topology), limited(2)).err(),
+        reopen(limited(2)).err(),
+    ];
+    // A frame appended past the limit fails the reopen as it fails a scan.
+    bytes.extend(raw_frame(15, None, true, true));
+    fs::write(&path, &bytes).unwrap();
+    let scanned = open_indexed_trajectory(&path, Arc::clone(&topology), limited(3)).err();
+    let grown = reopen(limited(3)).err();
+    fs::remove_file(&path).unwrap();
+    assert_eq!(reopened.unwrap(), (true, Some(10)));
+    let strict = strict.unwrap();
+    assert_eq!(strict.kind(), TrajectoryIoErrorKind::UnsupportedVariant);
+    assert!(strict
+        .to_string()
+        .contains("covers 1 frames without positions"));
+    for error in covered.into_iter().chain([scanned, grown]) {
+        assert_eq!(
+            error.map(|error| error.kind()),
+            Some(TrajectoryIoErrorKind::LimitExceeded)
+        );
+    }
+}
+
+#[test]
+fn a_shared_trr_structure_set_refreshes_with_the_frames_its_index_skipped() {
+    // A clone of the set shares its reader, so the refresh forks one.
+    let topology = topology();
+    let mut bytes = raw_frame(0, None, false, true);
+    bytes.extend(raw_frame(5, None, true, true));
+    let path =
+        std::env::temp_dir().join(format!("kekule-trr-shared-set-{}.trr", std::process::id()));
+    fs::write(&path, &bytes).unwrap();
+    let options = skipping_options()
+        .with_growing(true)
+        .with_limits(TrajectoryIoLimits::default().with_max_frames(2));
+    let mut set = open_indexed_structure_set(&path, Arc::clone(&topology), options).unwrap();
+    let shared = set.clone();
+    bytes.extend(raw_frame(10, None, true, true));
+    fs::write(&path, &bytes).unwrap();
+    let refreshed = set.refresh();
+    drop((set, shared));
+    fs::remove_file(&path).unwrap();
+    assert_eq!(
+        refreshed.err().map(|error| error.kind()),
+        Some(TrajectoryIoErrorKind::LimitExceeded)
+    );
 }
 
 #[test]

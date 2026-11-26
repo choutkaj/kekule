@@ -113,8 +113,11 @@ fn fnv1a(bytes: &[u8]) -> u64 {
 /// Re-encodes `index` with `starts` as its frame offsets, the steps and times
 /// of its first `starts.len()` frames, and a valid checksum.
 fn forge(index: &TrajectoryFrameIndex, starts: &[u64]) -> Vec<u8> {
-    let mut forged = index.to_bytes()[..48].to_vec();
+    let bytes = index.to_bytes();
+    let mut forged = bytes[..48].to_vec();
     forged.extend_from_slice(&(starts.len() as u64).to_le_bytes());
+    // The counts of skipped and extra-column frames.
+    forged.extend_from_slice(&bytes[56..72]);
     for start in starts {
         forged.extend_from_slice(&start.to_le_bytes());
     }
@@ -565,9 +568,11 @@ fn indexes_of_the_previous_version_are_refused() {
         let index = open_indexed_trajectory(&path, Arc::clone(&topology), Default::default())
             .unwrap()
             .to_frame_index();
-        // Version 1 had the same header without step and time flags, then
-        // the offsets alone.
-        let mut previous = index.to_bytes()[..56 + 8 * index.frame_count()].to_vec();
+        // Version 1 had the header without step and time flags or frame
+        // counts, then the offsets alone.
+        let bytes = index.to_bytes();
+        let mut previous = bytes[..56].to_vec();
+        previous.extend_from_slice(&bytes[72..72 + 8 * index.frame_count()]);
         previous[8..12].copy_from_slice(&1_u32.to_le_bytes());
         previous[13] &= 1;
         previous.extend_from_slice(&[0; 8]);
@@ -588,7 +593,7 @@ fn forged_times_and_steps_fail_their_frame_and_no_other() {
         let expected = frames(&mut built);
         let bytes = built.to_frame_index().to_bytes();
         let count = expected.len();
-        let steps_at = 56 + 8 * count;
+        let steps_at = 72 + 8 * count;
         let times_at = steps_at + 8 * count;
         for (table, frame) in [(steps_at, 1), (times_at, count - 1)] {
             let mut forged = bytes.clone();

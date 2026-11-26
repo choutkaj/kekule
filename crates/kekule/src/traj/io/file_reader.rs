@@ -281,7 +281,7 @@ impl IndexedFileTrajectoryReader {
             self.metadata.format(),
             self.fingerprint.clone(),
             Arc::clone(self.inner.source().shared_offsets()),
-            self.inner.source().facts().precision_mixed,
+            self.inner.source().facts(),
         )
     }
 
@@ -927,13 +927,18 @@ pub fn open_indexed_trajectory_with(
 /// time policy disagree. Returns the open and header errors of [`open_trajectory`],
 /// the decoding error of the first invalid appended frame, and the frame
 /// index limits of `options` bound the index as
-/// [`TrajectoryIoErrorKind::LimitExceeded`]. Later reads return
+/// [`TrajectoryIoErrorKind::LimitExceeded`], its frames without positions
+/// counting against the frame limit. An index that records TRR frames
+/// without positions or XYZ frames with extra columns fails with
+/// [`TrajectoryIoErrorKind::UnsupportedVariant`] under options that reject
+/// them. Later reads return
 /// [`TrajectoryIoErrorKind::IndexMismatch`] for a frame that does not end
 /// where the index says or records another time or step, besides the
 /// codec's decoding errors.
 ///
 /// [`TrajectoryIoErrorKind::IndexMismatch`]: crate::traj::TrajectoryIoErrorKind::IndexMismatch
 /// [`TrajectoryIoErrorKind::LimitExceeded`]: crate::traj::TrajectoryIoErrorKind::LimitExceeded
+/// [`TrajectoryIoErrorKind::UnsupportedVariant`]: crate::traj::TrajectoryIoErrorKind::UnsupportedVariant
 pub fn open_indexed_trajectory_from_index(
     path: impl AsRef<Path>,
     topology: impl Into<Arc<Topology>>,
@@ -1026,21 +1031,28 @@ fn open_indexed(
                     Reason::PrefixMismatch,
                 ));
             }
-            if index.frame_count() > index_hard_capacity(&options.limits) {
+            let capacity = index_hard_capacity(&options.limits);
+            let max_frames = options.limits.max_frames();
+            // Frames without positions count against the frame limit too.
+            let exceeded = if index.frame_count() > capacity {
+                Some(LimitExceeded::new(
+                    Resource::Frames,
+                    capacity,
+                    index.frame_count(),
+                ))
+            } else {
+                (index.covered_frames() > max_frames).then(|| {
+                    LimitExceeded::new(Resource::Frames, max_frames, index.covered_frames())
+                })
+            };
+            if let Some(exceeded) = exceeded {
                 return Err(TrajectoryIoError::codec(
                     TrajectoryIoErrorKind::LimitExceeded,
                     TrajectoryIoOperation::Open,
                     Some(format),
                 )
                 .with_source_label(&label)
-                .exceeding(
-                    Part::Index,
-                    LimitExceeded::new(
-                        Resource::Frames,
-                        index_hard_capacity(&options.limits),
-                        index.frame_count(),
-                    ),
-                ));
+                .exceeding(Part::Index, exceeded));
             }
             Some(index)
         }
@@ -1066,7 +1078,7 @@ fn open_indexed(
         TrajectoryFormat::Xyz => {
             let xyz_options = options.xyz;
             let reader = match imported {
-                Some((offsets, _)) => {
+                Some((offsets, facts)) => {
                     let mut reader = xyz::IndexedXyzReader::from_offsets(
                         reader,
                         topology,
@@ -1074,6 +1086,7 @@ fn open_indexed(
                         source,
                         offsets,
                         growing,
+                        facts,
                     )?;
                     reader.inner.extend(growing, &control)?;
                     reader
@@ -1126,14 +1139,14 @@ fn open_indexed(
         TrajectoryFormat::Trr => {
             let trr_options = options.trr;
             let reader = match imported {
-                Some((offsets, precision_mixed)) => {
+                Some((offsets, facts)) => {
                     let mut reader = trr::IndexedTrrReader::from_offsets(
                         reader,
                         topology,
                         trr_options,
                         source,
                         offsets,
-                        precision_mixed,
+                        facts,
                     )?;
                     reader.inner.extend(growing, &control)?;
                     reader

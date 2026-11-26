@@ -14,9 +14,10 @@ use kekule::topology::Topology;
 use kekule::traj::io::xyz::{IndexedXyzReader, XyzReadOptions, XyzReader, XyzWriter};
 use kekule::traj::io::{
     create_trajectory_writer, detect_trajectory_format, open_indexed_trajectory,
-    open_indexed_trajectory_with, open_trajectory, FieldAvailability, FormatDetectionEvidence,
-    RandomAccessCapability, TrajectoryFormatHint, TrajectoryIoLimits, TrajectoryOpenNote,
-    TrajectoryOpenOptions, TrajectoryWriteOptions,
+    open_indexed_trajectory_from_index, open_indexed_trajectory_with, open_trajectory,
+    FieldAvailability, FormatDetectionEvidence, RandomAccessCapability, TrajectoryFormatHint,
+    TrajectoryFrameIndex, TrajectoryIoLimits, TrajectoryOpenNote, TrajectoryOpenOptions,
+    TrajectoryWriteOptions,
 };
 use kekule::traj::{
     FrameBuffer, FrameData, SeekableTrajectoryReader, TrajectoryFormat, TrajectoryIoError,
@@ -1216,13 +1217,21 @@ fn xyz_open_reports_count_the_frames_with_extra_columns() {
         "2\none\nC 0 0 0 a\nCl 1 0 0\n2\ntwo\nC 0 0 0\nCl 1 0 0\n2\nthree\nC 0 0 0\nCl 1 0 0 b\n",
     )
     .unwrap();
-    let reader = open_indexed_trajectory(
-        &path,
-        build_topology(&["C", "Cl"], &[(0, 1)]),
-        TrajectoryOpenOptions::from(
-            XyzReadOptions::default().with_extra_columns(UnsupportedContent::Report),
-        ),
+    let topology = build_topology(&["C", "Cl"], &[(0, 1)]);
+    let options = TrajectoryOpenOptions::from(
+        XyzReadOptions::default().with_extra_columns(UnsupportedContent::Report),
     );
+    let reader = open_indexed_trajectory(&path, Arc::clone(&topology), options.clone());
+    // Reopened from its index, the file is noted alike, and options that
+    // reject the columns refuse the index.
+    let reopen = |options| {
+        let bytes = reader.as_ref().unwrap().to_frame_index().to_bytes();
+        let index =
+            TrajectoryFrameIndex::from_bytes(&bytes, &TrajectoryIoLimits::default()).unwrap();
+        open_indexed_trajectory_from_index(&path, Arc::clone(&topology), index, options)
+    };
+    let reopened = reopen(options).map(|reader| reader.open_report().notes().to_vec());
+    let strict = reopen(TrajectoryOpenOptions::default()).err();
     std::fs::remove_file(&path).unwrap();
     let reader = reader.unwrap();
     assert_eq!(reader.frame_count(), Some(3));
@@ -1230,6 +1239,12 @@ fn xyz_open_reports_count_the_frames_with_extra_columns() {
         .open_report()
         .notes()
         .contains(&TrajectoryOpenNote::XyzExtraColumns(2)));
+    assert!(reopened
+        .unwrap()
+        .contains(&TrajectoryOpenNote::XyzExtraColumns(2)));
+    let strict = strict.unwrap();
+    assert_eq!(strict.kind(), TrajectoryIoErrorKind::UnsupportedVariant);
+    assert!(strict.to_string().contains("covers 2 frames with columns"));
 }
 
 #[test]

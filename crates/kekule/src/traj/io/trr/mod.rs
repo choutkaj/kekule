@@ -235,7 +235,7 @@ impl TrrReadOptions {
     /// [`UnsupportedContent::Reject`] by default, which fails at the first.
     /// [`UnsupportedContent::Report`] skips them: the frames read are those
     /// with positions, each with its own velocities and forces, and an
-    /// indexed reader's open report counts the frames its scan skipped
+    /// indexed reader's open report counts the frames skipped
     /// ([`TrajectoryOpenNote::TrrFramesWithoutPositions`]). Skipped frames
     /// count against [`TrajectoryIoLimits::max_frames`].
     ///

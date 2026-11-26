@@ -69,10 +69,11 @@ impl<R: BufRead + Seek> IndexedXyzReader<R> {
         Ok(Self { inner })
     }
 
-    /// Opens the stream with previously verified `offsets` instead of
-    /// scanning it; frame 0 is verified here, and random reads verify each
-    /// frame against the offsets. A `growing` stream is extended as in
-    /// [`Self::build`].
+    /// Opens the stream with previously verified `offsets` and the `facts`
+    /// of their scans instead of scanning it; frame 0 is verified here, and
+    /// random reads verify each frame against the offsets. A `growing`
+    /// stream is extended as in [`Self::build`]. Offsets of frames with
+    /// columns after their coordinates need options that omit those.
     pub(crate) fn from_offsets(
         mut reader: R,
         topology: Arc<Topology>,
@@ -80,7 +81,17 @@ impl<R: BufRead + Seek> IndexedXyzReader<R> {
         source: ReadSource,
         offsets: Arc<FrameOffsets>,
         growing: bool,
+        facts: IndexFacts,
     ) -> Result<Self, TrajectoryIoError> {
+        if facts.extra_column_frames > 0 && options.extra_columns != UnsupportedContent::Report {
+            return Err(codec_context(
+                TrajectoryIoErrorKind::UnsupportedVariant,
+                TrajectoryIoOperation::Open,
+                Some(FORMAT),
+                &source.label,
+                Reason::IndexedExtraColumns(facts.extra_column_frames),
+            ));
+        }
         let stream_start = reader.stream_position().map_err(|error| {
             io_context(
                 TrajectoryIoOperation::Open,
@@ -93,6 +104,7 @@ impl<R: BufRead + Seek> IndexedXyzReader<R> {
         reader.growing = growing;
         offsets.verify_start(stream_start, TrajectoryFormat::Xyz, &reader.source.label)?;
         reader.validate_first_frame()?;
+        reader.set_index_facts(facts);
         Ok(Self {
             inner: IndexedReader::new(reader, offsets),
         })
@@ -110,6 +122,7 @@ impl<R: BufRead + Seek> IndexedXyzReader<R> {
             reader.source.clone(),
             Arc::clone(self.inner.shared_offsets()),
             reader.growing,
+            reader.index_facts(),
         )
     }
 }
