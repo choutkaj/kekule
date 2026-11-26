@@ -846,20 +846,14 @@ impl Parser<'_> {
         while self.at_value() || self.at_class_name(&field) {
             let (text, quoted, span) = self.word("a value")?;
             if field.is_ordered() && !quoted && self.peek_keyword() != Some("to") {
-                if let Some(split) = text
-                    .char_indices()
-                    .skip(1)
-                    .find(|&(_, c)| c == '-')
-                    .map(|(i, _)| i)
-                {
-                    let (low, high) = (&text[..split], &text[split + 1..]);
+                if let Some((low, high)) = range_halves(&text) {
+                    let split = low.len();
                     let low_span = span.start..span.start + split;
                     let high_span = span.start + split + 1..span.end;
                     // A property range needs numbers on both sides; `a-b` is
                     // otherwise one text value.
-                    let numeric = |text: &str| text.parse::<f64>().is_ok_and(f64::is_finite);
-                    let splits = field.value_type() != FieldType::Property
-                        || (numeric(low) && numeric(high));
+                    let splits =
+                        field.value_type() != FieldType::Property || is_property_range(&text);
                     if splits {
                         if let (Ok(low), Ok(high)) = (
                             self.literal(&field, low, false, low_span),
@@ -952,11 +946,7 @@ impl Parser<'_> {
                 molecule_class(text).ok_or_else(|| fail("a molecule class"))?,
             ),
             FieldType::Property => {
-                let number = if quoted {
-                    None
-                } else {
-                    text.parse::<f64>().ok().filter(|value| value.is_finite())
-                };
+                let number = if quoted { None } else { property_number(text) };
                 let unit = match (number, self.peek_keyword().and_then(unit)) {
                     (Some(_), Some(unit)) => {
                         self.position += 1;
@@ -972,6 +962,34 @@ impl Parser<'_> {
             }
         })
     }
+}
+
+/// The two sides of a bare `low-high` range, split at the first `-` after
+/// the first character, so `-2--1` is `-2` to `-1`.
+fn range_halves(word: &str) -> Option<(&str, &str)> {
+    let split = word
+        .char_indices()
+        .skip(1)
+        .find(|&(_, character)| character == '-')?
+        .0;
+    Some((&word[..split], &word[split + 1..]))
+}
+
+/// The number a bare property word reads as.
+pub(crate) fn property_number(word: &str) -> Option<f64> {
+    word.parse::<f64>().ok().filter(|value| value.is_finite())
+}
+
+/// Whether a bare property word reads as a range, as `1-2` does.
+pub(crate) fn is_property_range(word: &str) -> bool {
+    range_halves(word).is_some_and(|(low, high)| {
+        property_number(low).is_some() && property_number(high).is_some()
+    })
+}
+
+/// Whether a bare word reads as a unit after a property number.
+pub(crate) fn is_unit(word: &str) -> bool {
+    unit(word).is_some()
 }
 
 /// A range whose property bounds share a unit written on only one of them,
