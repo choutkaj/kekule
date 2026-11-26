@@ -747,6 +747,10 @@ the main branch migrates by the table under "From the SampleSet API".
 - `Topology::perceived_with`, and `perceive_with` on structures and structure
   sets, perceive the definitions on the run's executor in parallel, with the
   same result and error as on one thread.
+- Edits publish faster, with the same result. The fragments of a split
+  molecule are built over per-atom arrays, `StructureEditor::finish` skips
+  the correspondence it drops, and appended residues and sites, and the sites
+  a chain rename changes, share their labels instead of copying them.
 
 ### Removed
 
