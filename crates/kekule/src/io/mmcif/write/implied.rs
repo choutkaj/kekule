@@ -7,17 +7,20 @@
 //! Each test mirrors the reader's connectivity resolution, so a bond is
 //! left unstated only when reading the block gives it back with its order.
 use super::prepare::{AtomRow, ConnectionRow, Implied};
+use crate::components::ComponentLinking;
 use crate::components::{Component, ComponentLibrary};
 use crate::io::macromolecular::connectivity::{
     dictionary_template, hydrogen_sites, is_coordination, link_valence, reader_protonation,
     reader_state, reader_template, standard_link, within_bonding_distance, AtomEvidence,
     PolymerLink, Protonation, ReaderState, ResidueEvidence, StandardLink,
 };
+use crate::io::macromolecular::disulfides::{is_cysteine, pair_sulfurs, Sulfur};
 use crate::io::macromolecular::is_metal;
 use crate::math::Point3;
 use crate::molecule::{BondOrder, Element};
 use crate::topology::InstanceAtomId;
 use std::collections::{BTreeMap, BTreeSet};
+use std::convert::Infallible;
 
 /// The reader's identity of a residue: rows that share it are one residue.
 pub(super) type ResidueKey<'a> = (
@@ -394,27 +397,31 @@ pub(super) struct ComponentTableBond {
     pub(super) aromatic: Option<bool>,
 }
 
+/// What [`mark_implied`] finds beyond the connections the reader derives.
+pub(super) struct Implications {
+    /// The component tables the block states.
+    pub(super) tables: Vec<ComponentTable>,
+    /// For each residue whose template the reader applies but whose atoms
+    /// lack one of its bonds between heavy atoms, the rows of the first such
+    /// pair: the reader adds the bond, so no `_struct_conn` row can keep it
+    /// out.
+    pub(super) missing: Vec<[usize; 2]>,
+    /// The rows of the polymer links the reader makes that no connection
+    /// states: bonds the structure lacks.
+    pub(super) unstated_links: Vec<[usize; 2]>,
+}
+
 /// Marks each connection the reader derives, given the rows' elements in
 /// row order and coordinates written to `precision` decimal places.
-/// Connections reference rows through `row_of`, and `polymer` tells the rows
-/// of polymer entities. Returns the component tables the block states, and,
-/// for each residue whose template the reader applies but whose atoms lack
-/// one of its bonds between heavy atoms, the rows of the first such pair:
-/// the reader adds the bond, so no `_struct_conn` row can keep it out.
+/// `polymer` tells the rows of polymer entities.
 pub(super) fn mark_implied(
     block: &ReadBlock<'_>,
     rows: &[AtomRow],
     elements: &[Element],
     connections: &mut [ConnectionRow],
-    row_of: &BTreeMap<InstanceAtomId, usize>,
     precision: usize,
     polymer: impl Fn(&AtomRow) -> bool,
-) -> (Vec<ComponentTable>, Vec<[usize; 2]>) {
-    let library = block.library;
-    let ends = connections
-        .iter()
-        .map(|connection| [row_of[&connection.left], row_of[&connection.right]])
-        .collect::<Vec<_>>();
+) -> Implications {
     let residue_of = &block.residue_of;
     // The reader keys component tables by upper-case identifier.
     let mut untemplated = BTreeMap::<String, Vec<usize>>::new();
@@ -489,100 +496,175 @@ pub(super) fn mark_implied(
         });
     }
 
-    // The reader links only residues alone at their position along the
-    // chain of a polymer entity.
-    let mut positions = BTreeMap::<(&str, &str, i32), usize>::new();
-    for members in &residues {
-        let row = &rows[members[0]];
-        if let Some(position) = row.label_seq_id {
-            *positions
-                .entry((&row.asym_id, &row.entity_id, position))
-                .or_default() += 1;
-        }
-    }
-    let alone = |row: &AtomRow, position: i32| {
-        positions.get(&(row.asym_id.as_str(), row.entity_id.as_str(), position)) == Some(&1)
-    };
-    for (index, &[first, second]) in ends.iter().enumerate() {
-        if residue_of[first] == residue_of[second] || connections[index].order != BondOrder::Single
-        {
-            continue;
-        }
-        let (Some(a), Some(b)) = (rows[first].label_seq_id, rows[second].label_seq_id) else {
-            continue;
-        };
-        let (left, right) = if a.checked_add(1) == Some(b) {
-            (first, second)
-        } else if b.checked_add(1) == Some(a) {
-            (second, first)
-        } else {
-            continue;
-        };
-        let (left_row, right_row) = (&rows[left], &rows[right]);
-        if !polymer(left_row)
-            || left_row.asym_id != right_row.asym_id
-            || left_row.entity_id != right_row.entity_id
-            || !alone(left_row, a.min(b))
-            || !alone(right_row, a.max(b))
-        {
-            continue;
-        }
-        let linking = |row: &AtomRow| {
-            dictionary_template(library, &row.label_comp_id).map_or(
-                crate::components::ComponentLinking::None,
-                |(component, _)| component.linking(),
-            )
-        };
-        let residues = &residues;
-        let named = |residue: usize| {
-            move |name: &str| {
-                residues[residue]
-                    .iter()
-                    .copied()
-                    .find(|&row| rows[row].label_atom_id == name)
-            }
-        };
-        let connections_ref = &*connections;
-        let residue_of = &residue_of;
-        // The reader's own rule: a linking atom bonded to another residue
-        // keeps the link out, and the block states the bond.
-        let outcome = PolymerLink::undeclared(linking(left_row), linking(right_row)).map(|link| {
-            standard_link(
-                link,
-                named(residue_of[left]),
-                named(residue_of[right]),
-                |atom: usize, partner: usize| {
-                    Ok::<_, std::convert::Infallible>(block.neighbours[atom].iter().any(
-                        |&(other, connection)| {
-                            other != partner
-                                && residue_of[other] != residue_of[atom]
-                                && connection.is_some_and(|connection| {
-                                    !is_coordination(
-                                        connections_ref[connection].order,
-                                        [elements[atom], elements[other]],
-                                    )
-                                })
-                        },
-                    ))
-                },
-                |earlier, later| {
-                    within_bonding_distance(
-                        (
-                            elements[earlier],
-                            written(rows[earlier].position, precision),
-                        ),
-                        (elements[later], written(rows[later].position, precision)),
-                    )
-                },
-            )
-        });
-        if let Some(Ok(StandardLink::Linked(pair))) = outcome {
-            if pair == [left, right] {
+    // A connection between the atoms the reader links is derived; a link
+    // no connection states is a bond the structure lacks.
+    let mut unstated_links = Vec::new();
+    for [left, right] in polymer_links(block, rows, elements, connections, precision, polymer) {
+        let stated = block.neighbours[left]
+            .iter()
+            .find_map(|&(other, connection)| connection.filter(|_| other == right));
+        match stated {
+            Some(index) if connections[index].order == BondOrder::Single => {
                 connections[index].implied = Some(Implied::PolymerLink);
             }
+            Some(_) => {}
+            None => unstated_links.push([left, right]),
         }
     }
-    (tables, missing)
+    Implications {
+        tables,
+        missing,
+        unstated_links,
+    }
+}
+
+/// The rows the reader links between residues alone at consecutive
+/// positions along the chain of a polymer entity, the earlier residue's
+/// first, by the reader's own rule: a linking atom bonded to another
+/// residue keeps the link out, and the atoms lie within bonding distance at
+/// coordinates written to `precision` decimal places.
+fn polymer_links(
+    block: &ReadBlock<'_>,
+    rows: &[AtomRow],
+    elements: &[Element],
+    connections: &[ConnectionRow],
+    precision: usize,
+    polymer: impl Fn(&AtomRow) -> bool,
+) -> Vec<[usize; 2]> {
+    let residues = block
+        .residues
+        .iter()
+        .map(|residue| residue.members.as_slice())
+        .collect::<Vec<_>>();
+    let mut placed = BTreeMap::<(&str, &str, i32), Vec<usize>>::new();
+    for (residue, members) in residues.iter().enumerate() {
+        let row = &rows[members[0]];
+        if let Some(position) = row.label_seq_id {
+            placed
+                .entry((&row.asym_id, &row.entity_id, position))
+                .or_default()
+                .push(residue);
+        }
+    }
+    let linking = |row: &AtomRow| {
+        dictionary_template(block.library, &row.label_comp_id)
+            .map_or(ComponentLinking::None, |(component, _)| component.linking())
+    };
+    let named = |residue: usize| {
+        let members = residues[residue];
+        move |name: &str| {
+            members
+                .iter()
+                .copied()
+                .find(|&row| rows[row].label_atom_id == name)
+        }
+    };
+    let residue_of = &block.residue_of;
+    let mut links = Vec::new();
+    for (&(asym, entity, position), earlier) in &placed {
+        let &[earlier] = earlier.as_slice() else {
+            continue;
+        };
+        let Some(&[later]) = position
+            .checked_add(1)
+            .and_then(|next| placed.get(&(asym, entity, next)))
+            .map(Vec::as_slice)
+        else {
+            continue;
+        };
+        let (left_row, right_row) = (&rows[residues[earlier][0]], &rows[residues[later][0]]);
+        if !polymer(left_row) {
+            continue;
+        }
+        let Some(link) = PolymerLink::undeclared(linking(left_row), linking(right_row)) else {
+            continue;
+        };
+        let outcome = standard_link(
+            link,
+            named(earlier),
+            named(later),
+            |atom: usize, partner: usize| {
+                Ok::<_, Infallible>(block.neighbours[atom].iter().any(|&(other, connection)| {
+                    other != partner
+                        && residue_of[other] != residue_of[atom]
+                        && connection.is_some_and(|connection| {
+                            !is_coordination(
+                                connections[connection].order,
+                                [elements[atom], elements[other]],
+                            )
+                        })
+                }))
+            },
+            |left, right| {
+                within_bonding_distance(
+                    (elements[left], written(rows[left].position, precision)),
+                    (elements[right], written(rows[right].position, precision)),
+                )
+            },
+        );
+        if let Ok(StandardLink::Linked(pair)) = outcome {
+            links.push(pair);
+        }
+    }
+    links
+}
+
+/// The rows of the disulfides the reader infers that no connection
+/// states: between cysteine `SG` atoms that no `_struct_conn` or `metalc`
+/// row joins to another residue and no hydrogen of their residue lies
+/// within bonding distance of, at coordinates written to `precision`
+/// decimal places.
+pub(super) fn unstated_disulfides(
+    block: &ReadBlock<'_>,
+    rows: &[AtomRow],
+    elements: &[Element],
+    connections: &[ConnectionRow],
+    precision: usize,
+) -> Vec<[usize; 2]> {
+    let residue_of = &block.residue_of;
+    let joined = |row: usize| {
+        block.neighbours[row].iter().any(|&(other, connection)| {
+            residue_of[other] != residue_of[row]
+                && connection.is_none_or(|connection| connections[connection].implied.is_none())
+        })
+    };
+    let mut hydrogens = BTreeMap::<usize, Vec<Point3>>::new();
+    let mut candidates = Vec::new();
+    for (index, row) in rows.iter().enumerate() {
+        if !is_cysteine(&row.label_comp_id) {
+            continue;
+        }
+        let point = written(row.position, precision);
+        if elements[index].atomic_number() == 1 {
+            hydrogens.entry(residue_of[index]).or_default().push(point);
+        } else if row.label_atom_id == "SG" && elements[index] == Element::S && !joined(index) {
+            candidates.push((index, point));
+        }
+    }
+    let mut sulfurs = candidates
+        .into_iter()
+        .filter(|&(index, point)| {
+            !hydrogens.get(&residue_of[index]).is_some_and(|points| {
+                points.iter().any(|&hydrogen| {
+                    within_bonding_distance((Element::S, point), (Element::H, hydrogen))
+                })
+            })
+        })
+        .map(|(index, point)| Sulfur {
+            residue: residue_of[index],
+            order: index,
+            point,
+        })
+        .collect::<Vec<_>>();
+    let Ok(pairs) = pair_sulfurs(&mut sulfurs, || Ok::<_, Infallible>(()));
+    pairs
+        .into_iter()
+        .filter(|&[left, right]| {
+            !block.neighbours[left]
+                .iter()
+                .any(|&(other, connection)| other == right && connection.is_some())
+        })
+        .collect()
 }
 
 /// The `_chem_comp_bond` rows that give every residue of one component its

@@ -779,6 +779,30 @@ fn coordinates_and_property_units_are_preserved_with_missing_rows() {
         })
     ));
     assert_eq!(format!("{editor:?}"), before);
+    // So does a value too large for the draft's unit: the largest length in
+    // nanometres has no finite value in ångströms.
+    source
+        .geometry_mut()
+        .properties_mut()
+        .atoms_mut()
+        .remove(&key("distance"))
+        .unwrap();
+    set_atom_value(
+        &mut source,
+        source_atom,
+        key("distance"),
+        PropertyValue::real(f64::MAX, NANOMETER).unwrap(),
+    );
+    let mut editor = destination.to_editor();
+    let before = format!("{editor:?}");
+    assert!(matches!(
+        editor.append_structure(&source),
+        Err(StructureEditError::AppendProperty {
+            domain: kekule::properties::PropertyDomain::GeometryAtoms,
+            ..
+        })
+    ));
+    assert_eq!(format!("{editor:?}"), before);
 }
 
 fn cell(size: f64, axes: [bool; 3]) -> PeriodicCell {

@@ -183,6 +183,15 @@ pub enum WriteOmission {
         /// The residues affected.
         residues: usize,
     },
+    /// Bonds the structure lacks that readers make from distance, between
+    /// this many atom pairs: a standard polymer link between residues
+    /// adjacent along a chain, or a disulfide between cysteine `SG` atoms,
+    /// whose atoms lie within bonding distance. PDB and mmCIF have no record
+    /// that keeps two atoms unbonded.
+    InferredBonds {
+        /// The atom pairs readers bond.
+        bonds: usize,
+    },
     /// A periodic cell the format cannot carry, of this many written
     /// structures or blocks.
     Cell {
@@ -449,6 +458,7 @@ impl Omissions {
             O::Coordination { records } => records,
             O::CoordinationBonds { bonds } => bonds,
             O::DictionaryBonds { residues } => residues,
+            O::InferredBonds { bonds } => bonds,
             O::ChainIds { chains } => chains,
             O::Cell { structures }
             | O::Occupancies { structures }
@@ -487,6 +497,7 @@ impl Omissions {
             O::Coordination { records } => *records += added,
             O::CoordinationBonds { bonds } => *bonds += added,
             O::DictionaryBonds { residues } => *residues += added,
+            O::InferredBonds { bonds } => *bonds += added,
             O::ChainIds { chains } => *chains += added,
             O::Cell { structures }
             | O::Occupancies { structures }

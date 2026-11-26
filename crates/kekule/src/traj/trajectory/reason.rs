@@ -501,7 +501,6 @@ pub(crate) enum Reason {
     IndexedBytesChanged,
     IndexForOtherFormat(TrajectoryFormat),
     PrefixMismatch,
-    IndexNsetMismatch,
     ChangedWhileIndexed,
     TrailingBytes(Encoding),
     ReservedByte(Encoding),
@@ -531,6 +530,9 @@ pub(crate) enum Reason {
         format: TrajectoryFormat,
     },
     IndexLength,
+    IndexFrameCounts(TrajectoryFormat),
+    IndexedFramesWithoutPositions(usize),
+    IndexedExtraColumns(usize),
     OffsetOutOfOrder(usize),
     IndexTimeNotFinite(usize),
     EncodingTruncated(Encoding),
@@ -580,9 +582,6 @@ pub(crate) enum Reason {
     StepSequenceRange,
     DeltaNotTime,
     InvalidDelta(f32),
-    IndexBeyondNset,
-    FramesBeyondNset,
-    EndsBeforeNset,
     FrameCountField,
     CellNotFinite,
     BoxNotFinite,
@@ -635,6 +634,8 @@ pub(crate) enum Reason {
     NoCommentLine,
     EndsBeforeAtomLine(usize),
     AtomLineFields(usize),
+    ExtraColumns(usize),
+    ContentAfterBlankLine,
     UnknownElement {
         line: usize,
         symbol: Box<str>,
@@ -872,9 +873,6 @@ impl fmt::Display for Reason {
                 return write!(formatter, "The index was built for a {format} file.")
             }
             Self::PrefixMismatch => "The file does not begin with the bytes the index covers.",
-            Self::IndexNsetMismatch => {
-                "The index's frame count differs from the frame count NSET in the header."
-            }
             Self::ChangedWhileIndexed => "The file changed while it was indexed.",
             Self::TrailingBytes(encoding) => {
                 return write!(formatter, "The {encoding} has trailing bytes.")
@@ -938,6 +936,27 @@ impl fmt::Display for Reason {
                 )
             }
             Self::IndexLength => "The frame index's length does not match its frame count.",
+            Self::IndexFrameCounts(format) => {
+                return write!(
+                    formatter,
+                    "The frame index counts frames without positions or with extra columns \
+                     that {format} frames cannot hold."
+                )
+            }
+            Self::IndexedFramesWithoutPositions(count) => {
+                return write!(
+                    formatter,
+                    "The frame index covers {count} frames without positions. The read \
+                     options reject them."
+                )
+            }
+            Self::IndexedExtraColumns(count) => {
+                return write!(
+                    formatter,
+                    "The frame index covers {count} frames with columns after their \
+                     coordinates. The read options reject them."
+                )
+            }
             Self::OffsetOutOfOrder(entry) => {
                 return write!(
                     formatter,
@@ -1067,13 +1086,6 @@ impl fmt::Display for Reason {
                     "The time step DELTA is {delta}. It is not a finite, nonnegative number."
                 )
             }
-            Self::IndexBeyondNset => {
-                "The index counts more frames than the frame count NSET in the header."
-            }
-            Self::FramesBeyondNset => {
-                "The file holds more frames than the frame count NSET in its header."
-            }
-            Self::EndsBeforeNset => "The file ends before the frame count NSET in its header.",
             Self::FrameCountField => {
                 "The trajectory has more frames than the 32-bit frame count of the header holds."
             }
@@ -1164,12 +1176,23 @@ impl fmt::Display for Reason {
                 return write!(formatter, "The frame ends before atom line {line}.")
             }
             Self::AtomLineFields(line) => {
-                return write!(formatter, "Atom line {line} does not have four fields.")
+                return write!(
+                    formatter,
+                    "Atom line {line} lacks an element or one of three coordinates."
+                )
             }
+            Self::ExtraColumns(line) => {
+                return write!(
+                    formatter,
+                    "Atom line {line} has columns after its coordinates."
+                )
+            }
+            Self::ContentAfterBlankLine => "Content follows a blank line after the last frame.",
             Self::UnknownElement { line, symbol } => {
                 return write!(
                     formatter,
-                    "Atom line {line} has the unknown element symbol {symbol:?}."
+                    "Atom line {line} names {symbol:?}. It is neither an element symbol nor an \
+                     atomic number."
                 )
             }
             Self::ElementMismatch {

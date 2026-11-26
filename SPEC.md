@@ -905,7 +905,7 @@ the records they concern.
 
 Coordinate-only trajectory formats are the deliberate exception: they carry no
 chemistry, so codecs decode frames against a caller-supplied topology. XYZ is
-read both ways: `kekule::xyz` interprets its frames into structures through
+read both ways, from the same atom lines: `kekule::xyz` interprets its frames into structures through
 this pipeline, and `kekule::traj` streams its coordinates against a topology.
 `kekule::xyz::write` writes a structure or a structure set, and the
 `kekule::traj` codec streams frames in the same text.
@@ -1024,8 +1024,10 @@ sets `UnrepresentablePolicy::Omit` for that kind of content, each kind with its
 own policy, and the writer's `WriteReport` names every omission. The PDB and
 mmCIF writers treat represented chemistry the same way: fixed
 implicit-hydrogen counts have one policy, and stereo, radicals, atom maps,
-isotopes the format cannot name, and bonds its connectivity records cannot
-state have another, the chemistry policy. Each writer
+isotopes the format cannot name, bonds its connectivity records cannot
+state, and atoms the structure leaves unbonded that a reader bonds from
+distance, a standard polymer link or a disulfide within bonding distance,
+have another, the chemistry policy. Each writer
 states what its format carries as one constant, and one shared check builds
 both the error and the report entries, in one order: cell; place on an order;
 time and step; velocities and forces; occupancies and B factors; properties.

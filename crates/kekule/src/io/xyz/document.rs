@@ -21,6 +21,7 @@ use crate::io::lines::read_line;
 use crate::math::Point3;
 use crate::molecule::Element;
 
+use super::atom_line::{parse_atom_line, AtomLineError};
 use super::interpret::{interpret_xyz, interpret_xyz_structure_set};
 use super::{
     XyzInterpretOptions, XyzInterpretation, XyzStructureSetInterpretOptions,
@@ -541,39 +542,22 @@ fn next_frame(
 }
 
 fn parse_atom(line: usize, text: &str) -> Result<XyzAtom, FormatError> {
-    let mut rest = text.trim_start();
-    let mut field = || {
-        let end = rest.find(char::is_whitespace).unwrap_or(rest.len());
-        let (value, tail) = rest.split_at(end);
-        rest = tail.trim_start();
-        (!value.is_empty()).then_some(value)
-    };
-    let (Some(element), Some(x), Some(y), Some(z)) = (field(), field(), field(), field()) else {
-        return Err(xyz_parse_error(
+    let atom = parse_atom_line(text).map_err(|error| match error {
+        AtomLineError::MissingField => xyz_parse_error(
             DiagnosticKind::Syntax,
             line,
             "The atom line lacks an element or one of three coordinates.",
-        ));
-    };
-    let coordinate = |value: &str| {
-        value
-            .parse::<f64>()
-            .ok()
-            .filter(|value| value.is_finite())
-            .ok_or_else(|| {
-                xyz_parse_error(
-                    DiagnosticKind::InvalidValue,
-                    line,
-                    format!("The coordinate {value:?} is not a finite number."),
-                )
-            })
-    };
-    let position = Point3::new(coordinate(x)?, coordinate(y)?, coordinate(z)?);
-    let extra = rest.trim_end();
+        ),
+        AtomLineError::NotNumber(value) | AtomLineError::NotFinite(value) => xyz_parse_error(
+            DiagnosticKind::InvalidValue,
+            line,
+            format!("The coordinate {value:?} is not a finite number."),
+        ),
+    })?;
     Ok(XyzAtom {
-        element: element.to_owned(),
-        position,
-        extra: (!extra.is_empty()).then(|| extra.to_owned()),
+        element: atom.element.to_owned(),
+        position: atom.position,
+        extra: atom.extra.map(str::to_owned),
         line,
         parsed: true,
     })

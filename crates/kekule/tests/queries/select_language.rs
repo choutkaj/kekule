@@ -78,6 +78,21 @@ fn canonical_printing_normalizes_and_round_trips() {
         ("property tag a-b", "property tag a-b"),
         ("property q 1-2 e", "property q 1 e to 2 e"),
         ("property q -1 to 2 e", "property q -1 e to 2 e"),
+        // Text that would read back as a range or a unit stays quoted.
+        ("property tag \"1-2\"", "property tag \"1-2\""),
+        (
+            "property tag '-1-2' \"1--2\" \"1-2e-3\"",
+            "property tag \"-1-2\" \"1--2\" \"1-2e-3\"",
+        ),
+        ("property tag 1-2e 1e-5", "property tag 1-2e 1e-5"),
+        ("property label 5 \"K\"", "property label 5 \"K\""),
+        ("property label 1-2 \"Da\"", "property label 1 to 2 \"Da\""),
+        (
+            "property label 5 'A' \"Å\" \"kJ/mol\" \"kcal/mol\"",
+            "property label 5 \"A\" \"Å\" \"kJ/mol\" \"kcal/mol\"",
+        ),
+        ("property label 5 K K", "property label 5 K \"K\""),
+        ("property label == \"K\"", "property label == \"K\""),
         ("resclass amino_acid dna", "resclass amino_acid dna"),
         ("molclass small_molecule", "molclass small_molecule"),
         (
@@ -145,6 +160,14 @@ fn parse_errors_are_typed_and_located() {
     assert!(SelectParseOptions::default()
         .with_host_keywords(["two words"])
         .is_err());
+    // Values print bare unless they are lower-case words, so a host keyword
+    // with an upper-case letter or a digit could read back as a value.
+    assert!(SelectParseOptions::default()
+        .with_host_keywords(["Shown"])
+        .is_err());
+    assert!(SelectParseOptions::default()
+        .with_host_keywords(["set2"])
+        .is_err());
 }
 
 fn structure(name: &str) -> Structure {
@@ -156,6 +179,85 @@ fn structure(name: &str) -> Structure {
         .into_structure();
     structure.perceive().unwrap();
     structure
+}
+
+#[test]
+fn backbone_and_sidechain_take_force_field_terminal_oxygens() {
+    // Crambin's C terminus, ASN 46, under PDB, CHARMM, and GROMACS names:
+    // `O` is `OT1` or `OC1`, and `OXT` is `OT2` or `OC2`.
+    let text = std::fs::read_to_string(fixture("pdb/1CRN.pdb")).unwrap();
+    let source = kekule::pdb::parse_str(&text, Default::default())
+        .unwrap()
+        .interpret(Default::default())
+        .unwrap()
+        .into_structure();
+    let names = |o: &str, oxt: &str, expression: &str| {
+        let mut editor = source.to_editor();
+        let renames = editor
+            .topology()
+            .atom_sites()
+            .filter_map(|(id, site)| {
+                let metadata = site.metadata();
+                let residue = editor.topology().residue(site.residue()).unwrap();
+                let name = match metadata.auth_atom_id()? {
+                    "O" => o,
+                    "OXT" => oxt,
+                    _ => return None,
+                };
+                (residue.author_seq_id().map(str::trim) == Some("46")).then(|| {
+                    let metadata = metadata
+                        .clone()
+                        .with_auth_atom_id(Some(name.to_owned()))
+                        .with_label_atom_id(Some(name.to_owned()));
+                    (id, metadata)
+                })
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(renames.len(), 2);
+        for (site, metadata) in renames {
+            editor.set_atom_site_metadata(site, metadata).unwrap();
+        }
+        let structure = editor.finish().unwrap();
+        let selected = parse(expression).evaluate_structure(&structure, Default::default());
+        let topology = structure.topology();
+        let mut names = selected
+            .unwrap()
+            .indices()
+            .iter()
+            .map(|&index| {
+                let metadata = topology
+                    .atom_at(index)
+                    .unwrap()
+                    .atom_site()
+                    .unwrap()
+                    .metadata();
+                metadata.auth_atom_id().unwrap().to_owned()
+            })
+            .collect::<Vec<_>>();
+        let count = names.len();
+        names.sort();
+        names.dedup();
+        (count, names)
+    };
+    let terminus = "resid 46 and ";
+    for (o, oxt) in [("O", "OXT"), ("OT1", "OT2"), ("OC1", "OC2")] {
+        assert_eq!(
+            names(o, oxt, &format!("{terminus}backbone")).1,
+            ["C", "CA", "N", o],
+            "{o} {oxt}"
+        );
+        assert_eq!(
+            names(o, oxt, &format!("{terminus}sidechain")).1,
+            ["CB", "CG", "ND2", "OD1"],
+            "{o} {oxt}"
+        );
+        assert_eq!(names(o, oxt, "backbone").0, 4 * 46, "{o} {oxt}");
+        assert_eq!(
+            names(o, oxt, "sidechain").0,
+            names("O", "OXT", "sidechain").0,
+            "{o} {oxt}"
+        );
+    }
 }
 
 /// What a reference predicate may read about one atom.
@@ -219,7 +321,12 @@ impl Atom<'_> {
     fn is_protein_backbone(&self) -> bool {
         self.class() == MoleculeClass::Protein
             && self.residue_class() == Some(ResidueClass::AminoAcid)
-            && matches!(self.name(), Some("N" | "CA" | "C" | "O"))
+            && matches!(self.name(), Some("N" | "CA" | "C" | "O" | "OT1" | "OC1"))
+    }
+
+    /// Whether the atom is backbone or a C terminus's `OXT`, under any name.
+    fn is_protein_main_chain(&self) -> bool {
+        self.is_protein_backbone() || matches!(self.name(), Some("OXT" | "OT2" | "OC2"))
     }
 }
 
@@ -303,7 +410,7 @@ fn cases() -> Vec<(&'static str, &'static str, Predicate)> {
         each("1AKE", "sidechain", |atom| {
             atom.class() == MoleculeClass::Protein
                 && atom.residue_class() == Some(ResidueClass::AminoAcid)
-                && !matches!(atom.name(), Some("N" | "CA" | "C" | "O" | "OXT"))
+                && !atom.is_protein_main_chain()
                 && atom.element() != Element::H
         }),
         each("1AKE", "element C N", |atom| {
@@ -370,8 +477,7 @@ fn cases() -> Vec<(&'static str, &'static str, Predicate)> {
             atom.resname() == Some("CYS") && atom.name() == Some("SG")
         }),
         each("1CRN", "sidechain and resname THR", |atom| {
-            atom.resname() == Some("THR")
-                && !matches!(atom.name(), Some("N" | "CA" | "C" | "O" | "OXT"))
+            atom.resname() == Some("THR") && !atom.is_protein_main_chain()
         }),
         each("1CRN", "bychain resid 1", |_| true),
         each("1CRN", "polar_hydrogen or hydrogen", |atom| {
@@ -516,6 +622,122 @@ fn topology_evaluation_reports_terms_that_need_more() {
         .evaluate(topology, SelectEvaluateOptions::default())
         .unwrap();
     assert_eq!(names.len(), 6);
+}
+
+#[test]
+fn value_lists_select_what_any_of_their_values_selects() {
+    let structure = structure("mmcif/1AKE.cif");
+    let atoms = structure
+        .topology()
+        .atoms()
+        .map(|view| Atom {
+            view,
+            structure: &structure,
+        })
+        .collect::<Vec<_>>();
+    let evaluate = |text: &str| {
+        parse(text)
+            .evaluate_structure(&structure, SelectEvaluateOptions::default())
+            .unwrap_or_else(|error| panic!("{text}: {error}"))
+            .indices()
+            .iter()
+            .map(|index| index.index())
+            .collect::<Vec<_>>()
+    };
+    let expected = |member: &dyn Fn(usize, &Atom<'_>) -> bool| {
+        atoms
+            .iter()
+            .enumerate()
+            .filter_map(|(index, atom)| member(index, atom).then_some(index))
+            .collect::<Vec<_>>()
+    };
+    let within = |value: i64, ranges: &[(i64, i64)]| {
+        ranges
+            .iter()
+            .any(|&(low, high)| low <= value && value <= high)
+    };
+    let list = |ranges: &[(i64, i64)]| {
+        ranges
+            .iter()
+            .map(|&(low, high)| {
+                if low == high {
+                    low.to_string()
+                } else {
+                    format!("{low}-{high}")
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    // Overlapping, repeated, reversed, and out-of-range values.
+    let index = [
+        (900, 1000),
+        (950, 1100),
+        (5, 5),
+        (3, 3),
+        (5, 5),
+        (2000, 1990),
+        (63, 64),
+        (3300, 99_999),
+    ];
+    let selected = evaluate(&format!("index {}", list(&index)));
+    assert_eq!(selected, expected(&|dense, _| within(dense as i64, &index)));
+    assert!(!selected.is_empty());
+    let resid = [(10, 20), (15, 30), (5, 5), (120, 118), (200, 9999), (2, 2)];
+    assert_eq!(
+        evaluate(&format!("resid {}", list(&resid))),
+        expected(&|_, atom| atom
+            .resid()
+            .is_some_and(|(number, code)| code.is_none() && within(number, &resid)))
+    );
+    assert_eq!(
+        evaluate("name CA C N CA OXT"),
+        expected(&|_, atom| matches!(atom.name(), Some("CA" | "C" | "N" | "OXT")))
+    );
+    assert_eq!(
+        evaluate("resname LYS ALA GLY ALA"),
+        expected(&|_, atom| matches!(atom.resname(), Some("LYS" | "ALA" | "GLY")))
+    );
+}
+
+#[test]
+fn boolean_terms_skip_nothing_that_could_fail() {
+    let structure = structure("mmcif/1CRN.cif");
+    let topology = structure.shared_topology();
+    let on_topology =
+        |text: &str| parse(text).evaluate(topology.clone(), SelectEvaluateOptions::default());
+    // Terms that need a structure still fail once the result is settled.
+    for text in [
+        "none and bfactor > 10",
+        "none and within 5 of water",
+        "all or occupancy < 1",
+        "all or within 5 of water",
+    ] {
+        assert!(
+            matches!(
+                on_topology(text),
+                Err(SelectEvaluateError::RequiresStructure { .. })
+            ),
+            "{text}"
+        );
+    }
+    let unperceived = smiles::to_topology("c1ccccc1O").unwrap();
+    assert!(matches!(
+        parse("none and aromatic").evaluate(unperceived.clone(), SelectEvaluateOptions::default()),
+        Err(SelectEvaluateError::MissingPerception { .. })
+    ));
+    assert!(matches!(
+        parse("all or property charge > 0").evaluate(unperceived, SelectEvaluateOptions::default()),
+        Err(SelectEvaluateError::UnknownProperty { .. })
+    ));
+    // Results stay those of every operand.
+    let count = |text: &str| on_topology(text).unwrap().len();
+    let atoms = topology.atom_count();
+    assert_eq!(count("name SG and none and index 1-10"), 0);
+    assert_eq!(count("none and not (resid 3 or bonded to name SG)"), 0);
+    assert_eq!(count("index 5 or all or byres (name SG)"), atoms);
+    assert_eq!(count("all or (resname CYS and name SG)"), atoms);
+    assert_eq!(count("name SG and (name CB or index 0-10000)"), 6);
 }
 
 #[test]

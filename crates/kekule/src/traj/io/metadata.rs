@@ -3,7 +3,7 @@ use crate::units::Quantity;
 
 use crate::traj::TrajectoryFormat;
 
-use super::{dcd, trr, xtc, xyz, FormatDetectionEvidence};
+use super::{dcd, trr, xtc, xyz, FormatDetectionEvidence, ZeroBoxPolicy};
 
 /// Per-frame availability of one trajectory field.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -303,7 +303,7 @@ impl FileTrajectoryMetadata {
 
     pub(super) fn xtc(
         info: &xtc::XtcFrameInfo,
-        cell_policy: xtc::XtcCellPolicy,
+        zero_box: ZeroBoxPolicy,
         indexed_frame_count: Option<usize>,
     ) -> Self {
         let coordinate_encoding = match info.precision() {
@@ -321,9 +321,9 @@ impl FileTrajectoryMetadata {
             declared_frame_count: None,
             indexed_frame_count,
             fields: TrajectoryFieldAvailability {
-                cell: match cell_policy {
-                    xtc::XtcCellPolicy::RequirePeriodic => FieldAvailability::Required,
-                    xtc::XtcCellPolicy::ZeroMatrixAsAbsent => FieldAvailability::Optional,
+                cell: match zero_box {
+                    ZeroBoxPolicy::Reject => FieldAvailability::Required,
+                    ZeroBoxPolicy::NoCell => FieldAvailability::Optional,
                 },
                 ..xtc::FIELDS
             },
@@ -392,6 +392,20 @@ pub enum TrajectoryOpenNote {
         /// The frames the file holds beyond the imported index.
         appended_frames: usize,
     },
+    /// The DCD header's `NSET` declares another frame count than the file
+    /// holds; the frames in the file are read.
+    DcdFrameCount {
+        /// The frame count the header declares.
+        declared: usize,
+        /// The complete frames the file holds.
+        counted: usize,
+    },
+    /// This many TRR frames have no positions and were skipped
+    /// ([`super::trr::TrrReadOptions::frames_without_positions`]).
+    TrrFramesWithoutPositions(usize),
+    /// This many XYZ frames have columns after the coordinates, which were
+    /// omitted ([`super::xyz::XyzReadOptions::extra_columns`]).
+    XyzExtraColumns(usize),
 }
 
 impl std::fmt::Display for TrajectoryOpenNote {
@@ -410,9 +424,7 @@ impl std::fmt::Display for TrajectoryOpenNote {
             }
             Self::IndexVerified(format) => formatter.write_str(match format {
                 TrajectoryFormat::Xyz => "XYZ index verified every complete frame",
-                TrajectoryFormat::Dcd => {
-                    "DCD index verified record markers and the declared frame count"
-                }
+                TrajectoryFormat::Dcd => "DCD index verified the record markers of every frame",
                 TrajectoryFormat::Trr => "TRR index verified every XDR frame and payload block",
                 TrajectoryFormat::Xtc => {
                     "XTC index fully decoded and verified every compressed frame"
@@ -432,6 +444,20 @@ impl std::fmt::Display for TrajectoryOpenNote {
                 formatter,
                 "{format} index imported and {appended_frames} appended frames verified; \
                  every frame is verified as it is read"
+            ),
+            Self::DcdFrameCount { declared, counted } => write!(
+                formatter,
+                "the DCD header declares {declared} frames; the file holds {counted}"
+            ),
+            Self::TrrFramesWithoutPositions(count) => {
+                write!(
+                    formatter,
+                    "{count} TRR frames without positions were skipped"
+                )
+            }
+            Self::XyzExtraColumns(count) => write!(
+                formatter,
+                "{count} XYZ frames have columns after the coordinates, which were omitted"
             ),
         }
     }

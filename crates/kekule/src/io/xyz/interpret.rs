@@ -14,6 +14,7 @@ use crate::structure::{Geometry, Positions, Structure, StructureBuilder, Structu
 use crate::topology::{AtomSiteMetadata, InstanceAtomId, Topology, TopologyAtomIndex};
 use crate::units::{Quantity, Unit, ANGSTROM};
 
+use super::atom_line::element_of_token;
 use super::{XyzAtom, XyzDocument, XyzFrame};
 use crate::io::is_metal;
 use crate::io::macromolecular::connectivity::{
@@ -723,21 +724,7 @@ fn geometry_error(
 /// atomic number.
 fn resolve_element(atom: &XyzAtom) -> Result<Element, FormatError> {
     let token = atom.element();
-    let element = if token.bytes().all(|byte| byte.is_ascii_digit()) {
-        token
-            .parse::<u8>()
-            .ok()
-            .and_then(Element::from_atomic_number)
-    } else {
-        let mut characters = token.chars();
-        characters.next().and_then(|first| {
-            let symbol = first
-                .to_uppercase()
-                .chain(characters.flat_map(char::to_lowercase))
-                .collect::<String>();
-            Element::from_symbol(&symbol)
-        })
-    };
+    let element = element_of_token(token);
     element.ok_or_else(|| {
         interpret_error(
             DiagnosticKind::InvalidValue,

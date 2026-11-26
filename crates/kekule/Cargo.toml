@@ -54,6 +54,10 @@ name = "selection_dense"
 harness = false
 
 [[bench]]
+name = "selection_values"
+harness = false
+
+[[bench]]
 name = "statistics_accumulators"
 harness = false
 
