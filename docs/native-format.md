@@ -1,14 +1,13 @@
 # Native serialization format
 
 Kekule's native format is the exact persistence of one canonical owner:
-a `Molecule`, `Topology`, `Structure`, `StructureSet`, or `Ensemble`. A `Structure` or `StructureSet`
-may carry its structure interpretation reports, as a
-`StructureInterpretation` or `StructureSetInterpretation`. A structure set
-record may also store only the number of its geometries, kept elsewhere, as a
-`StructureSetDescription`, and an ensemble record likewise with its
-distribution, as an `EnsembleDescription`. A distribution record stores a
-`Distribution` alone, with the number of geometries it partitions, as a
-`DistributionDescription`. Scientific formats (SMILES, Molfile, mmCIF, PDB, trajectory codecs) remain
+a `Molecule`, `Topology`, `Structure`, `StructureSet`, `Weights`, or
+`Clustering`. A `Structure` or `StructureSet` may carry its structure
+interpretation reports, as a `StructureInterpretation` or
+`StructureSetInterpretation`. A structure set record may also store only the
+number of its geometries, kept elsewhere, as a `StructureSetDescription`.
+Weights and clusterings are stored beside their set, each in a record of its
+own. Scientific formats (SMILES, Molfile, mmCIF, PDB, trajectory codecs) remain
 interchange formats and are not native persistence; see
 [Identity and reconstruction](../SPEC.md#identity-and-reconstruction).
 The API lives in [`kekule::native`](../crates/kekule/src/lib.rs); the codec is
@@ -24,9 +23,9 @@ in [`io/native`](../crates/kekule/src/io/native/mod.rs).
   preserves properties at every scope with their units, molecular adjacency
   order, every geometry of a structure or structure set with its positions,
   cell, occupancies, B factors, velocities, and forces, a set's order (times and steps, steps, or
-  coordinates with their unit), its columns, its sampling record, and its owner properties, and an ensemble's
-  distribution (samples, weights, each sample's state, each state's
-  representative, energy, and owner properties, and the target). Interpretation reports
+  coordinates with their unit), its columns, its sampling record, and its owner properties, the log
+  weights and source of weights, and the clusters and representatives of a
+  clustering. Interpretation reports
   round-trip field by field and compare equal. Floating-point values are
   stored as their IEEE-754 bits, so coordinates come back bitwise identical
   (`-0.0` stays `-0.0`).
@@ -59,10 +58,10 @@ in [`io/native`](../crates/kekule/src/io/native/mod.rs).
 ## Versioning
 
 The header carries one format version. The writer writes only the newest,
-`NATIVE_FORMAT_VERSION`, currently **9**. The reader reads every version from
-`NATIVE_FORMAT_OLDEST`, currently **7**, to the newest. One decoder reads
-them all: it keeps the version the header states and branches on it where a
-layout differs. Any other version is rejected with
+`NATIVE_FORMAT_VERSION`, currently **10**. The reader reads every version from
+`NATIVE_FORMAT_OLDEST`, currently **10**, to the newest. One decoder reads
+them all and branches on the version only where a layout differs. Any other
+version is rejected with
 `FormatErrorDetail::NativeVersion { found, oldest, newest }` of kind
 `DiagnosticKind::Unsupported`, whose message says whether a newer Kekule
 wrote the input or its version is no longer read. Unknown header flags are
@@ -76,9 +75,7 @@ the newest are frozen. `NATIVE_FORMAT_OLDEST` rises only at a major release
 
 | Version | Layout |
 | --- | --- |
-| 9 | As specified here. |
-| 8 | As version 9, without `columns` and `sampling` in the set head, and with a distribution that stores `log_weights:opt [f64; sample_count]` in place of `weights` and `temperature:opt f64` in place of `target`. A set read from it moves each geometry's owner properties into its row of the columns and has no sampling record; log weights read as given log weights, none as equal weights, and a temperature as a canonical target. It has no disulfide (`7`) or hydrogen-name (`8`) bond evidence, no issue kinds 20 to 52, and no neutral onium centres in issue kind 12. |
-| 7 | As version 8, without the distribution record (kind 12). |
+| 10 | As specified here. |
 
 Every readable version has files of every kind it has, in
 `crates/kekule/tests/fixtures/native/v<N>/`. A frozen version's files were
@@ -120,19 +117,19 @@ file      := header payload trailer
 header    := magic[8] version:u32 kind:u8 flags:u8 reserved:u16
 magic     := 0x89 'K' 'E' 'K' 0x0D 0x0A 0x1A 0x0A
 kind      := 1 molecule | 2 topology | 3 structure | 7 interpreted structure
-           | 9 structure set | 10 interpreted structure set | 11 ensemble
-           | 12 distribution
-flags     := bit 0: perception stored, zero for a distribution; all other bits zero
+           | 9 structure set | 10 interpreted structure set | 13 weights
+           | 14 clustering
+flags     := bit 0: perception stored, zero for weights and a clustering;
+             all other bits zero
 reserved  := 0
 trailer   := end:u32 = 0x444E_454B ("KEND") crc:u32
 ```
 
-Kinds 4, 5, 6, and 8 are retired and, like any other unlisted kind, rejected
-as unknown.
+Kinds 4, 5, 6, 8, 11, and 12 are retired and, like any other unlisted kind,
+rejected as unknown.
 
-A distribution stores no perception, so its bit 0 is zero, and the reader
-rejects a distribution with bit 0 set. A version that lacks a kind rejects
-it with a message naming the version that has it.
+Weights and a clustering store no perception, so their bit 0 is zero, and the
+reader rejects either with bit 0 set.
 
 `crc` is the CRC-32 (IEEE 802.3, reflected polynomial `0xEDB88320`, as used
 by zlib and PNG) of every preceding byte, header included. The decoded object
@@ -284,8 +281,6 @@ reclassification.
 ```text
 structure      := topology geometry
 structure_set  := set_head geometries
-ensemble       := set_head distribution geometries
-distribution_record := geometry_count:count distribution
 set_head       := topology owner geometry_count:count order columns:table(geometry_count)
                   sampling:opt sampling
 sampling       := temperature:f64 pressure:opt f64 from_step:u64
@@ -296,19 +291,6 @@ order          := 0                                (none)
                                                    (time)
                | 2 [u64; geometry_count]           (steps)
                | 3 unit [f64; geometry_count]      (a coordinate in that unit)
-distribution   := samples weights
-                  assignment:u32[sample_count]
-                  state_count:count state_data[state_count]
-                  target:opt state
-samples        := 0                                (every geometry)
-               | 1 sample_count:count geometry:u32[sample_count]
-weights        := 0                                (equal)
-               | 1 [f64; sample_count]             (log weights)
-               | 2 [f64; sample_count]             (Boltzmann populations)
-               | 3 estimator [f64; sample_count]   (reduced biases)
-estimator      := 0                                (exponential sum)
-               | 1 order:u8                        (cumulant expansion, order 1 to 3)
-state_data     := representative:u32 energy:opt f64 owner
 state          := temperature:f64 pressure:opt f64
 geometries     := 0 geometry[geometry_count]       (inline)
                | 1                                 (stored elsewhere)
@@ -345,36 +327,38 @@ the first sampled step; the keys of the potential-energy column and the bias
 columns, each named once; and the method's label. The reader checks that a
 named column the table holds is a real column of energies.
 
-An ensemble is a structure set and a distribution over its geometries; a
-structure set record states no weights or states. A distribution's samples
-are every geometry, or the geometries that a strictly ascending list of indices
-names; `sample_count` is the geometry count for every geometry. The weights
-are equal, or one finite log weight per sample, the natural logarithm of its
-weight, tagged as given or as Boltzmann populations of the state energies at
-the target, or one reduced bias per sample with the estimator of group
-populations, each finite and at most 1e100 in magnitude; Boltzmann and
-reweighted weights need a target. Each sample's assignment is the
-index of its state, and each state's data holds the sample position of its
-representative. The reader validates the partition: every assignment names a
-stored state, and every representative is a sample of its own state, so no
-state is empty. The target is a thermodynamic state: a finite, positive
-temperature and, at constant pressure, a finite, positive pressure.
-
-A distribution record is a distribution over `geometry_count` geometries
-kept elsewhere, a `DistributionDescription`. The count bounds the
-distribution as a set's geometry count does, and the reader validates the
-partition against it the same way. A host stores a set's distribution in such
-a record beside the set's own record, and checks the count against the set's
-geometries when it reads both.
-
 The geometries section is inline, or tag `1` for geometries stored elsewhere: such
 a structure set record is a `StructureSetDescription`, whose `geometry_count`
-bounds its order and columns as stored geometries would, and such an ensemble
-record an `EnsembleDescription`, whose `geometry_count` bounds its distribution
-too. `StructureSetDescription::of` and `EnsembleDescription::of` describe a set
-or ensemble in memory or read from a trajectory file, so a host stores a file's
-order, columns, sampling record, and distribution beside the file. An interpreted structure set stores
-its geometries inline.
+bounds its order and columns as stored geometries would.
+`StructureSetDescription::of` describes a set in memory or read from a
+trajectory file, so a host stores a file's order, columns, and sampling record
+beside the file. An interpreted structure set stores its geometries inline.
+
+### Weights and clusterings
+
+```text
+weights        := geometry_count:count source log_weight:opt f64[geometry_count]
+source         := 0                                (equal)
+               | 1 temperature:opt f64             (given)
+               | 2 temperature:f64 energy:str      (Boltzmann factors of a column)
+               | 3 state                           (the bias of a biased run)
+clustering     := geometry_count:count cluster_count:count
+                  cluster:(opt u32)[geometry_count] representative:u32[cluster_count]
+```
+
+Weights store one optional log weight per geometry of their set, the natural
+logarithm of its weight; a geometry without one is not a sample. Every log
+weight is finite. The source states a temperature in K, finite and positive,
+and Boltzmann weights also the key of their energy column. Bias weights store
+the sampled state.
+
+A clustering stores an optional cluster per geometry and a representative
+geometry per cluster. The reader checks that every cluster a geometry names
+is stored and that every representative is a geometry of its own cluster, so
+no cluster is empty.
+
+A host stores weights and a clustering beside their set's record and checks
+their geometry count against the set's geometries when it reads them.
 
 ### Interpretation reports
 
@@ -548,8 +532,8 @@ rotation, `6` too many operations; `2` to `5` with a `str`), and its line
 
 `NativeReadOptions` bounds the input bytes; the atoms and bonds of one
 molecule or topology (including the instance expansion of a topology), which
-also bound atom sites and residue site lists; the geometries, samples, and states of one
-structure set or distribution, hierarchy chains and residues, property columns and owner
+also bound atom sites and residue site lists; the geometries of one structure
+set, weights, or clustering, a clustering's clusters, hierarchy chains and residues, property columns and owner
 values, and the entries of report lists; and the byte length of one string.
 The atoms and bonds of one report's instance provenance count against the
 atom and bond limits. The defaults are exported as

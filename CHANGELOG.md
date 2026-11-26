@@ -10,8 +10,9 @@ are marked **Breaking:**.
 ## [Unreleased]
 
 This release rebuilds the structure layer around one word per concept: a
-`Topology`, a `Geometry`, a `Structure` of one geometry, a `StructureSet` of
-many, and an `Ensemble` that adds a `Distribution`. `kekule-traj` becomes the
+`Topology`, a `Geometry`, a `Structure` of one geometry, and a `StructureSet`
+of many, with `Weights` and a `Clustering` of its geometries beside it.
+`kekule-traj` becomes the
 `kekule::traj` module, and structure sets read lazily from trajectory files,
 including files still being written. It adds a native binary format, a
 selection language, a PDB writer, XYZ interpretation, builder geometry,
@@ -35,9 +36,8 @@ the main branch migrates by the table under "From the SampleSet API".
 - `traj::io::open_indexed_structure_set` (and `_from_index`) and
   `IndexedFileTrajectoryReader::into_structure_set` give a set that decodes
   XYZ, DCD, TRR, or XTC geometries on demand, from many threads at once.
-- `StructureSet<IndexedFile>` and `Ensemble<IndexedFile>` are `Clone` and take
-  appended frames with `refresh`, and `Ensemble::load` reads geometries into
-  memory; for a growing file, `Distribution` and the native descriptions gain
+- `StructureSet<IndexedFile>` is `Clone` and takes appended frames with
+  `refresh`; for a growing file, `Weights` and `StructureSetDescription` gain
   `extended_to`.
 - `IndexedFile::release` closes the file of a set, its clones, and all their
   readers, so a host can move the folder that holds it, and
@@ -54,9 +54,10 @@ the main branch migrates by the table under "From the SampleSet API".
   `observe_samples(_with)`, `alignment::geometry_rmsd` and
   `geometry_aligned_rmsd` (`_with`), `clustering::pairwise_fitted_rmsd`.
 - `StructureSet` gains `superpose`, `rmsd`, `aligned_rmsd`, `rmsf`, contact
-  occupancy, and clustering, weighing every geometry 1, and `Ensemble` gains
-  `superpose`; `rmsd` and `aligned_rmsd` measure a set of any storage. Their
-  errors gain `Read`, `Cancelled`, and `ObservationsOutOfRange`.
+  occupancy, and clustering; `rmsf`, contact occupancy, and clustering take
+  optional `Weights` and weigh every geometry 1 without them. `rmsd` and
+  `aligned_rmsd` measure a set of any storage. Their errors gain `Read`,
+  `Cancelled`, and `ObservationsOutOfRange`.
 - `interpret_structure_set` on `pdb::PdbDocument`, mmCIF documents and blocks,
   and `xyz::XyzDocument`; `sdf::structure_set` assembles records into a set;
   `traj::io::read_structure_set` reads a trajectory file as a time-ordered set.
@@ -69,13 +70,12 @@ the main branch migrates by the table under "From the SampleSet API".
   `PropertyTable<GeometryIndex>`, a row per geometry. `select`, `remove`,
   `subset`, `from_reader`, `Processed`, and `refresh` keep each geometry's
   row, and added geometries have missing cells. `StructureSet::columns_mut`
-  and `Ensemble::columns_mut` edit them (`SetColumnsMut`), failing with
+  edits them (`SetColumnsMut`), failing with
   `StructureSetError::Column`; `column_values(&ColumnRef)` reads a real or integer
   column or the order's times, steps, or coordinates as numbers, and
   `steps()` gives the order's steps. `StructureSetRead::columns`,
-  `StructureSetDescription::{columns, with_columns}`, and native format
-  version 9 carry them; a set read from versions 7 and 8 moves its geometries'
-  owner values into columns. `StructureSet::row`, `GeometryView::row`,
+  `StructureSetDescription::{columns, with_columns}`, and the native format
+  carry them. `StructureSet::row`, `GeometryView::row`,
   `SetContext::row`, and `FrameView::row` read one geometry's cells
   (`RowView`). `from_reader` fails with `StructureSetReadError::ColumnRows`
   for a reader whose columns do not have a row per geometry. SDF writes a
@@ -92,7 +92,7 @@ the main branch migrates by the table under "From the SampleSet API".
   `ThermodynamicState`, the first sampled step, the potential-energy and bias
   columns, and a method label. `StructureSet::{sampling, set_sampling}`,
   `StructureSetRead::sampling`, `StructureSetDescription::{sampling,
-  with_sampling}`, and native format version 9 carry it; `select`, `subset`,
+  with_sampling}`, and the native format carry it; `select`, `subset`,
   `from_reader`, `Processed`, and `refresh` keep it. Its columns must be real
   energies (`StructureSetError::SamplingColumn`), each named once
   (`RepeatedSamplingColumn`), and `SetColumnsMut` refuses to remove them
@@ -117,10 +117,11 @@ the main branch migrates by the table under "From the SampleSet API".
   `COORDINATE_FIELD`, `COORDINATE_UNIT_FIELD`); PDB and XYZ refuse them unless
   `geometry_metadata` omits them (`GeometryField::OrderStep`, `OrderCoordinate`).
 - The `kekule::native` binary format stores a `Molecule`, `Topology`,
-  `Structure`, `StructureSet`, or `Ensemble` exactly (`native::write_to`,
-  `native::read`; format version 9, specified in `docs/native-format.md`).
-- Native readers read every format version from `NATIVE_FORMAT_OLDEST`, 7,
-  to `NATIVE_FORMAT_VERSION`, 9; the writer writes the newest. A version
+  `Structure`, `StructureSet`, `Weights`, or `Clustering` exactly
+  (`native::write_to`, `native::read`; format version 10, specified in
+  `docs/native-format.md`).
+- Native readers read every format version from `NATIVE_FORMAT_OLDEST` to
+  `NATIVE_FORMAT_VERSION`, both 10; the writer writes the newest. A version
   outside the range fails with `FormatErrorDetail::NativeVersion { found,
   oldest, newest }`. Files of every readable version are tested; the newest
   version may change in place until a release.
@@ -128,11 +129,10 @@ the main branch migrates by the table under "From the SampleSet API".
   fails with a `FormatError` of `Format::Native`, never a panic.
 - Native files keep interpretation reports (`NativeSource::interpreted_structure`,
   `NativeObject::into_interpretation`) and sets described without their
-  geometries (`StructureSetDescription`, `EnsembleDescription`).
-- A native distribution record stores a `Distribution` with the number of
-  geometries it partitions (`native::DistributionDescription`,
-  `NativeObject::into_distribution_description`), so a host keeps a set's
-  distribution apart from its topology.
+  geometries (`StructureSetDescription`).
+- Native weights and clustering records (`NativeKind::Weights`, `Clustering`;
+  `NativeObject::into_weights`, `into_clustering`) store a set's weights and
+  clusters apart from the set, indexed by its geometries.
 - `InstanceAtomId::to_bits`/`from_bits` and `InstanceBondId::to_bits`/`from_bits`
   give a stable `u64` encoding; every other identifier's `raw()` is stable.
 - The selection language in `kekule::select`: `select::parse` reads text such
@@ -213,9 +213,6 @@ the main branch migrates by the table under "From the SampleSet API".
   a trajectory (`open_indexed_trajectory_with`, `_from_index_with`,
   `append_trajectory_with`) counts bytes and reports the frames indexed so
   far as items (`Progress::with_items`).
-- `Partition::samples_by_state` lists every state's samples in one pass over
-  the samples, where `samples(state)` scans them all for each state, and
-  `Partition::sizes` counts them.
 - `RmsfAccumulator::merge`, `ContactOccupancyAccumulator::merge`, and
   `GroupContactOccupancyAccumulator::merge` combine partial accumulators
   (`StatisticsError::MergeMismatch`); the accumulators are `Clone`.
@@ -281,47 +278,43 @@ the main branch migrates by the table under "From the SampleSet API".
   `with_temperature`, `thermal_energy`); `StructureSetError::InvalidPressure`
   refuses a pressure that is not finite and positive.
 - `units::BAR` and `CANONICAL_PRESSURE_UNIT`.
-- `statistics::Estimator` estimates a group's population `ln Σ exp(b_i)` from
-  reduced log weights (`log_sum`): the exponential sum, or the cumulant
-  expansion to a `CumulantOrder`, second by default.
-- Distributions reweight a biased run from its set's sampling record:
-  `Distribution::reweighted` (given samples and states), `Ensemble::reweight`
-  (an ensemble's samples and states, at another temperature or with another
-  estimator), and `Ensemble::reweighted` (every geometry, as one state). Each
-  sample's reduced bias, `β_s (U + ΣΔV) − β_t U`, is its exact log weight,
-  read as `WeightModel::Reweighted { estimator, reduced }`, with the target the
-  sampled state at the target temperature. `Requirement::Sampling` and
-  `PotentialEnergy` name what a set lacks, and `InvalidReducedBias` refuses an
-  unphysical bias.
-- `Distribution::weighable` tells which proposed samples a reweighting can
-  weigh (`WeighableSamples`), and why each other is left out (`LeftOut`, with
-  an `Unweighable` reason: `BeforeSampling`, `MissingBias { key }`, or
-  `MissingPotentialEnergy` at another temperature). It is the rule every
-  reweighting applies. `Distribution::reweighted` refuses the first left-out
-  sample (`StructureSetError::BeforeSampling`, `MissingColumnValue`).
-  `Ensemble::reweight` leaves them out, drops the states left empty, renumbers
-  the others in order, and returns a `Reweighting` report of the left-out
-  samples and each old state's new index. With no weighable sample, both fail
-  with `StructureSetError::NoWeighableSample`, which names the reason.
-  `DistributionMut::set_estimator` changes the estimator (`NotReweighted`
-  otherwise); `set_target` refuses reweighted weights (`ReweightedTarget`), and
-  `push_sample` and `push_state` refuse new samples (`ReweightedSample`).
-  Native format version 9 stores them as weights tag 3.
-- `Distribution::estimator`, `log_population`, `group_log_populations`
-  (`StructureSetError::GroupingMismatch`, `GroupOutOfRange`,
-  `diagnostics::Countable::Group`), and `group_effective_sample_size` read any
-  group of samples, such as histogram bins.
-- `statistics::Landscape` bins a distribution's samples on one or two
+- `statistics::Weights` holds one optional natural-log weight per geometry
+  of a set, the geometries without one not samples, and its `WeightSource`:
+  `equal` and `equal_over`, `given` log weights with an optional temperature,
+  or `boltzmann` factors `−(E − E_min) / RT` of a set's energy column. It
+  reads `samples`, `log_weight`, `probabilities`, Kish's
+  `effective_sample_size`, exact `log_population`s of any group, `ranked`,
+  and `covering`, and follows its set with `select`, `restricted`, and
+  `extended_to`. Failures are a `WeightsError`.
+- `Weights::from_bias` weighs a biased run from its set's sampling record,
+  `β ΣΔV` at the sampled temperature (`WeightSource::Bias`), leaving out the
+  geometries before the first sampled step or without a bias value
+  (`BiasWeights::left_out`, `LeftOut`, `Unweighable::BeforeSampling`,
+  `MissingBias { key }`). `Requirement::Sampling` names what a set lacks,
+  `WeightsError::InvalidBias` refuses a bias out of range, and
+  `NoWeighableSample` names the reason when no geometry can be weighed.
+- `clustering::Clustering` holds an optional cluster per geometry and a
+  representative per cluster (`new`, `cluster_of`, `members`,
+  `representative`, `sizes`, `select`, `geometries_of`). With `Weights`, it
+  gives each cluster's exact population among the clusters
+  (`log_populations`), `free_energies` at the weights' temperature,
+  `ranked_by_population`, `covering`, and `collapse` into representatives
+  with their clusters' populations.
+- `statistics::Estimator` estimates a landscape cell's population
+  `ln Σ exp(ℓ_i)` from its samples' log weights (`log_sum`): the exact
+  exponential sum, the default, or the cumulant expansion to a
+  `CumulantOrder` (`LandscapeOptions::with_estimator`).
+- `statistics::Landscape` bins the samples of `Weights` on one or two
   `GridAxis`es (a `Quantity` of values by geometry and a `Binning` from one
   edge to the other, `between` them or `periodic`, or `covering` the values)
   into `Cell`s with a count, an effective count, a population by the
-  distribution's estimator, and a representative, the sample nearest the
-  cell's centre: `free_energy` (`-RT ln(P / P_max)` in kJ/mol at the target
+  options' estimator, and a representative, the sample nearest the cell's
+  centre: `free_energy` (`-RT ln(P / P_max)` in kJ/mol at the weights'
   temperature, `P_max` of the most populated cell with a value) and `mean`
   of a `Quantity` of values by exact shares (`SurfaceQuantity`).
   `LandscapeOptions` masks the values of cells with fewer samples than
   `fewest` (unless set, 10 for a free energy and 1 for a mean) and takes a
-  temperature for a distribution without a target, refusing a different one
+  temperature for weights without one, refusing a different one
   (`ConflictingTemperature`); `probabilities` is the weighted histogram,
   `lowest_cell` is the cell with the lowest value, and `cell_at` and `center`
   convert between cells and axis values. Failures are a `LandscapeError`;
@@ -384,8 +377,8 @@ the main branch migrates by the table under "From the SampleSet API".
   from `from_reader`) for a value of another type or unit than its column.
   `remove`, `replace`'s returned geometry, `into_geometries`, `to_structure`,
   `FrameBuffer::copy_from`, and `MemoryTrajectoryWriter` carry the row's
-  cells as owner values again. `StructureSet::get_mut` and `Ensemble::get_mut`
-  return a `SetGeometryMut`, which edits everything but owner values
+  cells as owner values again. `StructureSet::get_mut` returns a
+  `SetGeometryMut`, which edits everything but owner values
   (`atom_properties_mut`, `bond_properties_mut`). Geometries of a
   `StructureSet<IndexedFile>` keep their codec's per-frame values, such as a
   TRR lambda, as their own. Migration: write a geometry's scalar with
@@ -436,43 +429,29 @@ the main branch migrates by the table under "From the SampleSet API".
   (format version 7). Read them from the `StructureView`, not the `SetContext`.
 - `Velocities` and `Forces` share storage between clones, as `Positions`
   does, and store no runtime unit; their values are in the canonical unit.
-- **Breaking:** `GeometryError::NonFiniteEnergy` and `NonFiniteTime` are
-  `StructureSetError::NonFiniteEnergy` and `NonFiniteTime`; `StateData::set_energy`,
-  `FrameView::new`, `FrameBuffer::set_time`, and `replace_from_data` return
-  `StructureSetError`.
-- **Breaking:** `Ensemble` now owns one `StructureSet` and one `Distribution`
-  (`Ensemble::new`, `uniform`, `weighted`, `into_parts`); geometry edits,
-  `select_states`, `collapse`, and `state`/`states` go through it.
-- **Breaking:** A `Distribution` holds samples (`Samples`), a weight model read
-  as a `WeightModel` (`Equal`, `LogWeights`, or `Boltzmann` natural-log weights;
-  `weight_model`, `with_log_weights`), a `Partition` into states with one
-  `StateData` each (energy, properties), and an optional target
-  `ThermodynamicState` (`target`, fallible `with_target`; `temperature` is
-  the target's); `DistributionMut` edits it (`set_equal_weights`,
-  `set_log_weights`, fallible `set_target`, `assign_boltzmann_populations` at
-  a target), and `StateView` reads a state with its samples and population.
-  Boltzmann weights keep their tag through edits to samples, states, and
-  energies; setting weights or a target at another temperature drops it.
-  A group's population, a state's included, is the distribution's estimator
-  over its samples' exact log weights, and a sample's share within it is
-  exact, so a sample's probability is its state's times its share within the
-  state; `effective_sample_size` is Kish's over the exact weights.
-  Clustering weighs samples by their exact log weights.
-- **Breaking:** Log weights span hundreds of orders of magnitude without
-  underflow; `probabilities`, rankings, and `effective_sample_size` move from
-  the old `Ensemble` to `Distribution`.
-- **Breaking:** `clustering::EnsemblePartition` is `structure::Partition`
-  (`one_state`, `state_per_sample`), and `ClusteringError::PartitionMismatch`
-  is `StructureSetError::PartitionMismatch`.
-- **Breaking:** `assign_boltzmann_weights` is `assign_boltzmann_populations`,
-  `covering_weight` is `covering_population`, and `normalize_weights` is
-  `normalize_log_weights`; `regroup` and `ranked_by_population` are new.
-- **Breaking:** `DistributionMut::regroup` gives a state merged from several
-  whole states their free energy, `-RT ln Σ exp(-E_i / RT)` at the
-  target's temperature, instead of its representative's energy, so that
-  energy differences match Boltzmann populations. A merged state has no
-  energy when any merged state has none or the distribution has no
-  target; a state taking part of a split state has none.
+- **Breaking:** `GeometryError::NonFiniteTime` is
+  `StructureSetError::NonFiniteTime`, and `GeometryError::NonFiniteEnergy`
+  goes with member energies; `FrameView::new`, `FrameBuffer::set_time`, and
+  `replace_from_data` return `StructureSetError`.
+- **Breaking:** A `StructureSet` replaces `Ensemble`, and `statistics::Weights`
+  beside it replaces member weights. Weights are natural logarithms, so they
+  span hundreds of orders of magnitude without underflow, and every
+  population is exact. `probabilities`, `effective_sample_size`, `ranked`
+  (`ranked_by_weight`), and `covering` (`covering_weight`) are `Weights`
+  methods; `assign_boltzmann_weights` is `Weights::boltzmann` over an energy
+  column, which holds what member energies held, and `ranked_by_energy` and
+  `within_energy_window` go. Migration: keep the energies in a set column and
+  pass `Some(&weights)` to the set's methods.
+- **Breaking:** Clustering returns a `clustering::Clustering` in place of an
+  `EnsemblePartition` and never changes the set. `cluster_by_radius`,
+  `cluster_hierarchical`, `cluster_k_medoids`, and `pairwise_fitted_rmsd` are
+  `StructureSet` methods taking `Option<&Weights>`: with weights, the samples
+  are clustered, radius clustering visits them by descending weight, and
+  medoids weigh them exactly; without, every geometry is, equally and in index
+  order. Visiting by ascending energy goes. `collapse` is
+  `Clustering::collapse`, which gives the representatives and their clusters'
+  populations as given `Weights`. `Dendrogram::clustering` cuts a tree into a
+  `Clustering`, each cluster represented by its heaviest member.
 - **Breaking:** `StructureEnsembleInterpretOptions` is
   `StructureSetInterpretOptions`, and `interpret_conformations` and multi-model
   PDB and mmCIF give a plain `StructureSet`.
@@ -536,7 +515,7 @@ the main branch migrates by the table under "From the SampleSet API".
   indexed reader end after its last indexed frame.
 - **Breaking:** RMSF and contact occupancy move to `kekule::statistics` as
   weighted statistics: accumulators observe an `AsStructureView` with a weight,
-  and `kekule_traj::analysis::rmsf` is `StructureSet::rmsf` or `Ensemble::rmsf`.
+  and `kekule_traj::analysis::rmsf` is `StructureSet::rmsf`.
 - **Breaking:** `ReductionError` is `StatisticsError` (`NoObservations`,
   `index`, `InvalidWeight`, `WeightOverflow`); results report
   `observation_count`, `total_weight`, and `contact_weights`.
@@ -807,15 +786,16 @@ the main branch migrates by the table under "From the SampleSet API".
   Perceive first, or use a perceived topology.
 - **Breaking:** `TopologyEditor::new` and its `Default`; build a topology
   from scratch with `TopologyBuilder`, or start an empty `StructureEditor`.
-- **Breaking:** `EnsembleMember`, its views, `EnsembleIter`, `EnsembleError`,
-  `Ensemble::from_models`, and `from_molecule_positions`; build a
-  `StructureSet` (`from_structures`, `from_geometries`), then `Ensemble::new`.
+- **Breaking:** `Ensemble`, `EnsembleMember`, its views, `EnsembleIter`,
+  `EnsembleError`, `Ensemble::from_models`, and `from_molecule_positions`;
+  build a `StructureSet` (`from_structures`, `from_geometries`) and its
+  `Weights`.
 - **Breaking:** `Trajectory`, `TrajectoryFrame`, their views, `TrajectoryIter`,
   `TrajectoryError`, and `MissingTimePolicy`; use a `StructureSet` with
   `Order::Time(TimeAxis)`, whose `validate_monotonic_time` requires times.
 - **Breaking:** `Trajectory::into_ensemble`; use
-  `StructureSet::from_reader`, `set_order(None)`,
-  `clear_velocities_and_forces`, then `Ensemble::uniform` or `weighted`.
+  `StructureSet::from_reader`, `set_order(None)`, and
+  `clear_velocities_and_forces`.
 - **Breaking:** `read_trajectory`, `write_trajectory`, and `FrameBuffer`'s
   `from_frame`, `into_trajectory`, and `frame_mut`; use `read_structure_set`,
   `write_structure_set`, `from_geometry`, `into_geometry`, and `geometry_mut`.
@@ -825,7 +805,7 @@ the main branch migrates by the table under "From the SampleSet API".
 - **Breaking:** `kekule_traj::analysis::AsFrameView`; pass
   `buffer.as_structure_view()`.
 - **Breaking:** `StructureError::InvalidWeight`; log weights are checked by
-  `StructureSetError::NonFiniteLogWeight`.
+  `WeightsError::NonFiniteLogWeight`.
 - **Breaking:** `DcdWriter::finalize`; `finish` and `TrajectoryWriter::flush`
   write the frame count.
 - **Breaking:** `MmcifWriteErrorKind::MissingAtomProvenance`; the mmCIF
@@ -1200,30 +1180,26 @@ the main branch migrates by the table under "From the SampleSet API".
 ### From the SampleSet API
 
 Between 0.4.0 and this release, the main branch had a `SampleSet` with an
-optional distribution of linear weights. A set now has no distribution: an
-`Ensemble` pairs a `StructureSet` with a `Distribution` of natural-log
-weights. The `Model` items became `Structure` items as listed under Changed.
+optional distribution of linear weights. A set now has no distribution:
+`Weights` of natural-log weights and a `Clustering` sit beside it, indexed by
+its geometries. The `Model` items became `Structure` items as listed under Changed.
 
 | SampleSet API | Current API |
 | --- | --- |
-| `structure::SampleSet<S>` | `StructureSet<S>`; `Ensemble<S>` adds a `Distribution` |
+| `structure::SampleSet<S>` | `StructureSet<S>`, with `Weights` and a `Clustering` beside it |
 | `Sample` (`from_model`) | `Geometry` (`from_structure`) |
 | `SampleView`, `SampleMut`, `SampleIter`, `SampleStorage` | `GeometryView`, `GeometryMut`, `GeometryIter`, `GeometryStorage` |
 | `SampleRead` (`distribution`) | `StructureSetRead`, without `distribution` |
 | `SampleReadError`, `SampleSetError` | `StructureSetReadError`, `StructureSetError` |
 | `SampleContext` (`membership`, `velocities`, `forces`) | `SetContext` (`place`); velocities and forces from the `StructureView` |
 | `SampleSet::from_samples`, `from_models`, `into_samples` | `StructureSet::from_geometries`, `from_structures`, `into_geometries` |
-| `SampleSet::distribution`, `distribution_mut`, `set_distribution` | `Ensemble::distribution`, `distribution_mut`, `Ensemble::new` |
-| `SampleSet::state`, `states`, `push_state`, `select_states`, `collapse` | The same methods of `Ensemble` |
-| `SampleSet::push_member` | `Ensemble::push_sample` |
-| `SampleSet::weighted_samples`, `Distribution::weighted_members` | `Distribution::sample_probabilities`, which gives probabilities |
-| `Members`, `Membership` | `Samples`; a geometry has no membership |
-| `State` | `StateData` |
-| `Distribution::with_weights`, `weights`, `weight` | `with_log_weights`, `weight_model`, `log_weight` |
-| `Distribution::members`, `member_count`, `member_position` | `samples`, `sample_count`, `sample_position` |
-| `DistributionMut::set_weights`, `set_weight`, `normalize_weights` | `set_log_weights` or `set_equal_weights`, `set_log_weight`, `normalize_log_weights` |
-| `SampleView::weight`, `state`, `is_representative` | `Distribution::log_weight`, `state_of`, `Partition::representatives` |
-| `StateView::samples`, `population` | `StateView::geometries`, `log_population` |
+| `SampleSet::distribution`, `distribution_mut`, `set_distribution` | `Weights` beside the set |
+| `SampleSet::state`, `states`, `push_state`, `select_states`, `collapse` | `Clustering::members`, `representative`, `geometries_of`, `collapse` |
+| `SampleSet::weighted_samples`, `Distribution::weighted_members` | `Weights::probabilities` |
+| `Members`, `Membership` | `Weights::samples`; a geometry has no membership |
+| `Distribution::with_weights`, `weights`, `weight` | `Weights::given`, `log_weight` |
+| `Distribution::members`, `member_count` | `Weights::samples`, `sample_count` |
+| `SampleView::weight`, `state`, `is_representative` | `Weights::log_weight`, `Clustering::cluster_of`, `representatives` |
 | `SampleObservations::all`, `of` over a distribution | `SampleObservations::weighted`, `weighted_of`; `all` and `of` weigh every geometry 1 |
 | `alignment::sample_rmsd`, `sample_aligned_rmsd` | `geometry_rmsd`, `geometry_aligned_rmsd` |
 | `*_cancellable(.., &Cancellation)` | `*_with(.., Run)`, such as `perceive_with` |
@@ -1237,11 +1213,11 @@ weights. The `Model` items became `Structure` items as listed under Changed.
 | `PdbWriteIssue`, `MmcifWriteIssue` (`UnrepresentableSample`, `EmptySampleSet`) | `PdbWriteErrorKind`, `MmcifWriteErrorKind` (`UnrepresentableGeometry`, `EmptyStructureSet`) |
 | `MmcifSampleField` | `MmcifSharedCategory` |
 | `kekule::geometry`, `PeriodicGeometry` | `kekule::math`, `Lattice` |
-| Native format version 5 | Version 9; versions 7 and 8 read, version 5 does not |
+| Native format version 5 | Version 10, the only version read |
 | `FormatErrorDetail::NativeVersion { found, supported }` | `NativeVersion { found, oldest, newest }` |
-| `NativeKind::SampleSet`, `SampleSetInterpretation` | `NativeKind::StructureSet`, `Ensemble`, `StructureSetInterpretation` |
-| `NativeObject::into_sample_set`, `into_sample_set_interpretation` | `into_structure_set`, `into_ensemble`, `into_structure_set_interpretation` |
-| `native::SampleSetDescription`, `into_sample_set_description` | `StructureSetDescription`, `EnsembleDescription`, and their `into_*_description` |
+| `NativeKind::SampleSet`, `SampleSetInterpretation` | `NativeKind::StructureSet`, `Weights`, `StructureSetInterpretation` |
+| `NativeObject::into_sample_set`, `into_sample_set_interpretation` | `into_structure_set`, `into_weights`, `into_structure_set_interpretation` |
+| `native::SampleSetDescription`, `into_sample_set_description` | `StructureSetDescription`, `into_structure_set_description` |
 | `NativeSource::interpreted_sample_set` | `NativeSource::interpreted_structure_set` |
 | `FormatErrorDetail::NativeExternalSamples` | `FormatErrorDetail::NativeExternalGeometries` |
 
