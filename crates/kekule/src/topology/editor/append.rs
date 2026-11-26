@@ -134,21 +134,24 @@ impl TopologyEditor {
             let handle = self.add_chain(label, author)?;
             mapping.chains.insert(id, handle);
         }
-        // Residues and sites share the source's label and metadata rows.
+        // Residues and sites share the source's label and metadata rows, or
+        // copies of them when the source's tables hold many more rows.
         let hierarchy = source.hierarchy();
+        let mut labels = hierarchy.residue_labels_to_take().into_iter();
         for residue in source.residues() {
             let handle = self.insert_residue(
                 mapping.chains[&residue.chain().id()],
-                hierarchy.shared_residue_labels(residue.id()),
+                labels.next().expect("labels for every residue"),
             )?;
             mapping.residues.insert(residue.id(), handle);
         }
+        let mut metadata = hierarchy.site_metadata_to_take().into_iter();
         let mut retargeted = Vec::new();
         for site in source.atom_sites() {
             let handle = self.insert_atom_site(
                 mapping.residues[&site.residue().id()],
                 mapping.atoms[&site.atom().id()],
-                hierarchy.shared_site_metadata(site.id()),
+                metadata.next().expect("metadata for every site"),
             )?;
             if let Some((old, (label, author))) = renamed.get(&site.residue().chain().id()) {
                 if let Some(metadata) =

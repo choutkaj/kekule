@@ -296,11 +296,10 @@ conservatively cleared when their owner changes; no-op edits preserve them.
 
 Appending a complete structure imports its definitions, perception,
 classification, hierarchy, coordinates, and entity properties into the draft
-without merging equal hierarchy labels, which stay shared with the source. A
-molecule identical to a definition the draft already holds, with equal
-perception and class, becomes an instance of that definition, as
-interpretation shares identical molecules; publication never searches for
-identical definitions. Coordinates stay in the supplied
+without merging equal hierarchy labels. A molecule identical to a definition
+the draft already holds, with equal perception and class, becomes an instance
+of that definition, as interpretation shares identical molecules; publication
+never searches for identical definitions. Coordinates stay in the supplied
 coordinate system. Incompatible cells, property types, or units reject the
 whole append, and owner-property omissions are reported. See the
 [append contract](crates/kekule/src/structure/structure_editor/append.rs).

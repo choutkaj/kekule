@@ -184,6 +184,18 @@ impl<T: Clone> SharedRows<T> {
         start + row.index
     }
 
+    /// The rows `keys` name, for another hierarchy to take: rows of these
+    /// tables when the keys name at least half of their rows, else rows of
+    /// one new table of copies. So the taker never keeps many rows it does
+    /// not name, such as those of a large structure this one was cut from.
+    pub(crate) fn rows_for(&self, keys: &[u32]) -> Vec<SharedRow<T>> {
+        if self.len() <= 2 * keys.len() {
+            keys.iter().map(|&key| self.row(key)).collect()
+        } else {
+            SharedRow::table(keys.iter().map(|&key| self.get(key).clone()).collect()).collect()
+        }
+    }
+
     /// Merges the small tables into one when there are many, keeping the
     /// rows `keys` name and rewriting `keys` to match.
     pub(crate) fn compact(&mut self, keys: &mut [u32]) {

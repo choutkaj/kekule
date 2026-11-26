@@ -793,3 +793,136 @@ fn split_fragments_equal_the_molecules_they_publish_as_alone() {
         "{compared:?}"
     );
 }
+
+/// Deleting a sulfur and a hydrogen cuts a molecule in two. Each fragment
+/// equals a molecule built by hand: the atoms with the hydrogens their cut
+/// bonds give them, the bonds, both stereocenters, the one whose explicit
+/// hydrogen went with that hydrogen as its implicit one, the stereo group
+/// split between them, and the atom properties.
+#[test]
+fn split_fragments_equal_hand_built_molecules() {
+    use kekule::molecule::{ImplicitHydrogens, Molecule, MoleculeEditor};
+    use kekule::properties::{PropertyKey, PropertyValue};
+    use kekule::stereo::{StereoCarrier, StereoElement, StereoElementKind, StereoGroup};
+    use kekule::stereo::{StereoGroupKind, TetrahedralStereo};
+    use std::collections::HashMap;
+
+    // Atoms by SMILES position: H0 C1 F2 Cl3 C4 S5 C6 C7 H8 Br9 O10.
+    let parsed = kekule::smiles::to_molecules("[H][C@](F)(Cl)[CH2]SC[C@@]([H])(Br)O")
+        .unwrap()
+        .remove(0);
+    let atoms = parsed.atom_ids().collect::<Vec<_>>();
+    assert_eq!(atoms.len(), 11);
+    let hydrogens = |index: usize| parsed.atom(atoms[index]).unwrap().hydrogens();
+    assert_eq!(hydrogens(4), ImplicitHydrogens::Fixed(2));
+    assert_eq!(hydrogens(7), ImplicitHydrogens::Fixed(0));
+    let tag = PropertyKey::new("tag").unwrap();
+    let mut editor = parsed.clone().into_editor();
+    for (index, &atom) in atoms.iter().enumerate() {
+        editor
+            .properties_mut()
+            .atoms_mut()
+            .set_value(tag.clone(), atom, Some(PropertyValue::Int(index as i64)))
+            .unwrap();
+    }
+    let centers = editor.graph().stereo_element_ids().collect::<Vec<_>>();
+    assert_eq!(centers.len(), 2);
+    editor
+        .add_stereo_group(StereoGroup {
+            kind: StereoGroupKind::Absolute,
+            members: centers,
+        })
+        .unwrap();
+    let source: Molecule = editor.finish().unwrap();
+    let index_of = |atom| atoms.iter().position(|&id| id == atom).unwrap();
+
+    // The fragments by hand, atoms in source order.
+    let expected = [&[0, 1, 2, 3, 4][..], &[6, 7, 9, 10]].map(|members| {
+        let mut editor = MoleculeEditor::new();
+        let mut local = HashMap::new();
+        for &index in members {
+            let atom = source.atom(atoms[index]).unwrap().clone();
+            // C4 loses its bond to S5 and C7 its bond to H8: each fixed
+            // count takes the valence lost.
+            let atom = match index {
+                4 => atom.with_hydrogens(ImplicitHydrogens::Fixed(3)),
+                7 => atom.with_hydrogens(ImplicitHydrogens::Fixed(1)),
+                _ => atom,
+            };
+            let added = editor.add_atom(atom).unwrap();
+            editor
+                .properties_mut()
+                .atoms_mut()
+                .set_value(tag.clone(), added, Some(PropertyValue::Int(index as i64)))
+                .unwrap();
+            local.insert(index, added);
+        }
+        for (_, bond) in source.bonds() {
+            let ends = (
+                local.get(&index_of(bond.a())),
+                local.get(&index_of(bond.b())),
+            );
+            if let (Some(&a), Some(&b)) = ends {
+                editor.add_bond(a, b, bond.order()).unwrap();
+            }
+        }
+        let mut members = Vec::new();
+        for (_, element) in source.stereo_elements() {
+            let StereoElementKind::Tetrahedral(stereo) = &element.kind else {
+                panic!("only tetrahedral centers");
+            };
+            let Some(&center) = local.get(&index_of(stereo.center)) else {
+                continue;
+            };
+            let carriers = stereo.carriers.map(|carrier| match carrier {
+                StereoCarrier::Atom(atom) if index_of(atom) == 8 => StereoCarrier::ImplicitHydrogen,
+                StereoCarrier::Atom(atom) => StereoCarrier::Atom(local[&index_of(atom)]),
+                other => other,
+            });
+            let kind = StereoElementKind::Tetrahedral(TetrahedralStereo {
+                center,
+                carriers,
+                orientation: stereo.orientation,
+            });
+            members.push(editor.add_stereo_element(StereoElement::new(kind)).unwrap());
+        }
+        assert_eq!(members.len(), 1);
+        editor
+            .add_stereo_group(StereoGroup {
+                kind: StereoGroupKind::Absolute,
+                members,
+            })
+            .unwrap();
+        editor.finish().unwrap()
+    });
+
+    let topology = Topology::from_molecules([source]).unwrap();
+    let structure = Structure::new(topology, Positions::zeros(11)).unwrap();
+    let mut editor = structure.to_editor();
+    let deleted = [(5, "S"), (8, "H")].map(|(index, symbol)| {
+        let handle = editor
+            .topology()
+            .atom_handle(structure.topology().atom_ids()[index])
+            .unwrap();
+        let atom = editor.topology().atom(handle).unwrap();
+        assert_eq!(atom.element().symbol(), symbol);
+        handle
+    });
+    editor.delete_atoms(deleted).unwrap();
+    let split = editor.finish().unwrap();
+    let published = split
+        .topology()
+        .instances()
+        .map(|instance| instance.molecule().clone())
+        .collect::<Vec<_>>();
+    assert_eq!(published.len(), 2);
+    for expected in &expected {
+        let molecule = published
+            .iter()
+            .find(|molecule| molecule.atom_count() == expected.atom_count())
+            .unwrap();
+        assert_eq!(molecule, expected);
+        assert_eq!(molecule.stereo_groups().count(), 1);
+        assert_eq!(molecule.properties(), expected.properties());
+    }
+}

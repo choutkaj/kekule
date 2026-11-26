@@ -1176,7 +1176,8 @@ fn a_class_edit_of_one_water_leaves_the_others() {
 
 /// Appended copies whose chains are renamed keep every residue label and
 /// site metadata of their source, except that a site's chain identifiers
-/// take the new ones where they named the old ones.
+/// take the new ones where they named the old ones. The source keeps its
+/// own.
 #[test]
 fn renamed_copies_keep_their_labels_and_site_metadata() {
     let kras = kras();
@@ -1187,6 +1188,38 @@ fn renamed_copies_keep_their_labels_and_site_metadata() {
     let metadata = odd.metadata().clone().with_label_asym_id(Some("Z".into()));
     editor.set_atom_site_metadata(handle, metadata).unwrap();
     let source = editor.finish().unwrap();
+    // Owned copies, taken before appending: a change to the shared rows in
+    // place would show in the source as in the copies.
+    let labels = |site: kekule::topology::AtomSiteView<'_>| {
+        let residue = site.residue();
+        format!(
+            "{:?}",
+            (
+                residue.name(),
+                residue.label_comp_id(),
+                residue.author_comp_id(),
+                residue.label_seq_id(),
+                residue.author_seq_id(),
+                residue.insertion_code(),
+            )
+        )
+    };
+    let snapshot = |structure: &Structure| {
+        structure
+            .topology()
+            .atom_sites()
+            .map(|site| {
+                let chain = site.residue().chain();
+                (
+                    labels(site),
+                    site.metadata().clone(),
+                    chain.label_id().to_owned(),
+                    chain.author_id().map(str::to_owned),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    let sites = snapshot(&source);
 
     let copies = 3;
     let mut editor = StructureEditor::new();
@@ -1203,26 +1236,20 @@ fn renamed_copies_keep_their_labels_and_site_metadata() {
         }
     }
     let merged = editor.finish().unwrap();
-    let sites = source.topology().atom_sites().collect::<Vec<_>>();
+    assert_eq!(snapshot(&source), sites);
     assert_eq!(merged.topology().atom_sites().len(), copies * sites.len());
     for (index, site) in merged.topology().atom_sites().enumerate() {
-        let (copy, original) = (index / sites.len(), sites[index % sites.len()]);
-        let (residue, from) = (site.residue(), original.residue());
-        assert_eq!(residue.name(), from.name());
-        assert_eq!(residue.label_comp_id(), from.label_comp_id());
-        assert_eq!(residue.author_comp_id(), from.author_comp_id());
-        assert_eq!(residue.label_seq_id(), from.label_seq_id());
-        assert_eq!(residue.author_seq_id(), from.author_seq_id());
-        assert_eq!(residue.insertion_code(), from.insertion_code());
-        let chain = from.chain();
-        let mut expected = original.metadata().clone();
+        let copy = index / sites.len();
+        let (residue_labels, metadata, label, author) = &sites[index % sites.len()];
+        assert_eq!(&labels(site), residue_labels, "site {index}");
+        let mut expected = metadata.clone();
         if copy > 0 {
-            if expected.label_asym_id() == Some(chain.label_id()) {
-                expected = expected.with_label_asym_id(Some(format!("{}{copy}", chain.label_id())));
+            if expected.label_asym_id() == Some(label) {
+                expected = expected.with_label_asym_id(Some(format!("{label}{copy}")));
             }
-            if expected.auth_asym_id().is_some() && expected.auth_asym_id() == chain.author_id() {
-                let author = chain.author_id().map(|author| format!("{author}{copy}"));
-                expected = expected.with_auth_asym_id(author);
+            if expected.auth_asym_id().is_some() && expected.auth_asym_id() == author.as_deref() {
+                expected = expected
+                    .with_auth_asym_id(author.as_ref().map(|author| format!("{author}{copy}")));
             }
         }
         assert_eq!(site.metadata(), &expected, "site {index}");
