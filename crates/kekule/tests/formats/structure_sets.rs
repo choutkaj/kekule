@@ -1,5 +1,5 @@
 //! Readers that interpret structure sets: what each format states of the
-//! order, that none states a distribution, and the sets they build.
+//! order, and the sets they build.
 
 use kekule::diagnostics::{
     DiagnosticKind, FormatErrorDetail, GeometryField, UnrepresentablePolicy, WriteOmission,
@@ -9,13 +9,11 @@ use kekule::mmcif::{self, MmcifWriteOptions};
 use kekule::pdb::{self, PdbWriteOptions};
 use kekule::sdf::{self, SdfDataField, SdfRecordInterpretation, SdfWriteOptions};
 use kekule::structure::{
-    Distribution, Ensemble, Geometry, Order, Partition, Place, Positions, Samples, StateData,
-    Structure, StructureSet, ThermodynamicState, TimeAxis, Velocities, WeightModel,
+    Geometry, Order, Place, Positions, Structure, StructureSet, TimeAxis, Velocities,
 };
 use kekule::topology::{AtomSelection, TopologyAtomIndex};
 use kekule::units::{
-    Quantity, Unit, ANGSTROM, CANONICAL_VELOCITY_UNIT, DEGREE, KILOJOULE_PER_MOLE, NANOMETER,
-    PICOSECOND,
+    Quantity, Unit, ANGSTROM, CANONICAL_VELOCITY_UNIT, DEGREE, NANOMETER, PICOSECOND,
 };
 
 const WATERS: &str = "3
@@ -161,9 +159,8 @@ fn interpret_records(text: &str) -> Vec<SdfRecordInterpretation> {
         .collect()
 }
 
-/// Two methane conformers at 0 and 1 A along x as an ensemble of two states,
-/// weighted 1:3, the second at -2.5 kJ/mol, at 300 K.
-fn weighted_methanes() -> Ensemble {
+/// Two methane conformers at 0 and 1 A along x.
+fn methanes() -> StructureSet {
     let topology = kekule::smiles::to_topology("C").unwrap();
     let structures = [0.0, 1.0].map(|x| {
         Structure::new(
@@ -176,23 +173,7 @@ fn weighted_methanes() -> Ensemble {
         )
         .unwrap()
     });
-    let set = StructureSet::from_structures(structures).unwrap();
-    let distribution = Distribution::new(Samples::All, Partition::state_per_sample(2))
-        .unwrap()
-        .with_log_weights(vec![0.0, 3.0_f64.ln()])
-        .unwrap()
-        .with_states(vec![
-            StateData::new(),
-            StateData::new()
-                .with_energy(Quantity::new(-2.5, KILOJOULE_PER_MOLE))
-                .unwrap(),
-        ])
-        .unwrap()
-        .with_target(
-            ThermodynamicState::canonical(Quantity::new(300.0, kekule::units::KELVIN)).unwrap(),
-        )
-        .unwrap();
-    Ensemble::new(set, distribution).unwrap()
+    StructureSet::from_structures(structures).unwrap()
 }
 
 /// How a three-geometry methane set is ordered.
@@ -223,19 +204,17 @@ fn methane_series(axis: Axis) -> StructureSet {
 
 #[test]
 fn sdf_structure_sets_are_the_orders_of_their_records() {
-    // An ensemble's set writes its geometries alone: the records read back
-    // as an unordered set of the same positions.
-    let ensemble = weighted_methanes();
-    let text = sdf::write(ensemble.set(), SdfWriteOptions::default())
-        .unwrap()
-        .0;
+    // An unordered set's records read back as an unordered set of the same
+    // positions.
+    let set = methanes();
+    let text = sdf::write(&set, SdfWriteOptions::default()).unwrap().0;
     assert!(!text.contains("kekule."), "{text}");
     let records = interpret_records(&text);
     assert!(records.iter().all(|record| record.data_fields().is_empty()));
     let read = sdf::structure_set(&records).unwrap();
     assert_eq!(read.order(), None);
     assert_eq!(read.len(), 2);
-    for (left, right) in read.iter().zip(ensemble.set()) {
+    for (left, right) in read.iter().zip(&set) {
         assert_eq!(left.positions(), right.positions());
     }
 
@@ -399,7 +378,7 @@ fn sdf_structure_sets_state_only_what_the_records_state() {
     assert_eq!(read.len(), 2);
     assert!(close((x(&read, 0), x(&read, 1)), (0.0, 1.0)));
 
-    // The fields an earlier writer gave a distribution are ordinary data: the
+    // Fields named for states and representatives are ordinary data: the
     // records form the same unordered set, whatever the fields hold.
     let old = [
         [
@@ -605,14 +584,6 @@ fn xyz_structure_sets_have_no_order() {
     );
     assert_eq!(set.structure_set().order(), None);
     assert_waters(set.structure_set());
-    // An ensemble of one unweighted state over every geometry reads the
-    // frames as equally likely draws.
-    let ensemble = Ensemble::uniform(set.into_structure_set());
-    let distribution = ensemble.distribution();
-    assert_eq!(distribution.samples(), &Samples::All);
-    assert_eq!(distribution.state_count(), 1);
-    assert_eq!(distribution.weight_model(), WeightModel::Equal);
-    assert_eq!(distribution.probabilities().unwrap(), [0.5, 0.5]);
 }
 
 /// Four frames of one water, each with a cell, velocities, a time, and a

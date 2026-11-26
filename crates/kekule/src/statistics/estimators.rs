@@ -1,5 +1,5 @@
-//! Estimators of a group's population from the reduced values of its
-//! samples.
+//! Estimators of a landscape cell's population from the reduced values of
+//! its samples.
 
 /// The highest cumulant that [`Estimator::Cumulant`] keeps.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -14,15 +14,16 @@ pub enum CumulantOrder {
     Third = 3,
 }
 
-/// How the population `Σ exp(b_i)` of a group is estimated from the reduced
-/// values `b_i` of its samples.
+/// How the population `Σ exp(b_i)` of a landscape cell is estimated from the
+/// reduced values `b_i` of its samples
+/// ([`LandscapeOptions::with_estimator`](super::LandscapeOptions::with_estimator)).
 ///
 /// A reduced value is a dimensionless log importance weight, such as a bias
-/// potential over the thermal energy, `βΔV`. The exponential sum is exact but
-/// dominated by the few largest values. The cumulant expansion trades bias for
-/// lower variance (Miao et al., J. Chem. Theory Comput. 10, 2677, 2014); to the
-/// second order, the default, it is exact in expectation for Gaussian reduced
-/// values.
+/// potential over the thermal energy, `βΔV`. The exponential sum, the default,
+/// is exact but dominated by the few largest values. The cumulant expansion
+/// trades bias for lower variance (Miao et al., J. Chem. Theory Comput. 10,
+/// 2677, 2014); to the second order it is exact in expectation for Gaussian
+/// reduced values.
 ///
 /// For a group of `n` samples:
 ///
@@ -37,9 +38,9 @@ pub enum CumulantOrder {
 /// the reduced values, each over `n`. Adding a constant to every reduced
 /// value of a group adds it to the group's estimate, with every estimator.
 ///
-/// An estimator gives the totals of groups only. How a group's population is
+/// An estimator gives the totals of cells only. How a cell's population is
 /// shared among its samples is not an estimate: each sample's share is
-/// `exp(b_i) / Σ exp(b_j)`.
+/// `exp(b_i) / Σ exp(b_j)`. Every other population is exact.
 ///
 /// ```
 /// use kekule::statistics::{CumulantOrder, Estimator};
@@ -48,8 +49,8 @@ pub enum CumulantOrder {
 /// let exact = Estimator::Exponential.log_sum(&reduced).unwrap();
 /// assert!((exact - (0.5_f64.exp() + 1.5_f64.exp()).ln()).abs() < 1e-15);
 /// // ln 2 + 1 + 0.25 / 2: the mean and half the variance.
-/// assert_eq!(Estimator::default(), Estimator::Cumulant(CumulantOrder::Second));
-/// let cumulant = Estimator::default().log_sum(&reduced).unwrap();
+/// assert_eq!(Estimator::default(), Estimator::Exponential);
+/// let cumulant = Estimator::Cumulant(CumulantOrder::Second).log_sum(&reduced).unwrap();
 /// assert!((cumulant - (2.0_f64.ln() + 1.125)).abs() < 1e-15);
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -62,9 +63,9 @@ pub enum Estimator {
 }
 
 impl Default for Estimator {
-    /// The second-order cumulant expansion.
+    /// The exponential sum, which is exact.
     fn default() -> Self {
-        Self::Cumulant(CumulantOrder::Second)
+        Self::Exponential
     }
 }
 

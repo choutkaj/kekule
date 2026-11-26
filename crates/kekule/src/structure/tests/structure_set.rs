@@ -1,5 +1,4 @@
-//! Structure sets and ensembles: the order, the distribution, views, and
-//! copy on write.
+//! Structure sets: the order, views, and copy on write.
 
 use super::*;
 use crate::diagnostics::{
@@ -7,8 +6,7 @@ use crate::diagnostics::{
 };
 use crate::units::{DEGREE, PICOSECOND};
 
-/// Geometries of a one-atom topology at these x positions, unordered and
-/// without a distribution.
+/// Geometries of a one-atom topology at these x positions, unordered.
 fn set_at(xs: &[f64]) -> StructureSet {
     StructureSet::from_geometries(
         single_atom_topology(),
@@ -38,15 +36,6 @@ fn time_axis(times: Vec<f64>, steps: Vec<u64>) -> Order {
     Order::Time(TimeAxis::new(Some(Quantity::new(times, PICOSECOND)), Some(steps)).unwrap())
 }
 
-fn distribution(
-    samples: Samples,
-    assignments: &[usize],
-    representatives: &[usize],
-) -> Distribution {
-    let partition = Partition::new(assignments.to_vec(), representatives.to_vec()).unwrap();
-    Distribution::new(samples, partition).unwrap()
-}
-
 fn velocities(x: f64) -> Velocities {
     Velocities::new(Quantity::new(
         [Vector3::new(x, 0.0, 0.0)],
@@ -56,11 +45,6 @@ fn velocities(x: f64) -> Velocities {
 }
 
 const CANONICAL_VELOCITY: crate::units::Unit = crate::units::CANONICAL_VELOCITY_UNIT;
-
-/// The geometries at these x positions as `distribution` reads them.
-fn ensemble_at(xs: &[f64], distribution: Distribution) -> Ensemble {
-    Ensemble::new(set_at(xs), distribution).unwrap()
-}
 
 fn shares_every_geometry(a: &StructureSet, b: &StructureSet) -> bool {
     a.len() == b.len()
@@ -72,10 +56,6 @@ fn shares_every_geometry(a: &StructureSet, b: &StructureSet) -> bool {
 #[test]
 fn requirements_read_as_they_are() {
     assert_eq!(Requirement::TimeOrder.to_string(), "needs a time order");
-    assert_eq!(
-        Requirement::StateEnergies.to_string(),
-        "needs an energy for every state"
-    );
     assert_eq!(
         StructureSetError::Missing(Requirement::TimeOrder).to_string(),
         "The structure set needs a time order."
@@ -317,67 +297,6 @@ fn any_geometry_may_carry_site_fields_and_dynamics() {
     assert_eq!(set.get(0).unwrap().velocities(), None);
 }
 
-#[test]
-fn a_distribution_covers_all_geometries_or_a_sorted_subset() {
-    assert_eq!(
-        Distribution::new(Samples::Subset(vec![2, 1]), Partition::one_state(2)),
-        Err(StructureSetError::UnsortedSamples)
-    );
-    assert_eq!(
-        Distribution::new(Samples::Subset(vec![1, 2]), Partition::one_state(3)),
-        Err(StructureSetError::PartitionMismatch(LengthMismatch::new(
-            Countable::Sample,
-            2,
-            3
-        )))
-    );
-    assert_eq!(
-        Ensemble::new(
-            set_at(&[0.0, 1.0, 2.0]),
-            distribution(Samples::All, &[0, 0], &[0])
-        )
-        .unwrap_err(),
-        StructureSetError::CoverageMismatch {
-            covered: 2,
-            geometries: 3
-        }
-    );
-    assert_eq!(
-        Ensemble::new(
-            set_at(&[0.0, 1.0, 2.0]),
-            distribution(Samples::Subset(vec![1, 3]), &[0, 0], &[0])
-        )
-        .unwrap_err(),
-        StructureSetError::IndexOutOfRange(IndexOutOfRange::new(Countable::Geometry, 3, 3))
-    );
-    // A subset listing every geometry is all of them.
-    let all = ensemble_at(
-        &[0.0, 1.0, 2.0],
-        distribution(Samples::Subset(vec![0, 1, 2]), &[0, 0, 1], &[0, 2]),
-    );
-    assert_eq!(all.distribution().samples(), &Samples::All);
-
-    let set = ensemble_at(
-        &[0.0, 1.0, 2.0],
-        distribution(Samples::Subset(vec![1, 2]), &[0, 1], &[0, 1]),
-    );
-    let distribution = set.distribution();
-    assert_eq!(distribution.sample_position(0), None);
-    assert_eq!(distribution.sample_position(2), Some(1));
-    assert_eq!(distribution.state_of(2), Some(1));
-    assert_eq!(distribution.state_of(0), None);
-    assert_eq!(distribution.log_weight(0), None);
-    assert_eq!(set.state(0).unwrap().representative(), 1);
-    assert_eq!(set.state(1).unwrap().representative(), 2);
-    assert_eq!(set.state(1).unwrap().geometries().collect::<Vec<_>>(), [2]);
-    assert_eq!(set.states().len(), 2);
-    assert!(set.state(2).is_none());
-}
-
-fn distribution_of_one_state(samples: usize) -> Distribution {
-    Distribution::new(Samples::All, Partition::one_state(samples)).unwrap()
-}
-
 /// A V2000 record of one carbon atom at `x` Å, followed by `data`.
 fn carbon_record(x: &str, data: &str) -> String {
     format!(
@@ -429,33 +348,14 @@ fn geometry_views_write_the_sdf_records_they_always_wrote() {
     );
 }
 
-/// The parts of two ensembles compared one by one, since a set is not
-/// `PartialEq`; geometries must share their structures.
-fn assert_same_ensemble(actual: &Ensemble, expected: &Ensemble) {
-    assert!(shares_every_geometry(actual.set(), expected.set()));
-    assert_eq!(actual.set().order(), expected.set().order());
-    assert_eq!(actual.distribution(), expected.distribution());
-    assert_eq!(actual.set().properties(), expected.set().properties());
-}
-
 #[test]
-fn replacing_a_geometry_keeps_its_place_and_sample() {
-    let mut frames = set_at(&[0.0, 1.0]);
-    frames.set_order(Some(Order::Step(vec![3, 4]))).unwrap();
-    let two = 2.0_f64.ln();
-    let mut set = Ensemble::new(
-        frames,
-        distribution(Samples::Subset(vec![1]), &[0], &[0])
-            .with_log_weights(vec![two])
-            .unwrap(),
-    )
-    .unwrap();
+fn replacing_a_geometry_keeps_its_place() {
+    let mut set = set_at(&[0.0, 1.0]);
+    set.set_order(Some(Order::Step(vec![3, 4]))).unwrap();
     let previous = set.replace(1, Geometry::new(single_position(5.0))).unwrap();
     assert_eq!(previous, Geometry::new(single_position(1.0)));
-    assert_eq!(xs(set.set()), [0.0, 5.0]);
-    assert_eq!(set.set().get(1).unwrap().place(), Some(Place::Step(4)));
-    assert_eq!(set.distribution().log_weight(1), Some(two));
-    assert_eq!(set.state(0).unwrap().representative(), 1);
+    assert_eq!(xs(&set), [0.0, 5.0]);
+    assert_eq!(set.get(1).unwrap().place(), Some(Place::Step(4)));
 
     let before = set.clone();
     // Two atoms do not bind to a one-atom topology.
@@ -471,33 +371,8 @@ fn replacing_a_geometry_keeps_its_place_and_sample() {
             2
         )))
     );
-    assert_same_ensemble(&set, &before);
-}
-
-#[test]
-fn the_distribution_guard_keeps_the_samples() {
-    // The replacement the guard cannot make is refused when paired.
-    let foreign = Distribution::new(Samples::Subset(vec![7]), Partition::one_state(1)).unwrap();
-    assert_eq!(
-        Ensemble::new(set_at(&[0.0, 1.0]), foreign).unwrap_err(),
-        StructureSetError::IndexOutOfRange(IndexOutOfRange::new(Countable::Geometry, 7, 2))
-    );
-    let mut set = ensemble_at(&[0.0, 1.0], distribution_of_one_state(2));
-    let mut distribution = set.distribution_mut();
-    assert_eq!(distribution.sample_count(), 2);
-    distribution.set_log_weight(1, 3.0_f64.ln()).unwrap();
-    distribution
-        .regroup(Partition::state_per_sample(2))
-        .unwrap();
-    distribution
-        .state_mut(1)
-        .unwrap()
-        .set_energy(kj(1.0))
-        .unwrap();
-    assert_eq!(set.distribution().samples(), &Samples::All);
-    assert_eq!(set.state(1).unwrap().representative_sample().index(), 1);
-    assert_eq!(set.state(1).unwrap().energy(), kj(1.0));
-    assert_eq!(set.distribution().log_weight(1), Some(3.0_f64.ln()));
+    assert!(shares_every_geometry(&set, &before));
+    assert_eq!(set.order(), before.order());
 }
 
 #[test]
@@ -533,61 +408,16 @@ fn places_are_set_only_on_an_order_and_inside_the_set() {
 }
 
 #[test]
-fn empty_selections_and_distributions() {
+fn empty_selections() {
     let mut frames = set_at(&[0.0, 1.0]);
     frames.set_order(Some(Order::Step(vec![0, 1]))).unwrap();
-    let mut set =
-        Ensemble::new(frames, distribution(Samples::Subset(vec![0]), &[0], &[0])).unwrap();
-    let none = set.select([]).unwrap();
-    assert!(none.set().is_empty());
-    assert_eq!(none.set().order(), Some(&Order::Step(Vec::new())));
-    assert_eq!(none.distribution().sample_count(), 0);
-    assert_eq!(none.states().len(), 0);
-    let none = set.select_states([]).unwrap();
-    assert!(none.set().is_empty());
-    assert_eq!(none.distribution().state_count(), 0);
-    // A distribution without samples collapses to an empty ensemble.
-    let collapsed = none.collapse();
-    assert!(collapsed.set().is_empty());
-    assert_eq!(collapsed.distribution().state_count(), 0);
-    assert_eq!(
-        none.distribution().probabilities(),
-        Err(StructureSetError::EmptyDistribution)
-    );
-    // Removing the last geometry that is not a sample leaves a distribution
-    // of every geometry.
-    set.remove(1).unwrap();
-    assert_eq!(set.distribution().samples(), &Samples::All);
-    assert_eq!(set.set().order(), Some(&Order::Step(vec![0])));
-    // Removing the last sample leaves an empty distribution.
-    set.remove(0).unwrap();
-    assert!(set.set().is_empty());
-    assert_eq!(set.distribution().state_count(), 0);
-    assert_eq!(set.distribution().samples(), &Samples::All);
-}
-
-#[test]
-fn regrouping_a_split_state_drops_its_energy() {
-    let mut set = ensemble_at(
-        &[0.0, 1.0, 2.0],
-        distribution(Samples::All, &[0, 0, 1], &[0, 2])
-            .with_states(vec![
-                StateData::new()
-                    .with_energy(Quantity::new(1.0, KILOJOULE_PER_MOLE))
-                    .unwrap(),
-                StateData::new()
-                    .with_energy(Quantity::new(2.0, KILOJOULE_PER_MOLE))
-                    .unwrap(),
-            ])
-            .unwrap(),
-    );
-    let partition = Partition::new(vec![0, 1, 2], vec![0, 1, 2]).unwrap();
-    set.distribution_mut().regroup(partition).unwrap();
-    assert_eq!(set.states().len(), 3);
-    assert_eq!(set.state(0).unwrap().energy(), None);
-    assert_eq!(set.state(1).unwrap().energy(), None);
-    // State 1 was whole and keeps its energy.
-    assert_eq!(set.state(2).unwrap().energy(), kj(2.0));
+    let none = frames.select([]).unwrap();
+    assert!(none.is_empty());
+    assert_eq!(none.order(), Some(&Order::Step(Vec::new())));
+    frames.remove(1).unwrap();
+    frames.remove(0).unwrap();
+    assert!(frames.is_empty());
+    assert_eq!(frames.order(), Some(&Order::Step(Vec::new())));
 }
 
 #[test]
@@ -618,11 +448,6 @@ fn every_error_reads_as_a_sentence() {
         (Requirement::TimeOrder, "needs a time order"),
         (Requirement::AnyOrder, "needs an order"),
         (Requirement::Times, "needs times"),
-        (
-            Requirement::StateEnergies,
-            "needs an energy for every state",
-        ),
-        (Requirement::Temperature, "needs a temperature"),
         (Requirement::Cell, "needs a periodic cell on every geometry"),
         (Requirement::InMemory, "needs its geometries in memory"),
     ];
@@ -638,18 +463,9 @@ fn every_error_reads_as_a_sentence() {
         .unwrap_err();
     let errors = [
         (E::EmptySource, "There are no structures to collect."),
-        (E::EmptyDistribution, "The distribution has no samples."),
         (
             E::IndexOutOfRange(IndexOutOfRange::new(Countable::Geometry, 3, 1)),
             "Geometry 3 does not exist. There is 1 geometry.",
-        ),
-        (
-            E::StateOutOfRange(IndexOutOfRange::new(Countable::State, 2, 2)),
-            "State 2 does not exist. There are 2 states.",
-        ),
-        (
-            E::NotSample { geometry: 4 },
-            "Geometry 4 is not a sample of the distribution.",
         ),
         (
             E::TopologyMismatch(TopologyMismatch::Structure),
@@ -696,48 +512,6 @@ fn every_error_reads_as_a_sentence() {
             "Geometry 2 is earlier than the geometry before it.",
         ),
         (
-            E::UnsortedSamples,
-            "The samples of the distribution are not in increasing order.",
-        ),
-        (
-            E::CoverageMismatch {
-                covered: 2,
-                geometries: 3,
-            },
-            "The distribution covers 2 geometries, but the structure set has 3.",
-        ),
-        (
-            E::PartitionMismatch(LengthMismatch::new(Countable::Sample, 2, 3)),
-            "There are 3 samples instead of 2.",
-        ),
-        (
-            E::LogWeightCountMismatch(LengthMismatch::new(Countable::LogWeight, 2, 1)),
-            "There is 1 log weight instead of 2.",
-        ),
-        (
-            E::LogWeightCountMismatch(LengthMismatch::new(Countable::LogWeight, 1, 2)),
-            "There are 2 log weights instead of 1.",
-        ),
-        (
-            E::StateCountMismatch(LengthMismatch::new(Countable::State, 1, 2)),
-            "There are 2 states instead of 1.",
-        ),
-        (
-            E::NonFiniteLogWeight { geometry: 0 },
-            "The log weight of geometry 0 is not finite.",
-        ),
-        (
-            E::LogWeightRequired,
-            "The new sample has no log weight, but the other samples have log weights.",
-        ),
-        (
-            E::RepresentativeRemoval {
-                geometry: 0,
-                state: 1,
-            },
-            "Geometry 0 represents state 1. Remove the state's other samples first.",
-        ),
-        (
             E::InvalidTemperature,
             "The temperature is not finite and positive.",
         ),
@@ -745,22 +519,18 @@ fn every_error_reads_as_a_sentence() {
             E::InvalidPressure,
             "The pressure is not finite and positive.",
         ),
-        (
-            E::UnrepresentablePopulation { state: 1 },
-            "The Boltzmann population of state 1 is too small to represent at this temperature. Raise the temperature.",
-        ),
-        (
-            E::InvalidEnergyWindow,
-            "The energy window is not finite and nonnegative.",
-        ),
-        (
-            E::InvalidFraction,
-            "The population fraction is not greater than 0 and at most 1.",
-        ),
         (E::NonFiniteTime, "The time is not finite."),
-        (E::NonFiniteEnergy, "The state energy is not finite."),
         (
-            E::Geometry(GeometryError::CapacityExceeded(CapacityExceeded::new(Countable::Atom))),
+            E::CoverageMismatch {
+                covered: 2,
+                geometries: 1,
+            },
+            "The description covers 2 geometries, but the structure set has 1.",
+        ),
+        (
+            E::Geometry(GeometryError::CapacityExceeded(CapacityExceeded::new(
+                Countable::Atom,
+            ))),
             "A geometry is invalid.",
         ),
         (

@@ -9,9 +9,8 @@ use kekule::properties::{
     PropertyColumn, PropertyKey, PropertyTable, PropertyValue, PropertyValueRef,
 };
 use kekule::structure::{
-    ColumnRef, Ensemble, Geometry, GeometryIndex, GeometryView, Order, Place, Positions,
-    Requirement, Structure, StructureSet, StructureSetError, StructureSetRead,
-    StructureSetReadError, TimeAxis,
+    ColumnRef, Geometry, GeometryIndex, GeometryView, Order, Place, Positions, Requirement,
+    Structure, StructureSet, StructureSetError, StructureSetRead, StructureSetReadError, TimeAxis,
 };
 use kekule::topology::{AtomSelection, Topology, TopologyAtomIndex};
 use kekule::traj::{Processed, ProcessingSteps};
@@ -154,17 +153,15 @@ fn an_atom_subset_and_a_processed_reader_keep_the_columns() {
 }
 
 #[test]
-fn ensemble_operations_keep_the_rows_of_their_geometries() {
-    let ensemble = Ensemble::uniform(numbered(4));
-    let selected = ensemble.select([2, 0]).unwrap();
-    assert_eq!(energies(selected.set()), [Some(2.0), Some(0.0)]);
-    let collapsed = ensemble.collapse();
-    assert_eq!(energies(collapsed.set()), [Some(0.0)]);
-    let mut grown = Ensemble::uniform(numbered(2));
+fn set_operations_keep_the_rows_of_their_geometries() {
+    let set = numbered(4);
+    let selected = set.select([2, 0]).unwrap();
+    assert_eq!(energies(&selected), [Some(2.0), Some(0.0)]);
+    let mut grown = numbered(2);
     grown.push(geometry(9.0), None).unwrap();
-    assert_eq!(energies(grown.set()), [Some(0.0), Some(1.0), None]);
+    assert_eq!(energies(&grown), [Some(0.0), Some(1.0), None]);
     grown.remove(1).unwrap();
-    assert_eq!(energies(grown.set()), [Some(0.0), None]);
+    assert_eq!(energies(&grown), [Some(0.0), None]);
     grown
         .columns_mut()
         .set_value(
@@ -176,7 +173,7 @@ fn ensemble_operations_keep_the_rows_of_their_geometries() {
             }),
         )
         .unwrap();
-    assert_eq!(energies(grown.set()), [Some(0.0), Some(4.0)]);
+    assert_eq!(energies(&grown), [Some(0.0), Some(4.0)]);
     assert!(grown
         .columns_mut()
         .insert(key("short"), PropertyColumn::Int(vec![Some(1)]))

@@ -4,11 +4,10 @@ use std::sync::Arc;
 use kekule::math::{PeriodicCell, Point3, Vector3};
 use kekule::molecule::{Atom, Element, MoleculeEditor};
 use kekule::statistics::{
-    ContactOccupancyAccumulator, GroupContactOccupancyAccumulator, RmsfAccumulator, StatisticsError,
+    ContactOccupancyAccumulator, GroupContactOccupancyAccumulator, RmsfAccumulator,
+    StatisticsError, Weights,
 };
-use kekule::structure::{
-    Distribution, Ensemble, Geometry, Partition, Positions, Samples, StructureSet, WeightModel,
-};
+use kekule::structure::{Geometry, Positions, StructureSet};
 use kekule::topology::{AtomSelection, InstanceAtomId, SelectionError, Topology};
 use kekule::units::{Quantity, ANGSTROM, NANOMETER, PICOSECOND};
 
@@ -30,21 +29,16 @@ fn trajectory(top: &Arc<Topology>, rows: &[[f64; 3]]) -> StructureSet {
     .unwrap()
 }
 
-/// Samples of `structures` with natural-logarithm weights `log_weights`,
-/// grouped by `partition`.
+/// A set of `structures` and their natural-logarithm weights `log_weights`.
 fn weighted(
     top: &Arc<Topology>,
     structures: impl IntoIterator<Item = Positions>,
-    partition: Partition,
     log_weights: Vec<f64>,
-) -> Ensemble {
+) -> (StructureSet, Weights) {
     let set = StructureSet::from_geometries(top.clone(), structures.into_iter().map(Geometry::new))
         .unwrap();
-    let distribution = Distribution::new(Samples::All, partition)
-        .unwrap()
-        .with_log_weights(log_weights)
-        .unwrap();
-    Ensemble::new(set, distribution).unwrap()
+    let weights = Weights::given(log_weights.into_iter().map(Some).collect(), None).unwrap();
+    (set, weights)
 }
 
 /// The natural logarithms of linear weights.
@@ -112,18 +106,14 @@ fn weighted_accumulators_match_hand_computation() {
 }
 
 #[test]
-fn distribution_statistics_use_sample_weights_not_states() {
+fn weighted_statistics_observe_the_sample_probabilities() {
     let top = linear_carbon_topology();
     let ids = top.atom_ids();
-    // The two heavier samples share a state; populations do not enter twice.
-    let ensemble = weighted(
-        &top,
-        weighted_structures(),
-        Partition::new(vec![0, 1, 1], vec![0, 1]).unwrap(),
-        ln([10.0, 20.0, 10.0]),
-    );
+    let (ensemble, weights) = weighted(&top, weighted_structures(), ln([10.0, 20.0, 10.0]));
 
-    let rmsf = ensemble.rmsf(&AtomSelection::all(top.clone())).unwrap();
+    let rmsf = ensemble
+        .rmsf(&AtomSelection::all(top.clone()), Some(&weights))
+        .unwrap();
     for (value, expected) in rmsf.values().value().iter().zip(expected_weighted_rmsf()) {
         close(*value, expected);
     }
@@ -133,7 +123,7 @@ fn distribution_statistics_use_sample_weights_not_states() {
 
     let pairs = [(ids[0], ids[1]), (ids[1], ids[2])];
     let contacts = ensemble
-        .contact_occupancy(pairs, Quantity::new(10.0, ANGSTROM))
+        .contact_occupancy(pairs, Quantity::new(10.0, ANGSTROM), Some(&weights))
         .unwrap();
     assert_eq!(contacts.contact_weights(), &[0.75, 0.0]);
     assert_eq!(
@@ -143,13 +133,14 @@ fn distribution_statistics_use_sample_weights_not_states() {
 
     // Weights beyond the floating-point limits, e^1000 times these, give the
     // same probabilities.
-    let extreme = weighted(
+    let (extreme, extreme_weights) = weighted(
         &top,
         weighted_structures(),
-        Partition::state_per_sample(3),
         WEIGHTS.map(|weight| weight.ln() + 1000.0).to_vec(),
     );
-    let extreme = extreme.rmsf(&AtomSelection::all(top.clone())).unwrap();
+    let extreme = extreme
+        .rmsf(&AtomSelection::all(top.clone()), Some(&extreme_weights))
+        .unwrap();
     for (value, expected) in extreme
         .values()
         .value()
@@ -160,15 +151,22 @@ fn distribution_statistics_use_sample_weights_not_states() {
     }
 
     assert!(matches!(
-        StructureSet::new(top.clone()).rmsf(&AtomSelection::all(top.clone())),
+        StructureSet::new(top.clone()).rmsf(&AtomSelection::all(top.clone()), None),
         Err(StatisticsError::NoObservations)
     ));
     assert!(matches!(
-        StructureSet::new(top.clone()).contact_occupancy(pairs, Quantity::new(1.0, NANOMETER)),
+        StructureSet::new(top.clone()).contact_occupancy(
+            pairs,
+            Quantity::new(1.0, NANOMETER),
+            None
+        ),
         Err(StatisticsError::NoObservations)
     ));
     assert!(matches!(
-        ensemble.rmsf(&AtomSelection::all(linear_carbon_topology())),
+        ensemble.rmsf(
+            &AtomSelection::all(linear_carbon_topology()),
+            Some(&weights)
+        ),
         Err(StatisticsError::Selection(
             SelectionError::TopologyMismatch(TopologyMismatch::Selection)
         ))
@@ -184,8 +182,8 @@ fn equal_weights_reproduce_frame_counting() {
     let cutoff = Quantity::new(2.0, NANOMETER);
     let rows = [[0.0, 1.0, 20.0], [2.0, 5.0, 20.0], [4.0, 6.0, 20.0]];
     let t = trajectory(&top, &rows);
-    let rmsf = t.rmsf(&all).unwrap();
-    let contacts = t.contact_occupancy(pairs, cutoff).unwrap();
+    let rmsf = t.rmsf(&all, None).unwrap();
+    let contacts = t.contact_occupancy(pairs, cutoff, None).unwrap();
     // Frame counts and population variances (division by N).
     assert_eq!(rmsf.total_weight(), 3.0);
     assert_eq!(contacts.contact_weights(), &[2.0, 0.0]);
@@ -214,11 +212,11 @@ fn equal_weights_reproduce_frame_counting() {
         close(scaled, unit);
     }
 
-    // An equally weighted distribution of every frame keeps every statistic.
-    let distribution = Distribution::new(Samples::All, Partition::state_per_sample(3)).unwrap();
-    let ensemble = Ensemble::new(t.clone(), distribution).unwrap();
+    // Equal weights of every frame keep every statistic.
+    let weights = Weights::equal(3);
+    let ensemble = t.clone();
     for (geometry, frame) in ensemble
-        .rmsf(&all)
+        .rmsf(&all, Some(&weights))
         .unwrap()
         .values()
         .value()
@@ -228,7 +226,7 @@ fn equal_weights_reproduce_frame_counting() {
         close(*geometry, *frame);
     }
     for ((_, geometry), (_, frame)) in ensemble
-        .contact_occupancy(pairs, cutoff)
+        .contact_occupancy(pairs, cutoff, Some(&weights))
         .unwrap()
         .contacts()
         .zip(contacts.contacts())
@@ -251,9 +249,9 @@ fn trajectory_statistics_agree_with_independent_computation() {
     ];
     let t = trajectory(&top, &rows);
     let before = format!("{t:?}");
-    let rmsf = t.rmsf(&all).unwrap();
+    let rmsf = t.rmsf(&all, None).unwrap();
     let contacts = t
-        .contact_occupancy(pairs, Quantity::new(2.0, NANOMETER))
+        .contact_occupancy(pairs, Quantity::new(2.0, NANOMETER), None)
         .unwrap();
     assert_eq!(rmsf.observation_count(), 3);
     assert_eq!(rmsf.selection(), &all);
@@ -276,7 +274,10 @@ fn trajectory_statistics_agree_with_independent_computation() {
     close(rmsf.values().value()[1], (14.0_f64 / 3.0).sqrt());
     close(rmsf.values().value()[2], 0.0);
     let subset = t
-        .rmsf(&AtomSelection::from_atoms(Arc::clone(&top), [ids[2], ids[0]]).unwrap())
+        .rmsf(
+            &AtomSelection::from_atoms(Arc::clone(&top), [ids[2], ids[0]]).unwrap(),
+            None,
+        )
         .unwrap();
     assert_eq!(
         subset.atoms().map(|(atom, _)| atom).collect::<Vec<_>>(),
@@ -288,7 +289,7 @@ fn trajectory_statistics_agree_with_independent_computation() {
         (8.0_f64 / 3.0).sqrt() * 10.0,
     );
     assert_eq!(
-        t.contact_occupancy(pairs, Quantity::new(21.0, ANGSTROM))
+        t.contact_occupancy(pairs, Quantity::new(21.0, ANGSTROM), None)
             .unwrap()
             .contact_weights(),
         &[2.0, 0.0]
@@ -428,24 +429,27 @@ fn statistics_reject_empty_or_ambiguous_inputs_and_handle_single_observations() 
     ));
     let none = StructureSet::new(top.clone());
     assert!(matches!(
-        none.rmsf(&all),
+        none.rmsf(&all, None),
         Err(StatisticsError::NoObservations)
     ));
     assert!(matches!(
-        none.contact_occupancy([(ids[0], ids[1])], cutoff),
+        none.contact_occupancy([(ids[0], ids[1])], cutoff, None),
         Err(StatisticsError::NoObservations)
     ));
     let one = trajectory(&top, &[[0.0, 0.0, 1.0]]);
-    assert_eq!(one.rmsf(&all).unwrap().values().value(), &[0.0, 0.0, 0.0]);
     assert_eq!(
-        one.contact_occupancy([(ids[0], ids[1])], Quantity::new(0.0, NANOMETER))
+        one.rmsf(&all, None).unwrap().values().value(),
+        &[0.0, 0.0, 0.0]
+    );
+    assert_eq!(
+        one.contact_occupancy([(ids[0], ids[1])], Quantity::new(0.0, NANOMETER), None)
             .unwrap()
             .contact_weights(),
         &[1.0]
     );
     let foreign = AtomSelection::all(linear_carbon_topology());
     assert!(matches!(
-        one.rmsf(&foreign),
+        one.rmsf(&foreign, None),
         Err(StatisticsError::Selection(
             SelectionError::TopologyMismatch(TopologyMismatch::Selection)
         ))
@@ -467,13 +471,13 @@ fn stored_coordinate_statistics_do_not_implicitly_image_or_align_periodic_frames
     }
     // A minimum-image contact would match; stored distance is nine nanometers.
     assert_eq!(
-        t.contact_occupancy([(ids[0], ids[1])], Quantity::new(2.0, NANOMETER))
+        t.contact_occupancy([(ids[0], ids[1])], Quantity::new(2.0, NANOMETER), None)
             .unwrap()
             .contact_weights(),
         &[0.0]
     );
     for value in t
-        .rmsf(&AtomSelection::all(Arc::clone(&top)))
+        .rmsf(&AtomSelection::all(Arc::clone(&top)), None)
         .unwrap()
         .values()
         .value()
@@ -622,10 +626,10 @@ fn group_contacts_keep_contacts_exactly_at_the_cutoff() {
             group(&top, [0]),
         ];
         let result = frame
-            .group_contact_occupancy(groups.clone(), [(0, 1), (2, 3), (4, 1)], quantity)
+            .group_contact_occupancy(groups.clone(), [(0, 1), (2, 3), (4, 1)], quantity, None)
             .unwrap();
         let atom_pair = frame
-            .contact_occupancy([(ids[19], ids[20])], quantity)
+            .contact_occupancy([(ids[19], ids[20])], quantity, None)
             .unwrap();
         let expected = brute_group_contact(&points, &groups[0], &groups[1], cutoff);
         assert_eq!(result.contact_weights()[0], f64::from(u8::from(expected)));
@@ -644,16 +648,15 @@ fn group_contacts_weight_samples_by_probability_and_frames_equally() {
     // Atom 0 against atoms 1 and 2: in contact in the first two structures,
     // through different atoms, and apart in the third.
     let rows = [[0.0, 0.1, 5.0], [0.0, 5.0, -0.1], [0.0, 5.0, -5.0]];
-    let ensemble = weighted(
+    let (ensemble, weights) = weighted(
         &top,
         rows.map(|row| positions(row.map(|x| Point3::new(x, 0.0, 0.0)))),
-        Partition::state_per_sample(3),
         ln(WEIGHTS),
     );
     let groups = [group(&top, [0]), group(&top, [1, 2])];
     let cutoff = Quantity::new(1.0, NANOMETER);
     let weighted = ensemble
-        .group_contact_occupancy(groups.clone(), [(1, 0)], cutoff)
+        .group_contact_occupancy(groups.clone(), [(1, 0)], cutoff, Some(&weights))
         .unwrap();
     close(weighted.total_weight(), 1.0);
     close(weighted.contacts().next().unwrap().1, 0.75);
@@ -662,7 +665,7 @@ fn group_contacts_weight_samples_by_probability_and_frames_equally() {
     assert_eq!(weighted.observation_count(), 3);
     assert_eq!(weighted.cutoff(), cutoff);
     let frames = trajectory(&top, &rows)
-        .group_contact_occupancy(groups, [(0, 1)], cutoff)
+        .group_contact_occupancy(groups, [(0, 1)], cutoff, None)
         .unwrap();
     assert_eq!(frames.contact_weights(), &[2.0]);
     assert_eq!(frames.total_weight(), 3.0);
@@ -735,7 +738,7 @@ fn group_contacts_reject_invalid_inputs_and_fail_atomically() {
         Err(StatisticsError::NoObservations)
     ));
     assert!(matches!(
-        StructureSet::new(top.clone()).group_contact_occupancy(groups(), [(0, 1)], cutoff),
+        StructureSet::new(top.clone()).group_contact_occupancy(groups(), [(0, 1)], cutoff, None),
         Err(StatisticsError::NoObservations)
     ));
 
@@ -761,7 +764,7 @@ fn group_contacts_reject_invalid_inputs_and_fail_atomically() {
     );
     let ids = top.atom_ids();
     assert!(matches!(
-        bad.contact_occupancy([(ids[0], ids[1])], cutoff),
+        bad.contact_occupancy([(ids[0], ids[1])], cutoff, None),
         Err(StatisticsError::NumericalFailure { index: 0, .. })
     ));
     for weight in [0.0, -1.0, f64::NAN, f64::INFINITY] {
@@ -779,7 +782,7 @@ fn group_contacts_reject_invalid_inputs_and_fail_atomically() {
 }
 
 // Helpers of the sample-observation test below, which joins a set's samples
-// with an ensemble's probabilities.
+// with the probabilities of weights.
 
 fn single_atom_topology() -> Topology {
     let mut editor = MoleculeEditor::new();
@@ -801,15 +804,6 @@ fn set_at(xs: &[f64]) -> StructureSet {
     .unwrap()
 }
 
-fn distribution(
-    samples: Samples,
-    assignments: &[usize],
-    representatives: &[usize],
-) -> Distribution {
-    let partition = Partition::new(assignments.to_vec(), representatives.to_vec()).unwrap();
-    Distribution::new(samples, partition).unwrap()
-}
-
 fn nearly_equal(actual: f64, expected: f64) -> bool {
     (actual - expected).abs() <= 4.0 * f64::EPSILON * actual.abs().max(expected.abs())
 }
@@ -829,53 +823,23 @@ fn weighted_observations_join_samples_and_probabilities() {
     let all = SampleObservations::all(&set);
     assert_eq!(all.samples(), [0, 1, 2]);
     assert_eq!(all.weights(), [1.0, 1.0, 1.0]);
-    let mut ensemble = Ensemble::new(
-        set,
-        distribution(Samples::Subset(vec![0, 2]), &[0, 0], &[0]),
-    )
-    .unwrap();
-    // An ensemble's observe its samples with their probabilities.
-    let observed = SampleObservations::weighted(&ensemble);
+    // Weights observe their samples with their probabilities.
+    let weights = Weights::equal_over(set.len(), [0, 2]).unwrap();
+    let observed = SampleObservations::weighted(&weights);
     assert_eq!(observed.samples(), [0, 2]);
     assert_close(observed.weights(), &[0.5, 0.5]);
-    assert_eq!(
-        ensemble.distribution().sample_probabilities().unwrap(),
-        [(0, 0.5), (2, 0.5)]
-    );
-    ensemble
-        .distribution_mut()
-        .set_log_weight(2, 4.0_f64.ln())
-        .unwrap();
-    let distribution = ensemble.distribution();
-    let joined = distribution.sample_probabilities().unwrap();
-    assert_eq!(
-        joined
-            .iter()
-            .map(|(geometry, _)| *geometry)
-            .collect::<Vec<_>>(),
-        [0, 2]
-    );
     // Weights 1 and 4 of 5.
-    let probabilities = joined
-        .iter()
-        .map(|(_, probability)| *probability)
-        .collect::<Vec<_>>();
-    assert_close(&probabilities, &[0.2, 0.8]);
-    let observed = SampleObservations::weighted(&ensemble);
+    let weights = Weights::given(vec![Some(0.0), None, Some(4.0_f64.ln())], None).unwrap();
+    let observed = SampleObservations::weighted(&weights);
     assert_eq!(observed.samples(), [0, 2]);
-    assert_close(observed.weights(), &probabilities);
-    // Sample positions index the log weights and probabilities.
-    let by_position = distribution.probabilities().unwrap();
-    let WeightModel::LogWeights(log_weights) = distribution.weight_model() else {
-        panic!("a set log weight makes log weights")
-    };
-    for (position, (geometry, probability)) in joined.iter().enumerate() {
-        assert_eq!(distribution.sample_position(*geometry), Some(position));
-        assert_eq!(*probability, by_position[position]);
-        assert_eq!(
-            distribution.log_weight(*geometry),
-            Some(log_weights[position])
-        );
-    }
-    assert_eq!(distribution.ranked_by_weight(), [2, 0]);
+    assert_close(observed.weights(), &[0.2, 0.8]);
+    let probabilities = weights.probabilities().unwrap();
+    assert_close(&probabilities, &[0.2, 0.0, 0.8]);
+    assert_eq!(weights.ranked(), [2, 0]);
+    // Listed samples renormalize among themselves; a geometry that is no
+    // sample adds nothing.
+    let listed = SampleObservations::weighted_of(&weights, [2, 1]).unwrap();
+    assert_eq!(listed.samples(), [2]);
+    assert_close(listed.weights(), &[1.0]);
+    assert!(SampleObservations::weighted_of(&weights, [3]).is_err());
 }

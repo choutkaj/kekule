@@ -1,20 +1,15 @@
-//! Measurement, superposition, clustering, weighted statistics, reweighting,
+//! Measurement, superposition, clustering, weights and weighted statistics,
 //! energy surfaces, secondary structure, and solvation.
 
 mod alignment;
 mod bond_dihedrals;
 mod clustering;
 mod clustering_runs;
-mod distributions;
 mod dssp;
-mod ensemble_sets;
-mod ensemble_weights;
 mod estimators;
-mod group_populations;
 mod interactions;
 mod landscapes;
 mod measurements;
-mod reweighting;
 mod solvation;
 mod statistics;
 mod statistics_merge;
@@ -27,4 +22,4 @@ mod support;
 mod thermodynamic_states;
 #[path = "../traj/support/mod.rs"]
 mod traj_support;
-mod weighable;
+mod weights;

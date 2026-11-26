@@ -4,22 +4,22 @@
 use std::num::NonZeroU32;
 use std::sync::Arc;
 
+use kekule::clustering::Clustering;
 use kekule::diagnostics::{DiagnosticKind, Format, FormatErrorDetail, Resource};
 use kekule::macromolecular::{AltLocPolicy, StructureInterpretOptions};
 use kekule::math::{PeriodicCell, Point3, Vector3};
 use kekule::mmcif::MmcifWriteOptions;
 use kekule::molecule::{AtomId, Molecule};
 use kekule::native::{
-    self, DistributionDescription, EnsembleDescription, NativeKind, NativeObject,
-    NativeReadOptions, NativeSource, NativeWriteOptions, StructureSetDescription,
-    NATIVE_FORMAT_OLDEST, NATIVE_FORMAT_VERSION,
+    self, NativeKind, NativeObject, NativeReadOptions, NativeSource, NativeWriteOptions,
+    StructureSetDescription, NATIVE_FORMAT_OLDEST, NATIVE_FORMAT_VERSION,
 };
 use kekule::pdb::PdbWriteOptions;
 use kekule::properties::{PropertyColumn, PropertyKey, PropertyValue};
+use kekule::statistics::{WeightSource, Weights};
 use kekule::structure::{
-    Distribution, Ensemble, Forces, Geometry, Order, Partition, Place, Positions, Samples,
-    Sampling, StateData, Structure, StructureSet, StructureSetError, ThermodynamicState, TimeAxis,
-    Velocities, WeightModel,
+    Forces, Geometry, Order, Place, Positions, Sampling, Structure, StructureSet,
+    ThermodynamicState, TimeAxis, Velocities,
 };
 use kekule::topology::{
     AtomSiteMetadata, InstanceAtomId, MoleculeClass, ResidueClass, Topology, TopologyBuilder,
@@ -57,13 +57,10 @@ fn round_trip<'a>(source: impl Into<NativeSource<'a>>) -> NativeObject {
         NativeObject::StructureSetInterpretation(value) => {
             native::write(value.as_ref(), NativeWriteOptions::default())
         }
-        NativeObject::Ensemble(value) => {
+        NativeObject::Weights(value) => {
             native::write(value.as_ref(), NativeWriteOptions::default())
         }
-        NativeObject::EnsembleDescription(value) => {
-            native::write(value.as_ref(), NativeWriteOptions::default())
-        }
-        NativeObject::DistributionDescription(value) => {
+        NativeObject::Clustering(value) => {
             native::write(value.as_ref(), NativeWriteOptions::default())
         }
         _ => unreachable!("every kind is listed"),
@@ -525,8 +522,8 @@ fn reports_are_stored_only_when_given() {
         .unwrap();
     let plain = native::write(interpretation.structure(), NativeWriteOptions::default()).unwrap();
     let interpreted = native::write(&interpretation, NativeWriteOptions::default()).unwrap();
-    // Both are format version 9: a structure with its report is kind 7.
-    assert_eq!(NATIVE_FORMAT_VERSION, 9);
+    // Both are format version 10: a structure with its report is kind 7.
+    assert_eq!(NATIVE_FORMAT_VERSION, 10);
     for bytes in [&plain, &interpreted] {
         assert_eq!(bytes[8..12], NATIVE_FORMAT_VERSION.to_le_bytes());
     }
@@ -549,9 +546,9 @@ fn reports_are_stored_only_when_given() {
         "Cannot interpret the native input. The input holds a structure, not an interpreted structure."
     );
 
-    // This reader rejects the retired kinds 4, 5, 6, and 8 and the unused
-    // kind 13 as unknown.
-    for code in [4, 5, 6, 8, 13] {
+    // This reader rejects the retired kinds 4, 5, 6, 8, 11, and 12 and the
+    // unused kind 15 as unknown.
+    for code in [4, 5, 6, 8, 11, 12, 15] {
         let mut unknown = interpreted.clone();
         unknown[12] = code;
         let error = native::read(unknown.as_slice(), NativeReadOptions::default()).unwrap_err();
@@ -563,16 +560,6 @@ fn reports_are_stored_only_when_given() {
             "{error}"
         );
     }
-    // Version 7 has no distribution kind 12.
-    let mut version_7 = interpreted.clone();
-    version_7[8..12].copy_from_slice(&7u32.to_le_bytes());
-    version_7[12] = 12;
-    let error = native::read(version_7.as_slice(), NativeReadOptions::default()).unwrap_err();
-    assert_eq!(error.kind(), DiagnosticKind::InvalidValue);
-    assert_eq!(
-        error.to_string(),
-        "Cannot parse the native input at byte 13. The object kind 12, a distribution, needs native format version 8 or newer."
-    );
 }
 
 fn assert_same_structure_set(decoded: &StructureSet, source: &StructureSet) {
@@ -591,56 +578,11 @@ fn assert_same_structure_set(decoded: &StructureSet, source: &StructureSet) {
     assert_eq!(decoded.sampling(), source.sampling());
 }
 
-/// Asserts that `decoded` holds the set of `source` and its distribution bit
-/// for bit: samples, weights, partition, states with their energies and
-/// properties, and the target.
-fn assert_same_distribution(decoded: &Distribution, source: &Distribution) {
-    assert_eq!(decoded, source);
-    let bits = |values: &[f64]| {
-        values
-            .iter()
-            .map(|value| value.to_bits())
-            .collect::<Vec<_>>()
-    };
-    let weight_bits = |distribution: &Distribution| match distribution.weight_model() {
-        WeightModel::LogWeights(values) => Some((1, bits(values))),
-        WeightModel::Boltzmann(values) => Some((2, bits(values))),
-        _ => None,
-    };
-    assert_eq!(weight_bits(decoded), weight_bits(source));
-    let energy_bits = |distribution: &Distribution| {
-        distribution
-            .states()
-            .iter()
-            .map(|state| {
-                state
-                    .energy()
-                    .map(|energy| (energy.value().to_bits(), energy.unit()))
-            })
-            .collect::<Vec<_>>()
-    };
-    assert_eq!(energy_bits(decoded), energy_bits(source));
-    let target_bits = |distribution: &Distribution| {
-        distribution.target().map(|target| {
-            (
-                target.temperature().value().to_bits(),
-                target.pressure().map(|pressure| pressure.value().to_bits()),
-            )
-        })
-    };
-    assert_eq!(target_bits(decoded), target_bits(source));
-}
-
-fn assert_same_ensemble(decoded: &Ensemble, source: &Ensemble) {
-    assert_same_structure_set(decoded.set(), source.set());
-    assert_same_distribution(decoded.distribution(), source.distribution());
-}
-
-/// Asserts that the native header of `bytes` is version 9 of `kind`, with
-/// no flag but the perception flag and a zero reserved field.
+/// Asserts that the native header of `bytes` is the current version of
+/// `kind`, with no flag but the perception flag and a zero reserved field.
 fn assert_header(bytes: &[u8], kind: u8) {
     assert_eq!(bytes[..8], [0x89, b'K', b'E', b'K', 0x0D, 0x0A, 0x1A, 0x0A]);
-    assert_eq!(bytes[8..12], 9u32.to_le_bytes());
+    assert_eq!(bytes[8..12], NATIVE_FORMAT_VERSION.to_le_bytes());
     assert_eq!(bytes[12], kind);
     assert_eq!(bytes[13] & !1, 0);
     assert_eq!(bytes[14..16], [0, 0]);
@@ -762,96 +704,210 @@ fn structure_sets_keep_every_order_kind_and_geometry_field() {
     assert_same_structure_set(&decoded, &empty);
 }
 
+/// Log weights bit for bit: of either sign, a negative zero, and the most
+/// negative finite value.
+fn log_weight_bits(weights: &Weights) -> Vec<Option<u64>> {
+    (0..weights.len())
+        .map(|geometry| weights.log_weight(geometry).map(f64::to_bits))
+        .collect()
+}
+
+/// Asserts that `error` is of a record of `found` read as `expected`, with
+/// `message`.
+fn assert_kind_error(
+    error: kekule::diagnostics::FormatError,
+    expected: NativeKind,
+    found: NativeKind,
+    message: &str,
+) {
+    assert_eq!(error.kind(), DiagnosticKind::Inconsistent);
+    assert_eq!(
+        error.detail(),
+        Some(&FormatErrorDetail::NativeKind { expected, found })
+    );
+    assert_eq!(error.to_string(), message);
+}
+
 #[test]
-fn ensembles_keep_their_distribution_bit_for_bit() {
-    let distributions = [
-        // Every geometry, one state, without weights.
-        Distribution::new(Samples::All, Partition::one_state(3)).unwrap(),
-        // Every geometry, log weighted down to the most negative finite
-        // value and with a negative zero, a state each with energies and a
-        // temperature.
-        Distribution::new(Samples::All, Partition::state_per_sample(3))
-            .unwrap()
-            .with_log_weights(vec![-1.5, -0.0, f64::MIN])
-            .unwrap()
-            .with_states(vec![
-                StateData::new()
-                    .with_energy(Quantity::new(-12.5, KILOJOULE_PER_MOLE))
-                    .unwrap(),
-                StateData::new(),
-                StateData::new()
-                    .with_energy(Quantity::new(-0.0, KILOJOULE_PER_MOLE))
-                    .unwrap(),
-            ])
-            .unwrap()
-            .with_target(
-                ThermodynamicState::canonical(Quantity::new(298.15, kekule::units::KELVIN))
-                    .unwrap(),
-            )
-            .unwrap(),
-        // A subset: geometries 0 and 2, clustered into one state represented by
-        // geometry 2, with state properties.
-        Distribution::new(
-            Samples::Subset(vec![0, 2]),
-            Partition::new(vec![0, 0], vec![1]).unwrap(),
-        )
-        .unwrap()
-        .with_log_weights(vec![2.0_f64.ln(), 0.0])
-        .unwrap()
-        .with_states(vec![{
-            let mut state = StateData::new();
-            state
-                .properties_mut()
-                .insert(key("cluster"), PropertyValue::String("open".into()))
-                .unwrap();
-            state
-        }])
-        .unwrap(),
+fn weights_keep_their_log_weights_and_source_bit_for_bit() {
+    let log_weights = vec![Some(-1.5), None, Some(-0.0), Some(f64::MIN), Some(2.5)];
+    let isobaric = ThermodynamicState::isothermal_isobaric(
+        Quantity::new(300.0 + f64::EPSILON * 256.0, KELVIN),
+        Quantity::new(1e-300, BAR),
+    )
+    .unwrap();
+    let every = [
+        Weights::equal(4),
+        Weights::equal(0),
+        Weights::given(log_weights.clone(), None).unwrap(),
+        Weights::given(log_weights.clone(), Some(Quantity::new(298.15, KELVIN))).unwrap(),
+        boltzmann(),
+        bias(isobaric),
     ];
-    for distribution in distributions {
-        let mut set = rich_set();
-        set.set_order(Some(Order::Step(vec![1, 2, 3]))).unwrap();
-        let ensemble = Ensemble::new(set, distribution).unwrap();
-        let bytes = native::write(&ensemble, NativeWriteOptions::default()).unwrap();
-        assert_header(&bytes, 11);
-        let decoded = round_trip(&ensemble);
-        assert_eq!(decoded.kind(), NativeKind::Ensemble);
-        let decoded = decoded.into_ensemble().unwrap();
-        assert_same_ensemble(&decoded, &ensemble);
-        for (state, source) in decoded.states().zip(ensemble.states()) {
-            assert_eq!(state.payload().properties(), source.payload().properties());
-            assert_eq!(state.representative(), source.representative());
-        }
-
-        // The set's own record carries no distribution: it is kind 9, and
-        // reading the ensemble as a set drops the distribution, so the set
-        // encodes to the bytes of the set written alone.
-        let set_bytes = native::write(ensemble.set(), NativeWriteOptions::default()).unwrap();
-        assert_header(&set_bytes, 9);
-        assert!(set_bytes.len() < bytes.len());
-        let dropped = native::read(bytes.as_slice(), NativeReadOptions::default())
+    for weights in every {
+        let bytes = native::write(&weights, NativeWriteOptions::default()).unwrap();
+        assert_header(&bytes, 13);
+        // Weights store no perception, so the flag is zero under either
+        // option.
+        assert_eq!(bytes[13], 0);
+        assert!(
+            native::write(
+                &weights,
+                NativeWriteOptions::default().with_perception(false)
+            )
             .unwrap()
-            .into_structure_set()
-            .unwrap();
-        assert_same_structure_set(&dropped, ensemble.set());
-        assert!(native::write(&dropped, NativeWriteOptions::default()).unwrap() == set_bytes);
-
-        // A structure set record is no ensemble.
-        let error = native::read(set_bytes.as_slice(), NativeReadOptions::default())
-            .unwrap()
-            .into_ensemble()
-            .unwrap_err();
-        assert_eq!(error.kind(), DiagnosticKind::Inconsistent);
-        assert_eq!(
-            error.detail(),
-            Some(&FormatErrorDetail::NativeKind {
-                expected: NativeKind::Ensemble,
-                found: NativeKind::StructureSet,
-            })
+                == bytes
         );
+        let decoded = round_trip(&weights);
+        assert_eq!(decoded.kind(), NativeKind::Weights);
+        let decoded = decoded.into_weights().unwrap();
+        assert_eq!(decoded, weights);
+        assert_eq!(log_weight_bits(&decoded), log_weight_bits(&weights));
+        let temperature_bits =
+            |weights: &Weights| weights.temperature().map(|value| value.value().to_bits());
+        assert_eq!(temperature_bits(&decoded), temperature_bits(&weights));
+        for len in 0..bytes.len() {
+            assert!(native::read(&bytes[..len], NativeReadOptions::default()).is_err());
+        }
+    }
+
+    let weights = Weights::given(log_weights, None).unwrap();
+    let bytes = native::write(&weights, NativeWriteOptions::default()).unwrap();
+    let mut flagged = bytes.clone();
+    flagged[13] = 1;
+    let error = native::read(flagged.as_slice(), NativeReadOptions::default()).unwrap_err();
+    assert_eq!(error.kind(), DiagnosticKind::InvalidValue);
+    assert_eq!(
+        error.to_string(),
+        "Cannot parse the native input at byte 14. The header flags mark stored perception, which weights cannot hold."
+    );
+
+    // Weights are no other kind, and no other kind is weights.
+    let read = |bytes: &[u8]| native::read(bytes, NativeReadOptions::default()).unwrap();
+    assert_kind_error(
+        read(&bytes).into_structure_set().unwrap_err(),
+        NativeKind::StructureSet,
+        NativeKind::Weights,
+        "Cannot interpret the native input. The input holds weights, not a structure set.",
+    );
+    assert_kind_error(
+        read(&bytes).into_clustering().unwrap_err(),
+        NativeKind::Clustering,
+        NativeKind::Weights,
+        "Cannot interpret the native input. The input holds weights, not a clustering.",
+    );
+    let set = native::write(&rich_set(), NativeWriteOptions::default()).unwrap();
+    assert_kind_error(
+        read(&set).into_weights().unwrap_err(),
+        NativeKind::Weights,
+        NativeKind::StructureSet,
+        "Cannot interpret the native input. The input holds a structure set, not weights.",
+    );
+
+    // The geometry count is bounded before anything is read for it.
+    let limited = NativeReadOptions::default().with_max_items(4).unwrap();
+    let mut huge = bytes.clone();
+    huge[16..20].copy_from_slice(&u32::MAX.to_le_bytes());
+    for (input, options) in [(&bytes, limited), (&huge, NativeReadOptions::default())] {
+        let error = native::read(input.as_slice(), options).unwrap_err();
+        assert_eq!(error.kind(), DiagnosticKind::Limit);
         assert_eq!(
-            error.to_string(),
-            "Cannot interpret the native input. The input holds a structure set, not an ensemble."
+            error.limit_exceeded().map(|limit| limit.resource()),
+            Some(Resource::Records)
+        );
+    }
+}
+
+/// Boltzmann weights of three geometries of the rich set.
+fn boltzmann() -> Weights {
+    let mut set = rich_set();
+    let energy = key("energy");
+    set.columns_mut()
+        .insert(
+            energy.clone(),
+            PropertyColumn::Real {
+                unit: KILOJOULE_PER_MOLE,
+                values: vec![Some(-12.5), None, Some(-0.0)],
+            },
+        )
+        .unwrap();
+    let weights = Weights::boltzmann(&set, &energy, Quantity::new(310.0, KELVIN)).unwrap();
+    assert!(matches!(
+        weights.source(),
+        WeightSource::Boltzmann { energy: stored, .. } if *stored == energy
+    ));
+    weights
+}
+
+/// Bias weights of the rich set from its bias column, sampled in `state`.
+fn bias(state: ThermodynamicState) -> Weights {
+    let mut set = rich_set();
+    set.set_order(Some(Order::Step(vec![0, 500, 1000])))
+        .unwrap();
+    let sampling = Sampling::new(state.clone())
+        .with_bias([key("bias")])
+        .unwrap();
+    set.set_sampling(Some(sampling)).unwrap();
+    let weights = Weights::from_bias(&set).unwrap().into_weights();
+    assert_eq!(weights.source(), &WeightSource::Bias { state });
+    weights
+}
+
+#[test]
+fn clusterings_keep_their_clusters_and_representatives() {
+    let clusterings = [
+        // Two clusters of four geometries, one in none.
+        Clustering::new(vec![Some(1), None, Some(1), Some(0)], vec![3, 2]).unwrap(),
+        // No clusters, and no geometries.
+        Clustering::new(vec![None, None], Vec::new()).unwrap(),
+        Clustering::new(Vec::new(), Vec::new()).unwrap(),
+    ];
+    for clustering in clusterings {
+        let bytes = native::write(&clustering, NativeWriteOptions::default()).unwrap();
+        assert_header(&bytes, 14);
+        assert_eq!(bytes[13], 0);
+        let decoded = round_trip(&clustering);
+        assert_eq!(decoded.kind(), NativeKind::Clustering);
+        assert_eq!(decoded.into_clustering().unwrap(), clustering);
+        for len in 0..bytes.len() {
+            assert!(native::read(&bytes[..len], NativeReadOptions::default()).is_err());
+        }
+    }
+
+    let clustering = Clustering::new(vec![Some(1), None, Some(1), Some(0)], vec![3, 2]).unwrap();
+    let decoded = round_trip(&clustering).into_clustering().unwrap();
+    assert_eq!(decoded.cluster_of(0), Some(1));
+    assert_eq!(decoded.cluster_of(1), None);
+    assert_eq!(decoded.members(1).collect::<Vec<_>>(), [0, 2]);
+    assert_eq!(decoded.representatives(), [3, 2]);
+
+    let bytes = native::write(&clustering, NativeWriteOptions::default()).unwrap();
+    let mut flagged = bytes.clone();
+    flagged[13] = 1;
+    assert_eq!(
+        native::read(flagged.as_slice(), NativeReadOptions::default())
+            .unwrap_err()
+            .to_string(),
+        "Cannot parse the native input at byte 14. The header flags mark stored perception, which a clustering cannot hold."
+    );
+    let read = |bytes: &[u8]| native::read(bytes, NativeReadOptions::default()).unwrap();
+    assert_kind_error(
+        read(&bytes).into_weights().unwrap_err(),
+        NativeKind::Weights,
+        NativeKind::Clustering,
+        "Cannot interpret the native input. The input holds a clustering, not weights.",
+    );
+
+    // Both counts are bounded before anything is read for them.
+    let limited = NativeReadOptions::default().with_max_items(3).unwrap();
+    let mut huge = bytes.clone();
+    huge[20..24].copy_from_slice(&u32::MAX.to_le_bytes());
+    for (input, options) in [(&bytes, limited), (&huge, NativeReadOptions::default())] {
+        let error = native::read(input.as_slice(), options).unwrap_err();
+        assert_eq!(error.kind(), DiagnosticKind::Limit);
+        assert_eq!(
+            error.limit_exceeded().map(|limit| limit.resource()),
+            Some(Resource::Records)
         );
     }
 }
@@ -1011,11 +1067,6 @@ fn sets_and_descriptions_keep_their_sampling_record() {
         .into_structure_set_description()
         .unwrap();
     assert_eq!(description.sampling(), Some(&sampling));
-    let ensemble = Ensemble::uniform(set.clone());
-    assert_eq!(
-        round_trip_ensemble(&ensemble).set().sampling(),
-        Some(&sampling)
-    );
 
     // A canonical record without optional fields.
     let canonical = ThermodynamicState::canonical(Quantity::new(310.0, KELVIN)).unwrap();
@@ -1024,282 +1075,11 @@ fn sets_and_descriptions_keep_their_sampling_record() {
 }
 
 #[test]
-fn ensemble_descriptions_store_the_distribution_over_external_geometries() {
-    let mut set = rich_set();
-    set.set_order(Some(Order::Step(vec![1, 2, 3]))).unwrap();
-    // Geometries 1 and 2 as one state represented by geometry 2, with a
-    // temperature and an energy.
-    let distribution = Distribution::new(
-        Samples::Subset(vec![1, 2]),
-        Partition::new(vec![0, 0], vec![1]).unwrap(),
-    )
-    .unwrap()
-    .with_log_weights(vec![-0.0, -2.5])
-    .unwrap()
-    .with_states(vec![StateData::new()
-        .with_energy(Quantity::new(-3.25, KILOJOULE_PER_MOLE))
-        .unwrap()])
-    .unwrap()
-    .with_target(
-        ThermodynamicState::canonical(Quantity::new(310.0, kekule::units::KELVIN)).unwrap(),
-    )
-    .unwrap();
-    let ensemble = Ensemble::new(set, distribution).unwrap();
-    let description = EnsembleDescription::of(&ensemble);
-    assert_eq!(description.set().geometry_count(), 3);
-    assert_same_distribution(description.distribution(), ensemble.distribution());
-
-    let bytes = native::write(&description, NativeWriteOptions::default()).unwrap();
-    assert_header(&bytes, 11);
-    let decoded = round_trip(&description);
-    assert_eq!(decoded.kind(), NativeKind::Ensemble);
-    for error in [
-        decoded.clone().into_ensemble().unwrap_err(),
-        decoded.clone().into_structure_set().unwrap_err(),
-    ] {
-        assert_eq!(error.kind(), DiagnosticKind::Inconsistent);
-        assert_eq!(
-            error.detail(),
-            Some(&FormatErrorDetail::NativeExternalGeometries { geometries: 3 })
-        );
-    }
-    let set_description = decoded.clone().into_structure_set_description().unwrap();
-    assert_eq!(set_description.geometry_count(), 3);
-    assert_eq!(set_description.order(), ensemble.set().order());
-    let decoded = decoded.into_ensemble_description().unwrap();
-    assert_same_topology(decoded.set().topology(), ensemble.set().topology());
-    assert_eq!(decoded.set().properties(), ensemble.set().properties());
-    assert_eq!(decoded.set().geometry_count(), 3);
-    assert_eq!(decoded.set().order(), ensemble.set().order());
-    assert_same_distribution(decoded.distribution(), ensemble.distribution());
-
-    // A full ensemble record describes itself too.
-    let full = native::read(
-        native::write(&ensemble, NativeWriteOptions::default())
-            .unwrap()
-            .as_slice(),
-        NativeReadOptions::default(),
-    )
-    .unwrap()
-    .into_ensemble_description()
-    .unwrap();
-    assert_eq!(full.set().geometry_count(), 3);
-    assert_same_distribution(full.distribution(), ensemble.distribution());
-
-    // Two more geometries arrive: they are not samples, and the samples keep
-    // their log weights, partition, states, and temperature bit for bit.
-    let grown = decoded
-        .clone()
-        .extended_to(5, Some(Order::Step(vec![1, 2, 3, 4, 5])))
+fn structure_sets_of_every_order_are_one_kind() {
+    let mut site = StructureSet::from_geometries(water_topology(), water_geometries()).unwrap();
+    site.properties_mut()
+        .insert(key("method"), PropertyValue::String("REMD".into()))
         .unwrap();
-    assert_eq!(grown.set().geometry_count(), 5);
-    assert_eq!(grown.set().order(), Some(&Order::Step(vec![1, 2, 3, 4, 5])));
-    assert_eq!(grown.distribution().samples(), &Samples::Subset(vec![1, 2]));
-    assert_same_distribution(grown.distribution(), ensemble.distribution());
-    assert_eq!(grown.distribution().log_weight(3), None);
-    let (set_description, distribution) = grown.into_parts();
-    assert_eq!(set_description.geometry_count(), 5);
-    assert_eq!(distribution.sample_count(), 2);
-
-    // A distribution of every geometry becomes the subset of the earlier
-    // geometries.
-    let every = EnsembleDescription::new(
-        StructureSetDescription::new(water_topology(), 2),
-        Distribution::new(Samples::All, Partition::one_state(2)).unwrap(),
-    )
-    .unwrap()
-    .extended_to(4, None)
-    .unwrap();
-    assert_eq!(every.distribution().samples(), &Samples::Subset(vec![0, 1]));
-    assert_eq!(every.set().order(), None);
-
-    // Fewer geometries than described, and a distribution outside the
-    // described geometries, are refused.
-    assert!(matches!(
-        decoded.extended_to(2, None).unwrap_err(),
-        StructureSetError::CoverageMismatch {
-            covered: 3,
-            geometries: 2
-        }
-    ));
-    assert!(EnsembleDescription::new(
-        StructureSetDescription::new(water_topology(), 2),
-        Distribution::new(Samples::Subset(vec![2]), Partition::one_state(1)).unwrap(),
-    )
-    .is_err());
-    for len in 0..bytes.len() {
-        assert!(native::read(&bytes[..len], NativeReadOptions::default()).is_err());
-    }
-}
-
-#[test]
-fn distribution_records_store_a_distribution_and_its_geometry_count() {
-    let mut set = rich_set();
-    set.set_order(Some(Order::Step(vec![1, 2, 3]))).unwrap();
-    // Geometries 0 and 2 as one state represented by geometry 2, with an
-    // energy, state properties, log weights, and a temperature.
-    let mut state = StateData::new()
-        .with_energy(Quantity::new(-0.0, KILOJOULE_PER_MOLE))
-        .unwrap();
-    state
-        .properties_mut()
-        .insert(key("cluster"), PropertyValue::String("open".into()))
-        .unwrap();
-    let distribution = Distribution::new(
-        Samples::Subset(vec![0, 2]),
-        Partition::new(vec![0, 0], vec![1]).unwrap(),
-    )
-    .unwrap()
-    .with_log_weights(vec![f64::MIN, -0.0])
-    .unwrap()
-    .with_states(vec![state])
-    .unwrap()
-    .with_target(
-        ThermodynamicState::canonical(Quantity::new(310.0, kekule::units::KELVIN)).unwrap(),
-    )
-    .unwrap();
-    let ensemble = Ensemble::new(set, distribution).unwrap();
-    let description = DistributionDescription::of(&ensemble);
-    assert_eq!(description.geometry_count(), 3);
-
-    let bytes = native::write(&description, NativeWriteOptions::default()).unwrap();
-    assert_header(&bytes, 12);
-    // A distribution stores no perception, so its perception flag is zero
-    // under either option, and the reader rejects a set flag.
-    assert_eq!(bytes[13], 0);
-    assert!(
-        native::write(
-            &description,
-            NativeWriteOptions::default().with_perception(false)
-        )
-        .unwrap()
-            == bytes
-    );
-    let mut flagged = bytes.clone();
-    flagged[13] = 1;
-    let error = native::read(flagged.as_slice(), NativeReadOptions::default()).unwrap_err();
-    assert_eq!(error.kind(), DiagnosticKind::InvalidValue);
-    assert_eq!(
-        error.to_string(),
-        "Cannot parse the native input at byte 14. The header flags say a distribution stores perception, but a distribution stores none."
-    );
-    let decoded = round_trip(&description);
-    assert_eq!(decoded.kind(), NativeKind::Distribution);
-    for (error, expected) in [
-        (
-            decoded.clone().into_ensemble().unwrap_err(),
-            NativeKind::Ensemble,
-        ),
-        (
-            decoded.clone().into_structure_set().unwrap_err(),
-            NativeKind::StructureSet,
-        ),
-    ] {
-        assert_eq!(error.kind(), DiagnosticKind::Inconsistent);
-        assert_eq!(
-            error.detail(),
-            Some(&FormatErrorDetail::NativeKind {
-                expected,
-                found: NativeKind::Distribution,
-            })
-        );
-    }
-    let decoded = decoded.into_distribution_description().unwrap();
-    assert_eq!(decoded, description);
-    assert_eq!(decoded.geometry_count(), 3);
-    assert_same_distribution(decoded.distribution(), ensemble.distribution());
-    // The ensemble it describes is the set and the distribution read back.
-    let rebuilt = Ensemble::new(ensemble.set().clone(), decoded.into_distribution()).unwrap();
-    assert_same_distribution(rebuilt.distribution(), ensemble.distribution());
-
-    // Ensemble records give their distribution too; other records do not.
-    let projected = |bytes: Vec<u8>| {
-        native::read(bytes.as_slice(), NativeReadOptions::default())
-            .unwrap()
-            .into_distribution_description()
-    };
-    let full = native::write(&ensemble, NativeWriteOptions::default()).unwrap();
-    assert_eq!(projected(full).unwrap(), description);
-    let external = native::write(
-        &EnsembleDescription::of(&ensemble),
-        NativeWriteOptions::default(),
-    )
-    .unwrap();
-    assert_eq!(projected(external).unwrap(), description);
-    let error = projected(native::write(ensemble.set(), NativeWriteOptions::default()).unwrap())
-        .unwrap_err();
-    assert_eq!(
-        error.to_string(),
-        "Cannot interpret the native input. The input holds a structure set, not a distribution."
-    );
-
-    // A subset of every geometry is every geometry; the samples are checked
-    // against the geometry count.
-    let every = DistributionDescription::new(
-        2,
-        Distribution::new(Samples::Subset(vec![0, 1]), Partition::one_state(2)).unwrap(),
-    )
-    .unwrap();
-    assert_eq!(every.distribution().samples(), &Samples::All);
-    assert_eq!(
-        round_trip(&every).into_distribution_description().unwrap(),
-        every
-    );
-    assert!(matches!(
-        DistributionDescription::new(1, description.distribution().clone()).unwrap_err(),
-        StructureSetError::IndexOutOfRange(_)
-    ));
-    assert!(matches!(
-        DistributionDescription::new(
-            3,
-            Distribution::new(Samples::All, Partition::one_state(2)).unwrap()
-        )
-        .unwrap_err(),
-        StructureSetError::CoverageMismatch { .. }
-    ));
-    // A stored count the samples do not fit is refused.
-    let mut short = bytes.clone();
-    short[16..20].copy_from_slice(&2u32.to_le_bytes());
-    let error = native::read(short.as_slice(), NativeReadOptions::default()).unwrap_err();
-    assert_eq!(error.kind(), DiagnosticKind::InvalidValue);
-
-    // The geometry count is bounded before anything is read for it; every
-    // truncation fails cleanly.
-    let limited = NativeReadOptions::default().with_max_items(2).unwrap();
-    let mut huge = bytes.clone();
-    huge[16..20].copy_from_slice(&u32::MAX.to_le_bytes());
-    for (input, options) in [(&bytes, limited), (&huge, NativeReadOptions::default())] {
-        let error = native::read(input.as_slice(), options).unwrap_err();
-        assert_eq!(error.kind(), DiagnosticKind::Limit);
-        assert_eq!(
-            error.limit_exceeded().map(|limit| limit.resource()),
-            Some(Resource::Records)
-        );
-    }
-    for len in 0..bytes.len() {
-        assert!(native::read(&bytes[..len], NativeReadOptions::default()).is_err());
-    }
-
-    // Two more geometries arrive: they are not samples.
-    let grown = description.clone().extended_to(5).unwrap();
-    assert_eq!(grown.geometry_count(), 5);
-    assert_eq!(grown.distribution().samples(), &Samples::Subset(vec![0, 2]));
-    assert_same_distribution(grown.distribution(), ensemble.distribution());
-    assert!(matches!(
-        description.extended_to(2).unwrap_err(),
-        StructureSetError::CoverageMismatch {
-            covered: 3,
-            geometries: 2
-        }
-    ));
-}
-
-#[test]
-fn ordered_structure_sets_are_one_kind_and_ensembles_another() {
-    let clustered = water_ensemble(Partition::new(vec![1, 0, 1, 0], vec![3, 2]).unwrap());
-    let bytes = native::write(&clustered, NativeWriteOptions::default()).unwrap();
-    assert_header(&bytes, 11);
-    assert_same_ensemble(&round_trip(&clustered).into_ensemble().unwrap(), &clustered);
     let mut timed = StructureSet::from_geometries(
         water_topology(),
         (0..2u32).map(|index| Geometry::new(positions(f64::from(index)))),
@@ -1317,7 +1097,7 @@ fn ordered_structure_sets_are_one_kind_and_ensembles_another() {
         values: vec![-0.0],
     }))
     .unwrap();
-    for set in [clustered.set(), &timed, &scan] {
+    for set in [&site, &timed, &scan] {
         let bytes = native::write(set, NativeWriteOptions::default()).unwrap();
         assert_header(&bytes, 9);
         assert_same_structure_set(&round_trip(set).into_structure_set().unwrap(), set);
@@ -1372,17 +1152,6 @@ fn water_geometries() -> Vec<Geometry> {
     ]
 }
 
-/// The water geometries as samples in the states of `partition`, log
-/// weighted down to the most negative finite value and with a negative zero.
-fn water_ensemble(partition: Partition) -> Ensemble {
-    let set = StructureSet::from_geometries(water_topology(), water_geometries()).unwrap();
-    let distribution = Distribution::new(Samples::All, partition)
-        .unwrap()
-        .with_log_weights(vec![0.25_f64.ln(), 3.0_f64.ln(), -0.0, f64::MIN])
-        .unwrap();
-    Ensemble::new(set, distribution).unwrap()
-}
-
 /// Asserts that a set round trips as a structure set record, returning the
 /// decoded set.
 fn round_trip_set(set: &StructureSet) -> StructureSet {
@@ -1393,113 +1162,6 @@ fn round_trip_set(set: &StructureSet) -> StructureSet {
     let decoded = round_trip(set).into_structure_set().unwrap();
     assert_same_structure_set(&decoded, set);
     decoded
-}
-
-/// Asserts that an ensemble round trips as an ensemble record, its
-/// distribution bit for bit, returning the decoded ensemble.
-fn round_trip_ensemble(ensemble: &Ensemble) -> Ensemble {
-    assert_header(
-        &native::write(ensemble, NativeWriteOptions::default()).unwrap(),
-        11,
-    );
-    let decoded = round_trip(ensemble).into_ensemble().unwrap();
-    assert_same_ensemble(&decoded, ensemble);
-    for geometry in 0..ensemble.set().len() {
-        let distribution = |ensemble: &Ensemble| {
-            let distribution = ensemble.distribution();
-            (
-                distribution.log_weight(geometry).map(f64::to_bits),
-                distribution.state_of(geometry),
-                distribution.sample_position(geometry),
-            )
-        };
-        assert_eq!(distribution(&decoded), distribution(ensemble));
-    }
-    decoded
-}
-
-#[test]
-fn distributions_of_one_state_keep_samples_log_weights_and_site_values() {
-    let mut ensemble = water_ensemble(Partition::one_state(4));
-    let (mut set, distribution) = ensemble.into_parts();
-    set.properties_mut()
-        .insert(key("method"), PropertyValue::String("REMD".into()))
-        .unwrap();
-    ensemble = Ensemble::new(set, distribution).unwrap();
-    let decoded = round_trip_ensemble(&ensemble);
-    assert_eq!(decoded.distribution().state_count(), 1);
-    assert_eq!(decoded.distribution().samples(), &Samples::All);
-    let WeightModel::LogWeights(log_weights) = decoded.distribution().weight_model() else {
-        panic!("the decoded weights are log weights")
-    };
-    assert_eq!(log_weights[2].to_bits(), (-0.0_f64).to_bits());
-    assert_eq!(log_weights[3], f64::MIN);
-    assert_eq!(
-        decoded.set().properties().get(&key("method")),
-        Some(&PropertyValue::String("REMD".into()))
-    );
-}
-
-#[test]
-fn distributions_of_one_state_per_sample_keep_energies_and_the_temperature() {
-    let mut ensemble = water_ensemble(Partition::state_per_sample(4));
-    let mut distribution = ensemble.distribution_mut();
-    for (state, energy) in [(0, -12.5), (2, 0.0)] {
-        distribution
-            .state_mut(state)
-            .unwrap()
-            .set_energy(Some(Quantity::new(energy, KILOJOULE_PER_MOLE)))
-            .unwrap();
-    }
-    distribution
-        .set_target(Some(
-            ThermodynamicState::canonical(Quantity::new(298.15, kekule::units::KELVIN)).unwrap(),
-        ))
-        .unwrap();
-    let decoded = round_trip_ensemble(&ensemble);
-    let distribution = decoded.distribution();
-    assert_eq!(distribution.state_count(), 4);
-    assert_eq!(
-        distribution
-            .states()
-            .iter()
-            .map(|state| state.energy().map(|energy| *energy.value()))
-            .collect::<Vec<_>>(),
-        [Some(-12.5), None, Some(0.0), None]
-    );
-    assert_eq!(
-        distribution.temperature(),
-        Some(Quantity::new(298.15, kekule::units::KELVIN))
-    );
-}
-
-#[test]
-fn clustered_distributions_keep_their_partition_and_state_properties() {
-    let mut ensemble = water_ensemble(Partition::new(vec![1, 0, 1, 0], vec![3, 2]).unwrap());
-    let mut state = StateData::new()
-        .with_energy(Quantity::new(-0.0, KILOJOULE_PER_MOLE))
-        .unwrap();
-    state
-        .properties_mut()
-        .insert(key("cluster"), PropertyValue::String("open".into()))
-        .unwrap();
-    *ensemble.distribution_mut().state_mut(1).unwrap() = state;
-    let decoded = round_trip_ensemble(&ensemble);
-    let open = decoded.state(1).unwrap();
-    assert_eq!(open.representative(), 2);
-    assert_eq!(open.geometries().collect::<Vec<_>>(), [0, 2]);
-    assert_eq!(
-        open.payload().energy().unwrap().value().to_bits(),
-        (-0.0_f64).to_bits()
-    );
-    assert_eq!(
-        open.payload().properties().get(&key("cluster")),
-        Some(&PropertyValue::String("open".into()))
-    );
-    let other = decoded.state(0).unwrap();
-    assert_eq!(other.representative(), 3);
-    assert_eq!(other.geometries().collect::<Vec<_>>(), [1, 3]);
-    assert_eq!(other.payload().energy(), None);
 }
 
 #[test]
@@ -1795,27 +1457,27 @@ fn readers_reject_foreign_magic_other_versions_and_unknown_flags() {
     assert_eq!(error.kind(), DiagnosticKind::Syntax);
     assert_eq!(error.detail(), Some(&FormatErrorDetail::NativeMagic));
 
-    assert_eq!((NATIVE_FORMAT_OLDEST, NATIVE_FORMAT_VERSION), (7, 9));
+    assert_eq!((NATIVE_FORMAT_OLDEST, NATIVE_FORMAT_VERSION), (10, 10));
     let mut newer = bytes.clone();
-    newer[8..12].copy_from_slice(&10u32.to_le_bytes());
+    newer[8..12].copy_from_slice(&11u32.to_le_bytes());
     let error = native::read(newer.as_slice(), NativeReadOptions::default()).unwrap_err();
     assert_eq!(error.kind(), DiagnosticKind::Unsupported);
     assert_eq!(
         error.detail(),
         Some(&FormatErrorDetail::NativeVersion {
-            found: 10,
-            oldest: 7,
-            newest: 9,
+            found: 11,
+            oldest: 10,
+            newest: 10,
         })
     );
     assert_eq!(error.byte_offset(), Some(12));
     assert_eq!(
         error.to_string(),
-        "Cannot parse the native input at byte 12. The input is in native format version 10, written by a newer Kekule. This reader reads versions 7 to 9."
+        "Cannot parse the native input at byte 12. The input is in native format version 11, written by a newer Kekule. This reader reads version 10."
     );
 
     // Versions before the oldest are no longer read.
-    for version in [0u32, 2, 6] {
+    for version in [0u32, 2, 6, 9] {
         let mut older = bytes.clone();
         older[8..12].copy_from_slice(&version.to_le_bytes());
         let error = native::read(older.as_slice(), NativeReadOptions::default()).unwrap_err();
@@ -1824,13 +1486,13 @@ fn readers_reject_foreign_magic_other_versions_and_unknown_flags() {
             error.detail(),
             Some(&FormatErrorDetail::NativeVersion {
                 found: version,
-                oldest: 7,
-                newest: 9,
+                oldest: 10,
+                newest: 10,
             })
         );
         assert!(
             error.to_string().ends_with(&format!(
-                "The input is in native format version {version}, which is no longer read. This reader reads versions 7 to 9."
+                "The input is in native format version {version}, which is no longer read. This reader reads version 10."
             )),
             "{error}"
         );

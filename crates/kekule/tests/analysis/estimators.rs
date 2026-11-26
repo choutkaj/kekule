@@ -1,4 +1,4 @@
-//! Reweighting estimators: exact constant groups, the cumulant series, and
+//! Landscape estimators: exact constant groups, the cumulant series, and
 //! values that no estimate represents.
 
 use kekule::statistics::{CumulantOrder, Estimator};
@@ -149,9 +149,38 @@ fn empty_groups_and_values_without_an_estimate_have_none() {
 }
 
 #[test]
-fn the_default_is_the_second_order_cumulant_expansion() {
-    assert_eq!(
-        Estimator::default(),
-        Estimator::Cumulant(CumulantOrder::Second)
-    );
+fn the_default_is_the_exact_exponential_average() {
+    assert_eq!(Estimator::default(), Estimator::Exponential);
+}
+
+#[test]
+fn the_second_cumulant_of_gaussian_values_is_their_exponential_average() {
+    // Reduced values drawn from N(mu, sigma^2), for which
+    // ln <exp b> = mu + sigma^2 / 2.
+    let (mu, sigma) = (1.0, 0.5);
+    let count = 4_000;
+    let mut state = 0x2545_f491_4f6c_dd1d_u64;
+    let mut uniform = move || {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        (state >> 11) as f64 / (1_u64 << 53) as f64
+    };
+    let values = (0..count)
+        .map(|_| {
+            let (radius, angle) = (1.0 - uniform(), uniform());
+            mu + sigma * (-2.0 * radius.ln()).sqrt() * (std::f64::consts::TAU * angle).cos()
+        })
+        .collect::<Vec<_>>();
+    let expected = (count as f64).ln() + mu + sigma * sigma / 2.0;
+    for estimator in [
+        Estimator::Exponential,
+        Estimator::Cumulant(CumulantOrder::Second),
+    ] {
+        let estimate = estimator.log_sum(&values).unwrap();
+        assert!(
+            (estimate - expected).abs() < 0.03,
+            "{estimator:?}: {estimate} differs from {expected}"
+        );
+    }
 }

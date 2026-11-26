@@ -18,9 +18,9 @@
 //!   trajectory, or at steps or coordinate values, as the points of an
 //!   optimization or a scan. File codecs and streaming analysis for
 //!   trajectories live in [`traj`].
-//! - [`structure::Ensemble`] reads a structure set as draws from a
-//!   [`structure::Distribution`]: which geometries are samples, what each
-//!   weighs, and how they group into states that may carry energies.
+//! - [`statistics::Weights`] say which geometries of a set are samples and
+//!   what each weighs, and a [`clustering::Clustering`] groups them into
+//!   clusters; both are values beside the set, indexed by geometry.
 //!
 //! A disconnected salt, solvent box, or protein-ligand complex is therefore a
 //! [`topology::Topology`] containing several connected molecules, not one

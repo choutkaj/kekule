@@ -2,7 +2,7 @@
 //! frame, and temporal unwrapping.
 //!
 //! These operations change positions only, in place. The shared topology, cells,
-//! velocities, forces, order, distribution, and all properties are retained.
+//! velocities, forces, order, columns, and all properties are retained.
 //! Set functions publish only after every geometry succeeds; clone the set first
 //! to keep the original. Every processed geometry must have a periodic cell.
 //!

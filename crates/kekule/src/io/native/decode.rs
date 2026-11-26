@@ -6,8 +6,8 @@
 //! malformed input yields a [`FormatError`], never a panic.
 //!
 //! One decoder reads every version from [`NATIVE_FORMAT_OLDEST`] to
-//! [`NATIVE_FORMAT_VERSION`]. It keeps the version the header states, and a
-//! section whose layout changed between versions branches on it.
+//! [`NATIVE_FORMAT_VERSION`]. While they are the same, no section branches
+//! on the version.
 
 use std::io::{ErrorKind, Read};
 use std::num::{NonZeroU16, NonZeroU32};
@@ -18,10 +18,10 @@ use super::encode::{
     ABSENT_STRING, BASE_DIMENSIONS, END_MARKER, GEOMETRIES_EXTERNAL, GEOMETRIES_INLINE,
 };
 use super::{
-    DistributionDescription, EnsembleDescription, NativeKind, NativeObject, NativeReadOptions,
-    StructureSetDescription, COLUMNS_SINCE, NATIVE_FORMAT_OLDEST, NATIVE_FORMAT_VERSION,
-    NATIVE_MAGIC, SAMPLING_SINCE, WEIGHT_MODEL_SINCE,
+    NativeKind, NativeObject, NativeReadOptions, StructureSetDescription, NATIVE_FORMAT_OLDEST,
+    NATIVE_FORMAT_VERSION, NATIVE_MAGIC,
 };
+use crate::clustering::Clustering;
 use crate::diagnostics::{
     DiagnosticKind, Format, FormatError, FormatErrorDetail, LimitExceeded, Resource,
 };
@@ -46,10 +46,10 @@ use crate::properties::{
     GeometryProperties, MoleculeProperties, OwnerProperties, PropertyColumn, PropertyKey,
     PropertyTable, PropertyValue, RawPropertyTable, TopologyProperties,
 };
-use crate::statistics::{CumulantOrder, Estimator};
+use crate::statistics::{WeightSource, Weights};
 use crate::structure::{
-    Distribution, Ensemble, Forces, Geometry, Order, Partition, Positions, Samples, Sampling,
-    StateData, Structure, StructureSet, ThermodynamicState, TimeAxis, Velocities, Weights,
+    Forces, Geometry, Order, Positions, Sampling, Structure, StructureSet, ThermodynamicState,
+    TimeAxis, Velocities,
 };
 use crate::topology::{
     AtomSiteId, AtomSiteMetadata, HierarchyBuilder, InstanceAtomId, MoleculeClass,
@@ -58,9 +58,9 @@ use crate::topology::{
     TopologyParts,
 };
 use crate::units::{
-    unit_with_symbol, Dimension, Quantity, Unit, CANONICAL_ENERGY_UNIT, CANONICAL_FORCE_UNIT,
-    CANONICAL_LENGTH_UNIT, CANONICAL_PRESSURE_UNIT, CANONICAL_TEMPERATURE_UNIT,
-    CANONICAL_TIME_UNIT, CANONICAL_VELOCITY_UNIT, SQUARE_NANOMETER,
+    unit_with_symbol, Dimension, Quantity, Unit, CANONICAL_FORCE_UNIT, CANONICAL_LENGTH_UNIT,
+    CANONICAL_PRESSURE_UNIT, CANONICAL_TEMPERATURE_UNIT, CANONICAL_TIME_UNIT,
+    CANONICAL_VELOCITY_UNIT, SQUARE_NANOMETER,
 };
 
 mod report;
@@ -83,7 +83,6 @@ pub(crate) fn read_native(
         offset: 0,
         crc: Crc32::new(),
         options,
-        version: NATIVE_FORMAT_VERSION,
         stored_perception: false,
         scratch: Vec::new(),
     };
@@ -100,34 +99,14 @@ pub(crate) fn read_native(
                 report,
             }))
         }
-        NativeKind::StructureSet => match decoder.structure_set(false, false)?.0 {
+        NativeKind::StructureSet => match decoder.structure_set(false)? {
             Decoded::Inline(set) => NativeObject::StructureSet(*set),
             Decoded::External(description) => NativeObject::StructureSetDescription(description),
         },
-        NativeKind::Ensemble => {
-            let (decoded, distribution) = decoder.structure_set(false, true)?;
-            let distribution = distribution.expect("an ensemble record has a distribution");
-            match decoded {
-                Decoded::Inline(set) => NativeObject::Ensemble(Box::new(
-                    Ensemble::new(*set, distribution)
-                        .map_err(|error| decoder.structure_error(error))?,
-                )),
-                Decoded::External(description) => NativeObject::EnsembleDescription(Box::new(
-                    EnsembleDescription::new(*description, distribution)
-                        .map_err(|error| decoder.structure_error(error))?,
-                )),
-            }
-        }
-        NativeKind::Distribution => {
-            let count = decoder.count(decoder.options.max_items(), Resource::Records)?;
-            let distribution = decoder.distribution(count)?;
-            NativeObject::DistributionDescription(Box::new(
-                DistributionDescription::new(count, distribution)
-                    .map_err(|error| decoder.structure_error(error))?,
-            ))
-        }
+        NativeKind::Weights => NativeObject::Weights(Box::new(decoder.weights()?)),
+        NativeKind::Clustering => NativeObject::Clustering(Box::new(decoder.clustering()?)),
         NativeKind::StructureSetInterpretation => {
-            let (Decoded::Inline(set), _) = decoder.structure_set(true, false)? else {
+            let Decoded::Inline(set) = decoder.structure_set(true)? else {
                 unreachable!("an interpreted structure set is read with its geometries")
             };
             let mut reports = Vec::with_capacity(set.len().min(CHUNK_BYTES));
@@ -149,8 +128,6 @@ struct Decoder<'r, R: Read> {
     offset: u64,
     crc: Crc32,
     options: NativeReadOptions,
-    /// The format version the header states.
-    version: u32,
     stored_perception: bool,
     scratch: Vec<u8>,
 }
@@ -545,17 +522,9 @@ impl<R: Read> Decoder<'_, R> {
                     newest: NATIVE_FORMAT_VERSION,
                 }));
         }
-        self.version = version;
         let code = self.u8()?;
         let kind = NativeKind::from_code(code)
             .ok_or_else(|| self.invalid(format!("The object kind {code} is unknown.")))?;
-        if self.version < kind.since() {
-            return Err(self.invalid(format!(
-                "The object kind {code}, {}, needs native format version {} or newer.",
-                kind.with_article(),
-                kind.since()
-            )));
-        }
         let flags = self.u8()?;
         if flags & !1 != 0 {
             return Err(self.error(
@@ -566,7 +535,7 @@ impl<R: Read> Decoder<'_, R> {
         if flags & 1 != 0 && !kind.stores_perception() {
             let kind = kind.with_article();
             return Err(self.invalid(format!(
-                "The header flags say {kind} stores perception, but {kind} stores none."
+                "The header flags mark stored perception, which {kind} cannot hold."
             )));
         }
         self.stored_perception = flags & 1 != 0;
@@ -1463,32 +1432,16 @@ impl<R: Read> Decoder<'_, R> {
         Ok(geometry)
     }
 
-    /// A structure set record, or with `ensemble` an ensemble record and its
-    /// distribution; an external geometries section is rejected when
-    /// `inline` is required.
-    fn structure_set(
-        &mut self,
-        inline: bool,
-        ensemble: bool,
-    ) -> Result<(Decoded, Option<Distribution>)> {
+    /// A structure set record; an external geometries section is rejected
+    /// when `inline` is required.
+    fn structure_set(&mut self, inline: bool) -> Result<Decoded> {
         let topology = Arc::new(self.topology()?);
         let owner = self.owner()?;
         let count = self.count(self.options.max_items(), Resource::Records)?;
         let order = self.order(count)?;
-        // Before version 9 a set's per-geometry values were its geometries'
-        // owner values, which move into columns as the set takes them.
-        let columns = if self.version >= COLUMNS_SINCE {
-            Some(PropertyTable::from_raw(self.table(count)?))
-        } else {
-            None
-        };
-        let sampling = if self.version >= SAMPLING_SINCE && self.tag("sampling")? {
+        let columns = PropertyTable::from_raw(self.table(count)?);
+        let sampling = if self.tag("sampling")? {
             Some(self.sampling()?)
-        } else {
-            None
-        };
-        let distribution = if ensemble {
-            Some(self.distribution(count)?)
         } else {
             None
         };
@@ -1498,12 +1451,10 @@ impl<R: Read> Decoder<'_, R> {
                 let description = StructureSetDescription::new(topology, count)
                     .with_properties(owner)
                     .with_order(order)
-                    .and_then(|description| {
-                        description.with_columns(columns.unwrap_or_else(|| PropertyTable::new(count)))
-                    })
+                    .and_then(|description| description.with_columns(columns))
                     .and_then(|description| description.with_sampling(sampling))
                     .map_err(|error| self.structure_error(error))?;
-                return Ok((Decoded::External(Box::new(description)), distribution));
+                return Ok(Decoded::External(Box::new(description)));
             }
             GEOMETRIES_EXTERNAL => {
                 return Err(self.invalid(
@@ -1517,7 +1468,7 @@ impl<R: Read> Decoder<'_, R> {
         let mut geometries = Vec::with_capacity(count.min(CHUNK_BYTES));
         for _ in 0..count {
             let geometry = self.geometry(&topology)?;
-            if columns.is_some() && !geometry.properties().owner().is_empty() {
+            if !geometry.properties().owner().is_empty() {
                 return Err(self.invalid(
                     "A geometry of the structure set has values of its own. The set's columns hold them.",
                 ));
@@ -1529,12 +1480,10 @@ impl<R: Read> Decoder<'_, R> {
         *set.properties_mut() = owner;
         set.set_order(order)
             .map_err(|error| self.structure_error(error))?;
-        if let Some(columns) = columns {
-            set.set_columns(columns);
-        }
+        set.set_columns(columns);
         set.set_sampling(sampling)
             .map_err(|error| self.structure_error(error))?;
-        Ok((Decoded::Inline(Box::new(set)), distribution))
+        Ok(Decoded::Inline(Box::new(set)))
     }
 
     /// A set's sampling record.
@@ -1606,127 +1555,82 @@ impl<R: Read> Decoder<'_, R> {
         }))
     }
 
-    /// The distribution over a set of `count` geometries.
-    fn distribution(&mut self, count: usize) -> Result<Distribution> {
-        let samples = match self.u8()? {
-            0 => Samples::All,
-            1 => {
-                let listed = self.u32()? as usize;
-                if listed > count {
-                    return Err(self.invalid(format!(
-                        "The distribution lists {listed} samples of {count} geometries."
-                    )));
+    /// A weights record.
+    fn weights(&mut self) -> Result<Weights> {
+        let count = self.count(self.options.max_items(), Resource::Records)?;
+        let temperature = |decoder: &Self, value: f64| {
+            crate::statistics::canonical(Quantity::new(value, CANONICAL_TEMPERATURE_UNIT))
+                .map(|state| state.temperature())
+                .map_err(|error| decoder.weights_error(error))
+        };
+        let source = match self.u8()? {
+            0 => WeightSource::Equal,
+            1 => WeightSource::Given {
+                temperature: self
+                    .opt_f64()?
+                    .map(|value| temperature(self, value))
+                    .transpose()?,
+            },
+            2 => {
+                let value = self.f64()?;
+                let temperature = temperature(self, value)?;
+                let text = self.str()?;
+                WeightSource::Boltzmann {
+                    temperature,
+                    energy: self.column_key(text)?,
                 }
-                Samples::Subset(
-                    self.u32_array(listed)?
-                        .into_iter()
-                        .map(|index| index as usize)
-                        .collect(),
-                )
             }
-            other => return Err(self.invalid(format!("The samples tag {other} is unknown."))),
+            3 => WeightSource::Bias {
+                state: self.thermodynamic_state()?,
+            },
+            other => return Err(self.invalid(format!("The weight source tag {other} is unknown."))),
         };
-        let sample_count = match &samples {
-            Samples::Subset(indices) => indices.len(),
-            _ => count,
-        };
-        let weights = if self.version >= WEIGHT_MODEL_SINCE {
-            match self.u8()? {
-                0 => Weights::Equal,
-                1 => Weights::Logarithmic(self.f64_array(sample_count)?),
-                2 => Weights::Boltzmann(self.f64_array(sample_count)?),
-                3 => {
-                    let estimator = match self.u8()? {
-                        0 => Estimator::Exponential,
-                        1 => Estimator::Cumulant(match self.u8()? {
-                            1 => CumulantOrder::First,
-                            2 => CumulantOrder::Second,
-                            3 => CumulantOrder::Third,
-                            other => {
-                                return Err(
-                                    self.invalid(format!("The cumulant order {other} is unknown."))
-                                )
-                            }
-                        }),
-                        other => {
-                            return Err(
-                                self.invalid(format!("The estimator tag {other} is unknown."))
-                            )
-                        }
-                    };
-                    Weights::Reweighted {
-                        estimator,
-                        reduced: self.f64_array(sample_count)?,
-                    }
-                }
-                other => return Err(self.invalid(format!("The weights tag {other} is unknown."))),
-            }
-        } else if self.tag("log weights")? {
-            Weights::Logarithmic(self.f64_array(sample_count)?)
-        } else {
-            Weights::Equal
-        };
-        let assignments = self
-            .u32_array(sample_count)?
-            .into_iter()
-            .map(|state| state as usize)
-            .collect();
-        let state_count = self.count(self.options.max_items(), Resource::Records)?;
-        let mut representatives = Vec::with_capacity(state_count.min(CHUNK_BYTES));
-        let mut states = Vec::with_capacity(state_count.min(CHUNK_BYTES));
-        for _ in 0..state_count {
-            representatives.push(self.u32()? as usize);
-            let energy = self.opt_f64()?;
-            let mut state = StateData::new();
-            state
-                .set_energy(energy.map(|energy| Quantity::new(energy, CANONICAL_ENERGY_UNIT)))
-                .map_err(|error| self.structure_error(error))?;
-            *state.properties_mut() = self.owner()?;
-            states.push(state);
+        let mut log = Vec::with_capacity(count.min(CHUNK_BYTES));
+        for _ in 0..count {
+            log.push(self.opt_f64()?);
         }
-        let target = if self.version >= WEIGHT_MODEL_SINCE {
-            if self.tag("target")? {
-                Some(self.thermodynamic_state()?)
+        if let Some(geometry) = log
+            .iter()
+            .position(|log_weight| log_weight.is_some_and(|value| !value.is_finite()))
+        {
+            return Err(self.invalid(format!(
+                "The log weight of geometry {geometry} is not finite."
+            )));
+        }
+        Ok(Weights::from_parts_unchecked(log, source))
+    }
+
+    /// A clustering record.
+    fn clustering(&mut self) -> Result<Clustering> {
+        let count = self.count(self.options.max_items(), Resource::Records)?;
+        let clusters = self.count(self.options.max_items(), Resource::Records)?;
+        let mut cluster_of = Vec::with_capacity(count.min(CHUNK_BYTES));
+        for _ in 0..count {
+            cluster_of.push(if self.tag("cluster")? {
+                Some(self.u32()? as usize)
             } else {
                 None
-            }
-        } else {
-            self.opt_f64()?
-                .map(|temperature| {
-                    ThermodynamicState::canonical(Quantity::new(
-                        temperature,
-                        CANONICAL_TEMPERATURE_UNIT,
-                    ))
-                    .map_err(|error| self.structure_error(error))
-                })
-                .transpose()?
-        };
-        if target.is_none() {
-            match weights {
-                Weights::Boltzmann(_) => {
-                    return Err(self.invalid("Boltzmann weights need a target."))
-                }
-                Weights::Reweighted { .. } => {
-                    return Err(self.invalid("Reweighted weights need a target."))
-                }
-                Weights::Equal | Weights::Logarithmic(_) => {}
-            }
+            });
         }
-        let partition = Partition::new(assignments, representatives)
-            .map_err(|error| self.structure_error(error))?;
-        // The target goes first: setting it later would drop the Boltzmann
-        // tag, and reweighted weights refuse a new target.
-        let mut distribution = Distribution::new(samples, partition)
-            .and_then(|distribution| distribution.with_states(states))
-            .map_err(|error| self.structure_error(error))?;
-        if let Some(target) = target {
-            distribution = distribution
-                .with_target(target)
-                .map_err(|error| self.structure_error(error))?;
+        let mut representatives = Vec::with_capacity(clusters.min(CHUNK_BYTES));
+        for _ in 0..clusters {
+            representatives.push(self.u32()? as usize);
         }
-        distribution
-            .with_weights(weights)
-            .map_err(|error| self.structure_error(error))
+        Clustering::new(cluster_of, representatives).map_err(|error| {
+            self.rejected(
+                DiagnosticKind::InvalidValue,
+                "The stored clustering is not valid.",
+            )
+            .with_source(error)
+        })
+    }
+
+    fn weights_error(&self, error: crate::statistics::WeightsError) -> FormatError {
+        self.rejected(
+            DiagnosticKind::InvalidValue,
+            "The stored weights are not valid.",
+        )
+        .with_source(error)
     }
 
     /// A thermodynamic state: a temperature and an optional pressure.

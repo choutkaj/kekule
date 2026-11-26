@@ -12,9 +12,8 @@ fn encode(object: &NativeObject) -> Option<Vec<u8>> {
         NativeObject::StructureSet(value) => native::write(value, options),
         NativeObject::StructureSetInterpretation(value) => native::write(value.as_ref(), options),
         NativeObject::StructureSetDescription(value) => native::write(value.as_ref(), options),
-        NativeObject::Ensemble(value) => native::write(value.as_ref(), options),
-        NativeObject::EnsembleDescription(value) => native::write(value.as_ref(), options),
-        NativeObject::DistributionDescription(value) => native::write(value.as_ref(), options),
+        NativeObject::Weights(value) => native::write(value.as_ref(), options),
+        NativeObject::Clustering(value) => native::write(value.as_ref(), options),
         _ => return None,
     };
     Some(bytes.expect("a decoded object encodes"))

@@ -1,15 +1,13 @@
-//! Energy surfaces: free energies and means of a distribution's samples on
-//! one or two binned axes.
+//! Energy surfaces: free energies and means of weighted samples on one or
+//! two binned axes, under each estimator.
 
+use kekule::clustering::Clustering;
 use kekule::properties::{PropertyColumn, PropertyKey};
 use kekule::statistics::{
     Binning, CumulantOrder, Estimator, GridAxis, Landscape, LandscapeError, LandscapeOptions,
-    SurfaceQuantity,
+    SurfaceQuantity, Weights,
 };
-use kekule::structure::{
-    Distribution, Ensemble, Geometry, Partition, Positions, Samples, Sampling, StructureSet,
-    ThermodynamicState,
-};
+use kekule::structure::{Geometry, Positions, Sampling, StructureSet, ThermodynamicState};
 use kekule::units::{Quantity, DEGREE, DIMENSIONLESS, KELVIN, KILOJOULE_PER_MOLE, NANOMETER};
 
 /// The molar gas constant in kJ/(mol K), exact since the 2019 SI.
@@ -37,8 +35,12 @@ fn at(value: f64) -> ThermodynamicState {
     ThermodynamicState::canonical(kelvin(value)).unwrap()
 }
 
-fn every_sample(count: usize) -> Distribution {
-    Distribution::new(Samples::All, Partition::one_state(count)).unwrap()
+fn every_sample(count: usize) -> Weights {
+    Weights::equal(count)
+}
+
+fn given(log_weights: &[f64]) -> Weights {
+    Weights::given(log_weights.iter().copied().map(Some).collect(), None).unwrap()
 }
 
 fn options() -> LandscapeOptions {
@@ -54,9 +56,9 @@ fn unit_bins(bins: usize) -> Binning {
     Binning::between(0.0, bins as f64, bins).unwrap()
 }
 
-/// A run sampled at 300 K whose reduced bias is `reduced`, one value per
-/// geometry, read as one state with `estimator`.
-fn reweighted(reduced: &[f64], estimator: Estimator) -> Ensemble {
+/// The weights of a run sampled at 300 K whose reduced bias is `reduced`,
+/// one value per geometry.
+fn biased(reduced: &[f64]) -> Weights {
     let topology = kekule::smiles::to_topology("O").unwrap();
     let atoms = topology.atom_count();
     let geometries = reduced
@@ -79,7 +81,12 @@ fn reweighted(reduced: &[f64], estimator: Estimator) -> Ensemble {
         .unwrap();
     set.set_sampling(Some(Sampling::new(at(300.0)).with_bias([boost]).unwrap()))
         .unwrap();
-    Ensemble::reweighted(set, None, estimator).unwrap()
+    Weights::from_bias(&set).unwrap().into_weights()
+}
+
+/// [`options`] with `estimator`.
+fn estimated(estimator: Estimator) -> LandscapeOptions {
+    options().with_estimator(estimator)
 }
 
 #[test]
@@ -125,10 +132,10 @@ fn a_constant_reduced_bias_per_region_gives_the_exact_free_energy() -> Result<()
     let low = 3.0_f64.ln();
     let high = 2.0_f64.ln() + 1.5;
     for estimator in ESTIMATORS {
-        let ensemble = reweighted(&reduced, estimator);
+        let weights = biased(&reduced);
         let axis = GridAxis::new(Quantity::new(&values, NANOMETER), unit_bins(2));
-        // The target, 300 K, is the free energy's temperature.
-        let surface = Landscape::free_energy(ensemble.distribution(), &[axis], &options())?;
+        // The sampled temperature, 300 K, is the free energy's.
+        let surface = Landscape::free_energy(&weights, &[axis], &estimated(estimator))?;
         assert_eq!(surface.temperature(), Some(kelvin(300.0)));
         let cells = surface.cells();
         assert_close(cells[0].value().unwrap(), rt * (high - low));
@@ -143,22 +150,47 @@ fn a_constant_reduced_bias_per_region_gives_the_exact_free_energy() -> Result<()
 }
 
 #[test]
-fn a_bin_that_is_a_state_has_the_state_population() -> Result<(), Box<dyn std::error::Error>> {
-    let reduced = [0.0, 0.7, 1.9, 0.3, 2.4, 1.1];
+fn a_bin_that_is_a_cluster_has_the_cluster_population() -> Result<(), Box<dyn std::error::Error>> {
+    // The exponential estimator is the exact sum a cluster's population is.
+    let weights = biased(&[0.0, 0.7, 1.9, 0.3, 2.4, 1.1]);
     let values = [0.2, 0.4, 1.6, 0.9, 1.1, 1.3].map(Some);
-    for estimator in ESTIMATORS {
-        let mut ensemble = reweighted(&reduced, estimator);
-        ensemble
-            .distribution_mut()
-            .regroup(Partition::new(vec![0, 0, 1, 0, 1, 1], vec![0, 2])?)?;
-        let distribution = ensemble.distribution();
-        let axis = GridAxis::new(Quantity::new(&values, NANOMETER), unit_bins(2));
-        let surface = Landscape::free_energy(distribution, &[axis], &options())?;
-        let states = distribution.state_probabilities()?;
-        for (bin, state) in surface.probabilities().iter().zip(states) {
-            assert_close(*bin, state);
-        }
+    let clustering = Clustering::new([0, 0, 1, 0, 1, 1].map(Some).to_vec(), vec![0, 2])?;
+    let axis = GridAxis::new(Quantity::new(&values, NANOMETER), unit_bins(2));
+    let surface = Landscape::free_energy(&weights, &[axis], &estimated(Estimator::Exponential))?;
+    let clusters = clustering.log_populations(&weights)?;
+    for (bin, cluster) in surface.probabilities().iter().zip(clusters) {
+        assert_close(*bin, cluster.unwrap().exp());
     }
+    Ok(())
+}
+
+#[test]
+fn the_estimator_is_exponential_unless_set() -> Result<(), LandscapeError> {
+    assert_eq!(LandscapeOptions::new().estimator(), Estimator::Exponential);
+    assert_eq!(Estimator::default(), Estimator::Exponential);
+    // Biases of 0, 1, and 2 in one bin and 0 in another: the exponential
+    // average sums them exactly, and the second cumulant takes their mean
+    // and variance.
+    let values = [0.5, 0.5, 0.5, 1.5].map(Some);
+    let axis = GridAxis::new(Quantity::new(&values, NANOMETER), unit_bins(2));
+    let weights = biased(&[0.0, 1.0, 2.0, 0.0]);
+    let exact = Landscape::free_energy(&weights, &[axis], &options())?;
+    let exponential = (1.0 + 1.0_f64.exp() + 2.0_f64.exp()).ln();
+    assert_close(
+        exact.cells()[0].log_population().unwrap(),
+        exponential - (exponential.exp() + 1.0).ln(),
+    );
+    let cumulant = Landscape::free_energy(
+        &weights,
+        &[axis],
+        &estimated(Estimator::Cumulant(CumulantOrder::Second)),
+    )?;
+    // ln n + mean + variance / 2, with population moments: ln 3 + 1 + 1/3.
+    let second = 3.0_f64.ln() + 1.0 + 1.0 / 3.0;
+    assert_close(
+        cumulant.cells()[0].log_population().unwrap(),
+        second - (second.exp() + 1.0).ln(),
+    );
     Ok(())
 }
 
@@ -203,12 +235,10 @@ fn periodic_axes_wrap_at_the_period() -> Result<(), LandscapeError> {
 fn masking_hides_values_only() -> Result<(), LandscapeError> {
     // Counts 1, 2, and 4; the single sample weighs most.
     let values = [0.5, 1.2, 1.7, 2.0, 2.1, 2.5, 2.9].map(Some);
-    let distribution = every_sample(7)
-        .with_log_weights(vec![5.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
-        .unwrap();
+    let weights = given(&[5.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]);
     let axis = GridAxis::new(Quantity::new(&values, NANOMETER), unit_bins(3));
-    let masked = Landscape::free_energy(&distribution, &[axis], &at_300().with_fewest(3))?;
-    let unmasked = Landscape::free_energy(&distribution, &[axis], &at_300())?;
+    let masked = Landscape::free_energy(&weights, &[axis], &at_300().with_fewest(3))?;
+    let unmasked = Landscape::free_energy(&weights, &[axis], &at_300())?;
     assert_eq!(masked.fewest(), 3);
     assert_eq!(masked.probabilities(), unmasked.probabilities());
     let cells = masked.cells();
@@ -277,19 +307,19 @@ fn representatives_are_nearest_the_centre() -> Result<(), LandscapeError> {
     let tie = Landscape::free_energy(&every_sample(2), &[axis], &at_300())?;
     assert_eq!(tie.cells()[0].representative(), Some(0));
     // The heavier sample otherwise, under every estimator.
+    let weights = biased(&[0.0, 0.5]);
     for estimator in ESTIMATORS {
-        let ensemble = reweighted(&[0.0, 0.5], estimator);
-        let tie = Landscape::free_energy(ensemble.distribution(), &[axis], &options())?;
+        let tie = Landscape::free_energy(&weights, &[axis], &estimated(estimator))?;
         assert_eq!(tie.cells()[0].representative(), Some(1));
     }
     Ok(())
 }
 
 #[test]
-fn the_temperature_is_the_target_s() {
+fn the_temperature_is_that_of_the_weights() {
     let values = [Some(0.5)];
     let axis = GridAxis::new(Quantity::new(&values, NANOMETER), unit_bins(1));
-    // Neither a target nor a temperature.
+    // The weights have no temperature, and the options none.
     let error = Landscape::free_energy(&every_sample(1), &[axis], &options()).unwrap_err();
     assert_eq!(error, LandscapeError::MissingTemperature);
     assert_eq!(
@@ -305,12 +335,12 @@ fn the_temperature_is_the_target_s() {
     )
     .unwrap();
     assert_eq!(mean.temperature(), None);
-    // The given temperature without a target.
+    // The given temperature for weights without one.
     let explicit = options().with_temperature(Some(kelvin(310.0))).unwrap();
     let surface = Landscape::free_energy(&every_sample(1), &[axis], &explicit).unwrap();
     assert_eq!(surface.temperature(), Some(kelvin(310.0)));
-    // The target's own.
-    let targeted = every_sample(1).with_target(at(300.0)).unwrap();
+    // That of the weights.
+    let targeted = Weights::given(vec![Some(0.0)], Some(kelvin(300.0))).unwrap();
     let surface = Landscape::free_energy(&targeted, &[axis], &options()).unwrap();
     assert_eq!(surface.temperature(), Some(kelvin(300.0)));
     let same = options().with_temperature(Some(kelvin(300.0))).unwrap();
@@ -322,12 +352,12 @@ fn the_temperature_is_the_target_s() {
         error,
         LandscapeError::ConflictingTemperature {
             given: 310.0,
-            target: 300.0
+            weights: 300.0
         }
     );
     assert_eq!(
         error.to_string(),
-        "The temperature 310 K differs from the target temperature 300 K."
+        "The temperature 310 K differs from the temperature of the weights, 300 K."
     );
     assert!(Landscape::mean(
         &targeted,
@@ -461,12 +491,12 @@ fn means_weigh_samples_by_their_exact_shares() -> Result<(), LandscapeError> {
     let of = [Some(10.0), Some(20.0), None, Some(f64::NAN)];
     let axis = GridAxis::new(Quantity::new(&values, NANOMETER), unit_bins(2));
     for estimator in ESTIMATORS {
-        let ensemble = reweighted(&[0.0, 3.0_f64.ln(), 0.0, 0.0], estimator);
+        let weights = biased(&[0.0, 3.0_f64.ln(), 0.0, 0.0]);
         let surface = Landscape::mean(
-            ensemble.distribution(),
+            &weights,
             &[axis],
             Quantity::new(&of, DIMENSIONLESS),
-            &options(),
+            &estimated(estimator),
         )?;
         assert_eq!(surface.quantity(), SurfaceQuantity::Mean);
         assert_eq!(surface.value_unit(), DIMENSIONLESS);
@@ -485,10 +515,9 @@ fn means_weigh_samples_by_their_exact_shares() -> Result<(), LandscapeError> {
 fn samples_without_a_cell_are_counted() -> Result<(), LandscapeError> {
     // Geometry 4 is no sample, so its value, out of range, is never read.
     let values = [Some(0.5), None, Some(f64::NAN), Some(7.0), Some(9.0)];
-    let distribution =
-        Distribution::new(Samples::Subset(vec![0, 1, 2, 3]), Partition::one_state(4)).unwrap();
+    let weights = Weights::equal_over(5, [0, 1, 2, 3]).unwrap();
     let axis = GridAxis::new(Quantity::new(&values, NANOMETER), unit_bins(2));
-    let surface = Landscape::free_energy(&distribution, &[axis], &at_300())?;
+    let surface = Landscape::free_energy(&weights, &[axis], &at_300())?;
     assert_eq!(surface.excluded(), 2);
     assert_eq!(surface.outside(), 1);
     assert_eq!(surface.cells()[0].count(), 1);
@@ -500,7 +529,7 @@ fn samples_without_a_cell_are_counted() -> Result<(), LandscapeError> {
         axis,
         GridAxis::new(Quantity::new(&other, NANOMETER), unit_bins(1)),
     ];
-    let surface = Landscape::free_energy(&distribution, &axes, &at_300())?;
+    let surface = Landscape::free_energy(&weights, &axes, &at_300())?;
     assert_eq!(surface.excluded(), 3);
     assert_eq!(surface.outside(), 1);
     assert!(surface.cells().iter().all(|cell| cell.count() == 0));
@@ -511,10 +540,10 @@ fn samples_without_a_cell_are_counted() -> Result<(), LandscapeError> {
 fn inputs_must_cover_the_samples() {
     let short = [Some(0.5), Some(0.5)];
     let full = [Some(0.5); 3];
-    let distribution = every_sample(3);
+    let weights = every_sample(3);
     let options = at_300();
     let error = Landscape::free_energy(
-        &distribution,
+        &weights,
         &[
             GridAxis::new(Quantity::new(&full, NANOMETER), unit_bins(1)),
             GridAxis::new(Quantity::new(&short, NANOMETER), unit_bins(1)),
@@ -532,7 +561,7 @@ fn inputs_must_cover_the_samples() {
     assert_eq!(error.to_string(), "Axis 1 has no value for geometry 2.");
     let axis = GridAxis::new(Quantity::new(&full, NANOMETER), unit_bins(1));
     let error = Landscape::mean(
-        &distribution,
+        &weights,
         &[axis],
         Quantity::new(&short, NANOMETER),
         &options,
@@ -544,7 +573,7 @@ fn inputs_must_cover_the_samples() {
         "The mapped values have no value for geometry 2."
     );
     for axes in [&[][..], &[axis; 3][..]] {
-        let error = Landscape::free_energy(&distribution, axes, &options).unwrap_err();
+        let error = Landscape::free_energy(&weights, axes, &options).unwrap_err();
         assert_eq!(error, LandscapeError::AxisCount(axes.len()));
     }
     assert_eq!(
@@ -552,7 +581,7 @@ fn inputs_must_cover_the_samples() {
         "A landscape has one or two axes. There are 3 axes."
     );
     let wide = GridAxis::new(Quantity::new(&full, NANOMETER), unit_bins(5_000));
-    let error = Landscape::free_energy(&distribution, &[wide, wide], &options).unwrap_err();
+    let error = Landscape::free_energy(&weights, &[wide, wide], &options).unwrap_err();
     assert!(matches!(error, LandscapeError::TooManyCells(_)));
     assert_eq!(
         error.to_string(),
@@ -568,13 +597,8 @@ fn a_light_sample_first_keeps_the_mean() -> Result<(), LandscapeError> {
         (vec![0.0, 800.0], [Some(1.0), Some(2.0)]),
         (vec![800.0, 0.0], [Some(2.0), Some(1.0)]),
     ] {
-        let distribution = every_sample(2).with_log_weights(log_weights).unwrap();
-        let mean = Landscape::mean(
-            &distribution,
-            &[axis],
-            Quantity::new(&of, NANOMETER),
-            &options(),
-        )?;
+        let weights = given(&log_weights);
+        let mean = Landscape::mean(&weights, &[axis], Quantity::new(&of, NANOMETER), &options())?;
         assert_eq!(mean.cells()[0].value(), Some(2.0));
     }
     Ok(())
@@ -655,19 +679,19 @@ fn a_large_common_reduced_bias_cancels() -> Result<(), LandscapeError> {
     let rt = R * 300.0;
     let expected = rt * (2.0_f64.ln() + 1.5 - 3.0_f64.ln());
     for estimator in ESTIMATORS {
-        let ensemble = reweighted(&reduced, estimator);
+        let weights = biased(&reduced);
         let axis = GridAxis::new(Quantity::new(&values, NANOMETER), unit_bins(2));
-        let surface = Landscape::free_energy(ensemble.distribution(), &[axis], &options())?;
+        let surface = Landscape::free_energy(&weights, &[axis], &estimated(estimator))?;
         let cells = surface.cells();
         assert!((cells[0].value().unwrap() - expected).abs() < 1e-8);
         assert_eq!(cells[1].value(), Some(0.0));
         let total: f64 = surface.probabilities().iter().sum();
         assert!((total - 1.0).abs() < 1e-12);
         let mean = Landscape::mean(
-            ensemble.distribution(),
+            &weights,
             &[axis],
             Quantity::new(&of, DIMENSIONLESS),
-            &options(),
+            &estimated(estimator),
         )?;
         assert!((mean.cells()[1].value().unwrap() - 4.0).abs() < 1e-8);
     }
@@ -729,5 +753,28 @@ fn the_lowest_cell_has_the_lowest_value() -> Result<(), LandscapeError> {
     )?;
     assert_eq!(mean.value_unit(), DIMENSIONLESS);
     assert_eq!(mean.lowest_cell(), Some(1));
+    Ok(())
+}
+
+#[test]
+fn every_estimator_estimates_each_bin_from_its_samples() -> Result<(), LandscapeError> {
+    // Bins 0 and 1 take two samples each, two samples lie outside, and bin 2
+    // is empty.
+    let weights = biased(&[0.0, 1.0, 2.0, 0.5, 3.0, 1.5]);
+    let values = [0.5, 3.5, 1.5, 0.25, 5.0, 1.75].map(Some);
+    let axis = GridAxis::new(Quantity::new(&values, NANOMETER), unit_bins(3));
+    for estimator in ESTIMATORS {
+        let surface = Landscape::free_energy(&weights, &[axis], &estimated(estimator))?;
+        assert_eq!(surface.outside(), 2);
+        let estimates = [
+            estimator.log_sum(&[0.0, 0.5]).unwrap(),
+            estimator.log_sum(&[2.0, 1.5]).unwrap(),
+        ];
+        let total = (estimates[0].exp() + estimates[1].exp()).ln();
+        let cells = surface.cells();
+        assert_close(cells[0].log_population().unwrap(), estimates[0] - total);
+        assert_close(cells[1].log_population().unwrap(), estimates[1] - total);
+        assert_eq!(cells[2].log_population(), None);
+    }
     Ok(())
 }

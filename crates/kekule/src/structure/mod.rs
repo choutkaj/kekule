@@ -35,14 +35,10 @@
 //!   [`StructureSetRead`], which fails with [`StructureSetReadError`];
 //!   [`StructureSet::from_reader`] loads chosen geometries of any reader into
 //!   memory. File codecs and streaming live in [`crate::traj`].
-//! - [`Ensemble`]: one structure set read as draws from a [`Distribution`]
-//!   over all its geometries or some of them ([`Samples`]), weighted
-//!   ([`WeightModel`]) and grouped into states by a [`Partition`], each with
-//!   its [`StateData`].
-//!   [`StateView`] reads a state and [`DistributionMut`] edits the
-//!   distribution; its operations fail with a [`StructureSetError`] too.
 //! - [`ThermodynamicState`]: a temperature and, in the isothermal-isobaric
-//!   ensemble, a pressure; the state a weight refers to.
+//!   ensemble, a pressure; the state a weight refers to. Weights and
+//!   clusters of a set's geometries are values beside it
+//!   ([`crate::statistics::Weights`], [`crate::clustering::Clustering`]).
 //! - [`Sampling`]: a set's sampling record, the state its geometries sample
 //!   from a step on and the columns of their potential energy and bias.
 //! - Borrowed access: [`StructureView`] is the common input of coordinate-dependent
@@ -65,7 +61,7 @@
 //! Owners accept semantic atom and bond IDs (and, in `*_at` methods, dense
 //! indexes), translate IDs to dense indexes, and check every array's length.
 //! Each owner has its own error type ([`StructureError`], [`StructureBuildError`],
-//! [`StructureEditError`], [`StructureSetError`], [`PartitionError`]);
+//! [`StructureEditError`], [`StructureSetError`]);
 //! [`GeometryError`] and [`DenseArrayError`] report invalid geometry state
 //! shared by all of them, and [`CoordinateError`] reports failed
 //! measurements and geometry edits.
@@ -135,7 +131,6 @@
 mod builder;
 mod coordinate_error;
 mod dynamics;
-mod ensemble;
 mod geometry;
 mod geometry_edit;
 mod geometry_validation;
@@ -153,11 +148,6 @@ mod view;
 pub use builder::{StructureBuildError, StructureBuilder, StructureBuilderTopologyMut};
 pub use coordinate_error::CoordinateError;
 pub use dynamics::{Forces, Velocities};
-pub use ensemble::{
-    Distribution, DistributionMut, Ensemble, LeftOut, Partition, PartitionError, Reweighting,
-    Samples, StateData, StateIter, StateView, Unweighable, WeighableSamples, WeightModel,
-};
-pub(crate) use ensemble::{Grouping, Weights};
 pub(crate) use geometry::{subset_rows, GeometryData};
 pub use geometry::{Geometry, GeometryError, GeometryMut};
 pub use geometry_edit::{AngleEdit, DihedralEdit, DistanceEdit};

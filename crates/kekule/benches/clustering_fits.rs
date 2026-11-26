@@ -11,7 +11,7 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use std::num::NonZeroUsize;
 use std::time::Instant;
 
-use kekule::clustering::{ClusteringOptions, Cut, Linkage};
+use kekule::clustering::{Clustering, Cut, Linkage};
 use kekule::math::Point3;
 use kekule::mmcif;
 use kekule::parallel::{Run, ScopedThreads};
@@ -82,7 +82,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut matrix = None;
     for _ in 0..RUNS {
         let start = Instant::now();
-        let distances = set.pairwise_fitted_rmsd_with(&atoms, Default::default(), run())?;
+        let distances = set.pairwise_fitted_rmsd_with(&atoms, None, Default::default(), run())?;
         matrix_ms = matrix_ms.min(start.elapsed().as_secs_f64() * 1e3);
         matrix = Some(distances);
     }
@@ -92,36 +92,42 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
     let mut hierarchical_ms = f64::INFINITY;
-    let mut hierarchical_states = 0;
+    let mut hierarchical_clusters = 0;
     for _ in 0..RUNS {
         let start = Instant::now();
-        let distances = set.pairwise_fitted_rmsd_with(&atoms, Default::default(), run())?;
-        let partition =
-            set.cluster_hierarchical(&distances, Linkage::Average, Cut::Height(radius))?;
+        let distances = set.pairwise_fitted_rmsd_with(&atoms, None, Default::default(), run())?;
+        let clustering =
+            set.cluster_hierarchical(&distances, None, Linkage::Average, Cut::Height(radius))?;
         hierarchical_ms = hierarchical_ms.min(start.elapsed().as_secs_f64() * 1e3);
-        hierarchical_states = partition.state_count();
-        partition.assignments().hash(&mut checksum);
-        partition.representatives().hash(&mut checksum);
+        hierarchical_clusters = clustering.cluster_count();
+        hash_clustering(&clustering, &mut checksum);
     }
 
     let mut leader_ms = f64::INFINITY;
-    let mut leader_states = 0;
+    let mut leader_clusters = 0;
     for _ in 0..RUNS {
         let start = Instant::now();
-        let partition =
-            set.cluster_by_radius_with(radius, &atoms, ClusteringOptions::default(), run())?;
+        let clustering =
+            set.cluster_by_radius_with(radius, &atoms, None, Default::default(), run())?;
         leader_ms = leader_ms.min(start.elapsed().as_secs_f64() * 1e3);
-        leader_states = partition.state_count();
-        partition.assignments().hash(&mut checksum);
-        partition.representatives().hash(&mut checksum);
+        leader_clusters = clustering.cluster_count();
+        hash_clustering(&clustering, &mut checksum);
     }
 
     println!(
-        "{{\"samples\":{geometries},\"fitted_atoms\":{},\"threads\":{threads},\"matrix_ms\":{matrix_ms:.1},\"hierarchical_ms\":{hierarchical_ms:.1},\"hierarchical_states\":{hierarchical_states},\"leader_ms\":{leader_ms:.1},\"leader_states\":{leader_states},\"checksum\":\"{:016x}\"}}",
+        "{{\"samples\":{geometries},\"fitted_atoms\":{},\"threads\":{threads},\"matrix_ms\":{matrix_ms:.1},\"hierarchical_ms\":{hierarchical_ms:.1},\"hierarchical_clusters\":{hierarchical_clusters},\"leader_ms\":{leader_ms:.1},\"leader_clusters\":{leader_clusters},\"checksum\":\"{:016x}\"}}",
         atoms.len(),
         checksum.finish()
     );
     Ok(())
+}
+
+/// Hashes the cluster of every geometry and the representatives.
+fn hash_clustering(clustering: &Clustering, checksum: &mut DefaultHasher) {
+    for geometry in 0..clustering.len() {
+        clustering.cluster_of(geometry).hash(checksum);
+    }
+    clustering.representatives().hash(checksum);
 }
 
 /// A fixed sequence of numbers in [-0.5, 0.5).

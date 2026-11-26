@@ -1,6 +1,6 @@
 //! Kekule's native binary serialization: exact, versioned persistence of one
-//! molecule, topology, structure, structure set, ensemble, or distribution,
-//! and of a structure or structure set with its structure interpretation
+//! molecule, topology, structure, structure set, weights, or clustering, and
+//! of a structure or structure set with its structure interpretation
 //! reports.
 //!
 //! The byte layout is specified in `docs/native-format.md`; the encoder and
@@ -14,16 +14,18 @@ pub(crate) mod entry_points;
 
 use std::fmt;
 
+use crate::clustering::Clustering;
 use crate::diagnostics::{DiagnosticKind, Format, FormatError, FormatErrorDetail};
 use crate::io::{
     StructureInterpretation, StructureInterpretationReport, StructureSetInterpretation,
 };
 use crate::molecule::Molecule;
-use crate::structure::{Ensemble, Structure, StructureSet};
+use crate::statistics::Weights;
+use crate::structure::{Structure, StructureSet};
 use crate::topology::Topology;
 
 pub(crate) use decode::read_native;
-pub use description::{DistributionDescription, EnsembleDescription, StructureSetDescription};
+pub use description::StructureSetDescription;
 pub(crate) use encode::{write_native, write_native_to};
 
 /// The eight bytes every native input starts with.
@@ -37,54 +39,17 @@ pub const NATIVE_MAGIC: [u8; 8] = [0x89, b'K', b'E', b'K', 0x0D, 0x0A, 0x1A, 0x0
 /// It freezes when a Kekule release ships it. Until then it may change in
 /// place; after that, every layout change increments it. The reader reads every version from
 /// [`NATIVE_FORMAT_OLDEST`] to this one.
-pub const NATIVE_FORMAT_VERSION: u32 = 9;
+pub const NATIVE_FORMAT_VERSION: u32 = 10;
 
 /// The oldest native format version this crate reads.
 ///
 /// It rises only at a major release (before 1.0, a minor release), and the
 /// changelog names the new value.
-pub const NATIVE_FORMAT_OLDEST: u32 = 7;
+pub const NATIVE_FORMAT_OLDEST: u32 = 10;
 
-/// The first format version with the distribution record.
-const DISTRIBUTION_SINCE: u32 = 8;
-
-/// The first format version whose set head stores the set's columns.
-const COLUMNS_SINCE: u32 = 9;
-
-/// The first format version whose distributions store a weight model and a
-/// target, not log weights and a temperature.
-const WEIGHT_MODEL_SINCE: u32 = 9;
-/// The first format version whose set head stores the set's sampling record.
-const SAMPLING_SINCE: u32 = 9;
-/// The first format version with disulfide bond evidence and the
-/// `DisulfideInferred` and `ForceFieldTemplate` interpretation issues.
-const DISULFIDE_SINCE: u32 = 9;
-/// The first format version with the bond-source interpretation issues:
-/// `ResidueBondOrdersUnstated`, `BondNotInTemplate`,
-/// `BondOrderDiffersFromTemplate`, `PolymerLinkSkipped`,
-/// `LinkingAtomMissing`, `ResidueFitsNoTemplate`,
-/// `StatedOrdersDisagreeWithHydrogens`, `MetalValenceIncomplete`, and
-/// `MetalDonors`, and the neutral onium centres of `ResidueBondsInferred`.
-const BOND_SOURCES_SINCE: u32 = 9;
 /// The template order code of an aromatic or delocalized template bond in
 /// a `BondOrderDiffersFromTemplate` issue.
 const AROMATIC_TEMPLATE_ORDER: u8 = 255;
-/// The first format version with hydrogen-name bond evidence and the
-/// protonation interpretation issues.
-const PROTONATION_SINCE: u32 = 9;
-/// The first format version with the `ElementsFromTemplates`,
-/// `UnsignedCharges`, `HexadecimalNumbers`, and `NumbersRestart`
-/// interpretation issues.
-const PDB_NUMBERING_SINCE: u32 = 9;
-/// The first format version with the `ChargesFromDictionary` and
-/// `DictionaryAtomsUnmatched` interpretation issues.
-const DICTIONARY_CHARGES_SINCE: u32 = 9;
-/// The first format version with the `HydrogenWithSeveralBonds`
-/// interpretation issue.
-const SEVERAL_BONDS_SINCE: u32 = 9;
-/// The first format version with the `HydrogenBeyondTemplateBond`
-/// interpretation issue.
-const BEYOND_TEMPLATE_BOND_SINCE: u32 = 9;
 
 /// Default [`NativeReadOptions::max_input_bytes`]: 64 GiB.
 pub const DEFAULT_NATIVE_MAX_INPUT_BYTES: usize = 64 << 30;
@@ -116,12 +81,10 @@ pub enum NativeKind {
     /// A [`StructureSet`] with one interpretation report per geometry, a
     /// [`StructureSetInterpretation`].
     StructureSetInterpretation,
-    /// An [`Ensemble`], with its set's geometries or with only their number
-    /// ([`EnsembleDescription`]).
-    Ensemble,
-    /// A [`Distribution`](crate::structure::Distribution) with the number of
-    /// geometries it partitions, a [`DistributionDescription`].
-    Distribution,
+    /// The [`Weights`] of a structure set's geometries.
+    Weights,
+    /// A [`Clustering`] of a structure set's geometries.
+    Clustering,
 }
 
 impl NativeKind {
@@ -133,8 +96,8 @@ impl NativeKind {
             Self::StructureInterpretation => 7,
             Self::StructureSet => 9,
             Self::StructureSetInterpretation => 10,
-            Self::Ensemble => 11,
-            Self::Distribution => 12,
+            Self::Weights => 13,
+            Self::Clustering => 14,
         }
     }
 
@@ -148,35 +111,28 @@ impl NativeKind {
             7 => Self::StructureInterpretation,
             9 => Self::StructureSet,
             10 => Self::StructureSetInterpretation,
-            11 => Self::Ensemble,
-            12 => Self::Distribution,
+            13 => Self::Weights,
+            14 => Self::Clustering,
             _ => return None,
         })
-    }
-
-    /// The oldest readable format version that has this kind.
-    pub(super) const fn since(self) -> u32 {
-        match self {
-            Self::Distribution => DISTRIBUTION_SINCE,
-            _ => NATIVE_FORMAT_OLDEST,
-        }
     }
 
     /// Whether a record of this kind can store perception. Its header flag
     /// is zero when it cannot.
     pub(super) const fn stores_perception(self) -> bool {
-        !matches!(self, Self::Distribution)
+        !matches!(self, Self::Weights | Self::Clustering)
     }
 
-    /// The kind with its indefinite article, such as "an interpreted structure".
+    /// The kind as a noun phrase, with an indefinite article where it takes
+    /// one, such as "an interpreted structure" or "weights".
     fn with_article(self) -> String {
-        let article = match self {
-            Self::StructureInterpretation | Self::StructureSetInterpretation | Self::Ensemble => {
-                "an"
+        match self {
+            Self::Weights => self.to_string(),
+            Self::StructureInterpretation | Self::StructureSetInterpretation => {
+                format!("an {self}")
             }
-            _ => "a",
-        };
-        format!("{article} {self}")
+            _ => format!("a {self}"),
+        }
     }
 }
 
@@ -189,8 +145,8 @@ impl fmt::Display for NativeKind {
             Self::StructureInterpretation => "interpreted structure",
             Self::StructureSet => "structure set",
             Self::StructureSetInterpretation => "interpreted structure set",
-            Self::Ensemble => "ensemble",
-            Self::Distribution => "distribution",
+            Self::Weights => "weights",
+            Self::Clustering => "clustering",
         })
     }
 }
@@ -198,9 +154,9 @@ impl fmt::Display for NativeKind {
 /// The object a native writer encodes, borrowed from its owner.
 ///
 /// Converts from a borrowed [`Molecule`], [`Topology`], [`Structure`],
-/// [`StructureSet`], [`StructureSetDescription`], [`Ensemble`],
-/// [`EnsembleDescription`], [`DistributionDescription`],
-/// [`StructureInterpretation`], or [`StructureSetInterpretation`].
+/// [`StructureSet`], [`StructureSetDescription`], [`Weights`],
+/// [`Clustering`], [`StructureInterpretation`], or
+/// [`StructureSetInterpretation`].
 /// [`Self::interpreted_structure`] and [`Self::interpreted_structure_set`]
 /// pair a structure or structure set with reports held apart from it.
 #[derive(Debug, Clone, Copy)]
@@ -217,9 +173,8 @@ pub(super) enum NativeContent<'a> {
     StructureSet(&'a StructureSet),
     InterpretedStructureSet(&'a StructureSet, &'a [StructureInterpretationReport]),
     StructureSetDescription(&'a StructureSetDescription),
-    Ensemble(&'a Ensemble),
-    EnsembleDescription(&'a EnsembleDescription),
-    DistributionDescription(&'a DistributionDescription),
+    Weights(&'a Weights),
+    Clustering(&'a Clustering),
 }
 
 impl<'a> NativeSource<'a> {
@@ -261,10 +216,8 @@ impl<'a> NativeSource<'a> {
                 NativeKind::StructureSet
             }
             NativeContent::InterpretedStructureSet(..) => NativeKind::StructureSetInterpretation,
-            NativeContent::Ensemble(_) | NativeContent::EnsembleDescription(_) => {
-                NativeKind::Ensemble
-            }
-            NativeContent::DistributionDescription(_) => NativeKind::Distribution,
+            NativeContent::Weights(_) => NativeKind::Weights,
+            NativeContent::Clustering(_) => NativeKind::Clustering,
         }
     }
 }
@@ -287,9 +240,8 @@ native_source_from!(
     Structure,
     StructureSet,
     StructureSetDescription,
-    Ensemble,
-    EnsembleDescription,
-    DistributionDescription
+    Weights,
+    Clustering
 );
 
 impl<'a> From<&'a StructureInterpretation> for NativeSource<'a> {
@@ -327,15 +279,10 @@ pub enum NativeObject {
     /// A structure set record that stores the number of its geometries, not the
     /// geometries: its topology, properties, and order.
     StructureSetDescription(Box<StructureSetDescription>),
-    /// An ensemble with its set's topology and geometries.
-    Ensemble(Box<Ensemble>),
-    /// An ensemble record that stores the number of its geometries, not the
-    /// geometries: its set's topology, properties, and order, and its
-    /// distribution.
-    EnsembleDescription(Box<EnsembleDescription>),
-    /// A distribution record: a distribution and the number of geometries it
-    /// partitions.
-    DistributionDescription(Box<DistributionDescription>),
+    /// The weights of a structure set's geometries.
+    Weights(Box<Weights>),
+    /// A clustering of a structure set's geometries.
+    Clustering(Box<Clustering>),
 }
 
 impl NativeObject {
@@ -348,8 +295,8 @@ impl NativeObject {
             Self::StructureInterpretation(_) => NativeKind::StructureInterpretation,
             Self::StructureSet(_) | Self::StructureSetDescription(_) => NativeKind::StructureSet,
             Self::StructureSetInterpretation(_) => NativeKind::StructureSetInterpretation,
-            Self::Ensemble(_) | Self::EnsembleDescription(_) => NativeKind::Ensemble,
-            Self::DistributionDescription(_) => NativeKind::Distribution,
+            Self::Weights(_) => NativeKind::Weights,
+            Self::Clustering(_) => NativeKind::Clustering,
         }
     }
 
@@ -422,9 +369,8 @@ impl NativeObject {
         }
     }
 
-    /// The decoded structure set, of a structure set, of an interpreted
-    /// structure set, whose reports it drops, or of an ensemble, whose
-    /// distribution it drops.
+    /// The decoded structure set, of a structure set or of an interpreted
+    /// structure set, whose reports it drops.
     ///
     /// # Errors
     ///
@@ -436,75 +382,34 @@ impl NativeObject {
         match self {
             Self::StructureSet(value) => Ok(value),
             Self::StructureSetInterpretation(value) => Ok(value.into_structure_set()),
-            Self::Ensemble(ensemble) => Ok(ensemble.into_parts().0),
             Self::StructureSetDescription(description) => Err(external_geometries(&description)),
-            Self::EnsembleDescription(description) => Err(external_geometries(description.set())),
             other => Err(other.kind_error(NativeKind::StructureSet)),
         }
     }
 
-    /// The decoded ensemble.
+    /// The decoded weights.
     ///
     /// # Errors
     ///
     /// A [`FormatError`] of kind [`DiagnosticKind::Inconsistent`] with
-    /// [`FormatErrorDetail::NativeKind`] when the object is of another kind,
-    /// such as a structure set stored without a distribution, and with
-    /// [`FormatErrorDetail::NativeExternalGeometries`] for a record that
-    /// stores its geometries elsewhere.
-    pub fn into_ensemble(self) -> Result<Ensemble, FormatError> {
+    /// [`FormatErrorDetail::NativeKind`] when the object is of another kind.
+    pub fn into_weights(self) -> Result<Weights, FormatError> {
         match self {
-            Self::Ensemble(ensemble) => Ok(*ensemble),
-            Self::EnsembleDescription(description) => Err(external_geometries(description.set())),
-            other => Err(other.kind_error(NativeKind::Ensemble)),
+            Self::Weights(weights) => Ok(*weights),
+            other => Err(other.kind_error(NativeKind::Weights)),
         }
     }
 
-    /// What the decoded ensemble states besides its geometries: of a record
-    /// that stores only their number, or of any ensemble, whose geometries
-    /// it drops.
+    /// The decoded clustering.
     ///
     /// # Errors
     ///
     /// A [`FormatError`] of kind [`DiagnosticKind::Inconsistent`] with
-    /// [`FormatErrorDetail::NativeKind`] when the object is no ensemble.
-    pub fn into_ensemble_description(self) -> Result<EnsembleDescription, FormatError> {
+    /// [`FormatErrorDetail::NativeKind`] when the object is of another kind.
+    pub fn into_clustering(self) -> Result<Clustering, FormatError> {
         match self {
-            Self::EnsembleDescription(description) => Ok(*description),
-            Self::Ensemble(ensemble) => {
-                let (set, distribution) = ensemble.into_parts();
-                Ok(EnsembleDescription::bound(
-                    StructureSetDescription::of(&set),
-                    distribution,
-                ))
-            }
-            other => Err(other.kind_error(NativeKind::Ensemble)),
-        }
-    }
-
-    /// The decoded distribution with the number of geometries it partitions:
-    /// of a distribution record, or of any ensemble, whose set it drops.
-    ///
-    /// # Errors
-    ///
-    /// A [`FormatError`] of kind [`DiagnosticKind::Inconsistent`] with
-    /// [`FormatErrorDetail::NativeKind`] when the object is neither a
-    /// distribution nor an ensemble.
-    pub fn into_distribution_description(self) -> Result<DistributionDescription, FormatError> {
-        match self {
-            Self::DistributionDescription(description) => Ok(*description),
-            Self::Ensemble(ensemble) => {
-                let (set, distribution) = ensemble.into_parts();
-                Ok(DistributionDescription::bound(set.len(), distribution))
-            }
-            Self::EnsembleDescription(description) => {
-                let (set, distribution) = description.into_parts();
-                Ok(DistributionDescription::bound(
-                    set.geometry_count(),
-                    distribution,
-                ))
-            }
-            other => Err(other.kind_error(NativeKind::Distribution)),
+            Self::Clustering(clustering) => Ok(*clustering),
+            other => Err(other.kind_error(NativeKind::Clustering)),
         }
     }
 
@@ -526,8 +431,7 @@ impl NativeObject {
 
     /// What the decoded structure set states besides its geometries: of a record
     /// that stores only their number, or of any structure set, whose geometries
-    /// and reports it drops, or of an ensemble, whose distribution it also
-    /// drops.
+    /// and reports it drops.
     ///
     /// # Errors
     ///
@@ -540,8 +444,6 @@ impl NativeObject {
             Self::StructureSetInterpretation(value) => {
                 Ok(StructureSetDescription::of(value.structure_set()))
             }
-            Self::Ensemble(ensemble) => Ok(StructureSetDescription::of(ensemble.set())),
-            Self::EnsembleDescription(description) => Ok(description.into_parts().0),
             other => Err(other.kind_error(NativeKind::StructureSet)),
         }
     }
@@ -695,8 +597,8 @@ impl NativeReadOptions {
     );
     native_limit!(
         /// Maximum geometries of a structure set, including geometries a
-        /// record stores only the number of and geometries a distribution
-        /// partitions. Also the maximum states of a distribution.
+        /// record stores only the number of, and geometries of weights or a
+        /// clustering. Also the maximum clusters of a clustering.
         ///
         /// It also bounds every other stored list that atoms or bonds do not
         /// bound: property columns and owner values, hierarchy chains and

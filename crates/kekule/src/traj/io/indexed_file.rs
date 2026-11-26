@@ -7,8 +7,8 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use crate::properties::{OwnerProperties, PropertyTable};
 use crate::structure::{
-    geometry_storage, Ensemble, Geometry, GeometryIndex, GeometryStorage, GeometryView, Order,
-    Sampling, StructureSet, StructureSetRead, StructureSetReadError, TimeAxis,
+    geometry_storage, Geometry, GeometryIndex, GeometryStorage, GeometryView, Order, Sampling,
+    StructureSet, StructureSetRead, StructureSetReadError, TimeAxis,
 };
 use crate::topology::Topology;
 use crate::traj::{
@@ -92,8 +92,7 @@ use super::{
 ///
 /// Cloning a set reads nothing: the clone shares the file, the frame
 /// index, the set properties, and the order, with an empty pool, so a host
-/// that changes only the properties, or pairs the set with a distribution in
-/// an [`Ensemble`], copies it as cheaply as one in memory. Refreshing either
+/// that changes only the properties copies it as cheaply as one in memory. Refreshing either
 /// adds frames to it alone, so a host can hand a clone to an analysis and
 /// refresh the set meanwhile. While both share the index, a refresh that
 /// finds new frames first copies the offset table, one offset per frame,
@@ -230,8 +229,8 @@ impl GeometryStorage for IndexedFile {}
 /// Opens a trajectory file as a [`StructureSet`] over its frames, indexing
 /// them through [`open_indexed_trajectory`], which verifies every frame.
 ///
-/// The set's order is a time order of the frames' times and steps; read it
-/// as draws from a distribution with an [`Ensemble`].
+/// The set's order is a time order of the frames' times and steps; weigh
+/// its frames with [`Weights`](crate::statistics::Weights).
 /// `options` set the codec and its limits. To follow or cancel the scan,
 /// open the reader with
 /// [`open_indexed_trajectory_with`](super::open_indexed_trajectory_with) and
@@ -323,8 +322,9 @@ impl StructureSet<IndexedFile> {
     /// takes them as new geometries; returns how many there are.
     ///
     /// The new geometries extend the time order with their times and steps,
-    /// and the columns with missing cells; [`Ensemble::refresh`] also
-    /// re-expresses a distribution over them.
+    /// and the columns with missing cells; weights of the set cover the new
+    /// geometries with
+    /// [`Weights::extended_to`](crate::statistics::Weights::extended_to).
     /// The pool's readers are kept and read by the new index, which they
     /// share. A set whose clone shares its reader first opens a reader of
     /// its own, as the pool does; it reads the file the clones read, and
@@ -391,50 +391,6 @@ impl StructureSet<IndexedFile> {
         let order = time_order(&reader.to_frame_index());
         self.grown(Some(order));
         Ok(count - previous)
-    }
-}
-
-impl Ensemble<IndexedFile> {
-    /// Takes the frames appended to the file as new geometries, as
-    /// [`StructureSet::refresh`] does, and returns how many there are.
-    ///
-    /// A distribution over every geometry becomes one over the geometries it
-    /// covered, so the new geometries are not samples, as
-    /// [`Ensemble::push`] leaves an appended geometry; a distribution over a
-    /// subset keeps its samples, as [`Distribution::extended_to`](crate::structure::Distribution::extended_to) gives it.
-    /// Failure changes nothing.
-    ///
-    /// # Errors
-    ///
-    /// As [`StructureSet::refresh`].
-    pub fn refresh(&mut self) -> Result<usize, TrajectoryIoError> {
-        let (set, distribution) = self.parts_mut();
-        let added = set.refresh()?;
-        if added > 0 {
-            distribution
-                .extend(set.len())
-                .expect("the distribution describes the geometries before the new ones");
-        }
-        Ok(added)
-    }
-
-    /// Reads the geometries `indices` into an ensemble in memory, as
-    /// [`StructureSet::from_reader`] does, with the distribution restricted
-    /// to them as [`Ensemble::select`] restricts it.
-    ///
-    /// # Errors
-    ///
-    /// As [`StructureSet::from_reader`].
-    pub fn load(
-        &self,
-        indices: impl IntoIterator<Item = usize>,
-    ) -> Result<Ensemble, StructureSetReadError> {
-        let indices = indices.into_iter().collect::<Vec<_>>();
-        let set = StructureSet::from_reader(self.set(), indices.iter().copied())?;
-        Ok(Ensemble::from_parts_unchecked(
-            set,
-            self.distribution().select(&indices),
-        ))
     }
 }
 

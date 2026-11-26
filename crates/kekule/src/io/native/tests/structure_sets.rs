@@ -1,17 +1,17 @@
-//! Rejection of hostile structure set and ensemble records, kinds 9, 10, and
-//! 11: every stored sample, assignment, representative, log weight, order
-//! value, and section tag is checked against the set, and no truncation or
-//! corruption panics.
+//! Rejection of hostile structure set, weights, and clustering records,
+//! kinds 9, 10, 13, and 14: every stored log weight, cluster,
+//! representative, order value, and section tag is checked, and no
+//! truncation or corruption panics.
 
 use super::reports::{find, parts, read, report, resealed};
+use crate::clustering::Clustering;
 use crate::diagnostics::{DiagnosticKind, Format};
 use crate::math::Point3;
-use crate::native::{
-    self, EnsembleDescription, NativeSource, NativeWriteOptions, StructureSetDescription,
-};
+use crate::native::{self, NativeSource, NativeWriteOptions, StructureSetDescription};
+use crate::properties::{PropertyColumn, PropertyKey};
+use crate::statistics::{WeightSource, Weights};
 use crate::structure::{
-    Distribution, Ensemble, Geometry, Order, Partition, Positions, Samples, StateData,
-    StructureSet, ThermodynamicState, TimeAxis, WeightModel,
+    Geometry, Order, Positions, Sampling, StructureSet, ThermodynamicState, TimeAxis,
 };
 use crate::units::{Quantity, DEGREE, KELVIN, KILOJOULE_PER_MOLE, NANOMETER, PICOSECOND};
 
@@ -23,11 +23,13 @@ const STEPS: [u64; 3] = [
 ];
 /// Log weights of either sign, as any finite log weight may be.
 const LOG_WEIGHTS: [f64; 2] = [-2.091_864_061, 2.290_163_202];
-const ENERGY: f64 = -12.345_678_9;
 const TEMPERATURE: f64 = 312.345_678;
 const X: [f64; 3] = [0.111_111, 0.222_222, 0.333_333];
+/// Where a record's content starts: after the magic, the version, the kind,
+/// the perception flag, and two reserved bytes.
+const CONTENT: usize = 16;
 
-/// Three one-atom geometries at [`X`] nm in `order`, without a distribution.
+/// Three one-atom geometries at [`X`] nm in `order`.
 fn geometries(order: Order) -> StructureSet {
     let topology = crate::smiles::to_topology("O").unwrap();
     let geometries = X.map(|x| {
@@ -38,79 +40,20 @@ fn geometries(order: Order) -> StructureSet {
     set
 }
 
-/// [`geometries`] in a step order of [`STEPS`], with a distribution over
-/// geometries 0 and 2 of [`LOG_WEIGHTS`], in two states: state 0 of geometry
-/// 2 at [`ENERGY`], state 1 of geometry 0, at [`TEMPERATURE`].
-fn ensemble() -> Ensemble {
-    let set = geometries(Order::Step(STEPS.to_vec()));
-    let distribution = Distribution::new(
-        Samples::Subset(vec![0, 2]),
-        Partition::new(vec![1, 0], vec![1, 0]).unwrap(),
+/// Weights of geometries 0 and 2 of three, of [`LOG_WEIGHTS`], at
+/// [`TEMPERATURE`].
+fn weights() -> Weights {
+    Weights::given(
+        vec![Some(LOG_WEIGHTS[0]), None, Some(LOG_WEIGHTS[1])],
+        Some(Quantity::new(TEMPERATURE, KELVIN)),
     )
     .unwrap()
-    .with_log_weights(LOG_WEIGHTS.to_vec())
-    .unwrap()
-    .with_states(vec![
-        StateData::new()
-            .with_energy(Quantity::new(ENERGY, KILOJOULE_PER_MOLE))
-            .unwrap(),
-        StateData::new(),
-    ])
-    .unwrap()
-    .with_target(ThermodynamicState::canonical(Quantity::new(TEMPERATURE, KELVIN)).unwrap())
-    .unwrap();
-    Ensemble::new(set, distribution).unwrap()
 }
 
-/// Where [`ensemble`]'s encoding stores each part of its distribution.
-struct Layout {
-    listed: usize,
-    samples: usize,
-    weights: usize,
-    assignments: usize,
-    representative: usize,
-    geometries: usize,
-}
-
-impl Layout {
-    fn of(bytes: &[u8]) -> Self {
-        // The steps follow the order kind, an empty column table (its row
-        // and column counts) follows them, and the absent sampling record's
-        // tag follows it; then the distribution: the samples tag, the sample
-        // count and two samples, the weights tag and two log weights, two
-        // assignments, the state count, and the first state's representative.
-        // The target's temperature and its absent pressure end the
-        // distribution.
-        let target = find(bytes, &TEMPERATURE.to_le_bytes());
-        let steps = find(bytes, &STEPS[0].to_le_bytes());
-        assert_eq!(bytes[steps - 1], 2, "a step order");
-        assert_eq!(bytes[steps + 32], 0, "no sampling record");
-        let start = steps + 24 + 8 + 1;
-        assert_eq!(bytes[start], 1, "a subset distribution");
-        let layout = Self {
-            listed: start + 1,
-            samples: start + 5,
-            weights: start + 14,
-            assignments: start + 30,
-            representative: start + 42,
-            geometries: target + 9,
-        };
-        assert_eq!(bytes[layout.listed..layout.samples], 2u32.to_le_bytes());
-        assert_eq!(bytes[layout.weights - 1], 1, "log weights");
-        assert_eq!(bytes[target - 1], 1, "a target");
-        assert_eq!(bytes[target + 8], 0, "no pressure");
-        assert_eq!(find(bytes, &LOG_WEIGHTS[0].to_le_bytes()), layout.weights);
-        assert_eq!(
-            bytes[layout.representative - 4..layout.representative],
-            2u32.to_le_bytes()
-        );
-        assert_eq!(
-            find(bytes, &ENERGY.to_le_bytes()),
-            layout.representative + 5
-        );
-        assert_eq!(bytes[layout.geometries], 0, "geometries in the record");
-        layout
-    }
+/// Four geometries in two clusters: cluster 0 of geometries 0 and 3,
+/// represented by 3, and cluster 1 of geometry 2; geometry 1 is in none.
+fn clustering() -> Clustering {
+    Clustering::new(vec![Some(0), None, Some(1), Some(0)], vec![3, 2]).unwrap()
 }
 
 /// `bytes` with `patch` at `offset`, resealed.
@@ -148,126 +91,125 @@ fn u32s(values: &[u32]) -> Vec<u8> {
 }
 
 #[test]
-fn stored_distributions_are_checked_against_their_set() {
-    let ensemble = ensemble();
-    let bytes = native::write(&ensemble, NativeWriteOptions::default()).unwrap();
-    assert_eq!(bytes[12], 11, "an ensemble record");
-    let decoded = read(&bytes).unwrap().into_ensemble().unwrap();
-    assert_eq!(decoded.set().order(), ensemble.set().order());
-    assert_eq!(decoded.distribution(), ensemble.distribution());
-    assert_eq!(
-        decoded.distribution().weight_model(),
-        WeightModel::LogWeights(&LOG_WEIGHTS)
-    );
-    let at = Layout::of(&bytes);
-    let target = at.geometries - 9;
-    let stored = "The stored structure is not valid.";
-    let cases = [
-        // Samples unsorted, duplicated, and out of range.
-        (at.samples, u32s(&[2, 0]), stored, "unsorted samples"),
-        (at.samples, u32s(&[0, 0]), stored, "duplicate samples"),
-        (at.samples, u32s(&[0, 7]), stored, "a sample out of range"),
-        // More samples than geometries.
-        (
-            at.listed,
-            u32s(&[4]),
-            "The distribution lists 4 samples of 3 geometries.",
-            "too many samples",
-        ),
-        // An assignment to a state that does not exist.
-        (at.assignments, u32s(&[2]), stored, "an assignment"),
-        // State 0 represented by sample 0, which is in state 1.
-        (
-            at.representative,
-            u32s(&[0]),
-            stored,
-            "a representative outside its state",
-        ),
-        (
-            at.representative,
-            u32s(&[9]),
-            stored,
-            "a representative out of range",
-        ),
-        // Log weights that are not finite.
-        (at.weights, f64::NAN.to_le_bytes().to_vec(), stored, "NaN"),
-        (
-            at.weights,
-            f64::INFINITY.to_le_bytes().to_vec(),
-            stored,
-            "infinity",
-        ),
-        (
-            at.weights,
-            f64::NEG_INFINITY.to_le_bytes().to_vec(),
-            stored,
-            "negative infinity",
-        ),
-        // An unknown weights tag.
-        (
-            at.weights - 1,
-            vec![4],
-            "The weights tag 4 is unknown.",
-            "a weights tag",
-        ),
-        // A target that is not a thermodynamic state.
-        (
-            target,
-            (-1.0f64).to_le_bytes().to_vec(),
-            stored,
-            "a negative temperature",
-        ),
-        // An unknown geometries tag.
-        (
-            at.geometries,
-            vec![7],
-            "The geometries section tag 7 is unknown.",
-            "a geometries tag",
-        ),
-    ];
-    for (offset, patch, message, case) in cases {
-        assert_invalid(&patched(&bytes, offset, &patch), message, case);
-    }
-    // Zero and negative log weights are weights of one and below one.
-    for log_weight in [0.0f64, -1.0] {
-        let decoded = read(&patched(&bytes, at.weights, &log_weight.to_le_bytes()))
-            .unwrap()
-            .into_ensemble()
-            .unwrap();
-        assert_eq!(
-            decoded.distribution().weight_model(),
-            WeightModel::LogWeights(&[log_weight, LOG_WEIGHTS[1]])
+fn stored_weights_are_finite_and_their_source_known() {
+    let weights = weights();
+    let bytes = native::write(&weights, NativeWriteOptions::default()).unwrap();
+    assert_eq!(bytes[12], 13, "a weights record");
+    assert_eq!(read(&bytes).unwrap().into_weights().unwrap(), weights);
+
+    // The geometry count, the source tag, the temperature, and an optional
+    // log weight per geometry.
+    assert_eq!(bytes[CONTENT..CONTENT + 4], 3u32.to_le_bytes());
+    let source = CONTENT + 4;
+    assert_eq!(bytes[source], 1, "given weights");
+    assert_eq!(bytes[source + 1], 1, "a temperature");
+    assert_eq!(find(&bytes, &TEMPERATURE.to_le_bytes()), source + 2);
+    let first = source + 11;
+    assert_eq!(bytes[first - 1], 1, "geometry 0 is a sample");
+    assert_eq!(find(&bytes, &LOG_WEIGHTS[0].to_le_bytes()), first);
+    assert_eq!(bytes[first + 8], 0, "geometry 1 is no sample");
+
+    for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        assert_invalid(
+            &patched(&bytes, first, &bad.to_le_bytes()),
+            "The log weight of geometry 0 is not finite.",
+            "a log weight",
         );
     }
-    // Tag 2 marks the same log weights as Boltzmann populations.
-    let decoded = read(&patched(&bytes, at.weights - 1, &[2]))
-        .unwrap()
-        .into_ensemble()
-        .unwrap();
-    assert_eq!(
-        decoded.distribution().weight_model(),
-        WeightModel::Boltzmann(&LOG_WEIGHTS)
-    );
-    // Boltzmann populations without a target are refused.
-    let boltzmann = patched(&bytes, at.weights - 1, &[2]);
     assert_invalid(
-        &patched(&boltzmann, target - 1, &[0]),
-        "Boltzmann weights need a target.",
-        "Boltzmann weights without a target",
+        &patched(&bytes, source + 2, &(-1.0f64).to_le_bytes()),
+        "The stored weights are not valid.",
+        "a negative temperature",
     );
-
-    // Log weights and assignments cut short.
-    for (offset, case) in [
-        (at.weights + 4, "log weights"),
-        (at.weights + 8, "log weights"),
-        (at.assignments + 2, "assignments"),
-        (at.assignments + 4, "assignments"),
-    ] {
-        let error = read(&cut(&bytes, offset)).unwrap_err();
-        assert_eq!(error.format(), Format::Native, "{case}: {error}");
-        let error = read(&bytes[..offset]).unwrap_err();
-        assert_eq!(error.format(), Format::Native, "{case}: {error}");
+    assert_invalid(
+        &patched(&bytes, source, &[4]),
+        "The weight source tag 4 is unknown.",
+        "a source tag",
+    );
+    assert_invalid(
+        &patched(&bytes, first + 8, &[2]),
+        "The optional value tag is 2, not 0 or 1.",
+        "a sample tag",
+    );
+    // Zero and negative log weights are weights of one and below one.
+    for log_weight in [0.0f64, -1.0] {
+        let decoded = read(&patched(&bytes, first, &log_weight.to_le_bytes()))
+            .unwrap()
+            .into_weights()
+            .unwrap();
+        assert_eq!(decoded.log_weight(0), Some(log_weight));
     }
+    // Log weights cut short.
+    for offset in [first + 4, first + 8, first + 10] {
+        let error = read(&cut(&bytes, offset)).unwrap_err();
+        assert_eq!(error.format(), Format::Native);
+        let error = read(&bytes[..offset]).unwrap_err();
+        assert_eq!(error.format(), Format::Native);
+    }
+}
+
+#[test]
+fn every_weight_source_reads_back() {
+    let mut set = geometries(Order::Step(vec![0, 1, 2]));
+    let energy = PropertyKey::new("energy").unwrap();
+    set.columns_mut()
+        .insert(
+            energy.clone(),
+            PropertyColumn::Real {
+                unit: KILOJOULE_PER_MOLE,
+                values: vec![Some(1.5), Some(0.0), None],
+            },
+        )
+        .unwrap();
+    let state = ThermodynamicState::isothermal_isobaric(
+        Quantity::new(TEMPERATURE, KELVIN),
+        Quantity::new(1.0, crate::units::BAR),
+    )
+    .unwrap();
+    set.set_sampling(Some(Sampling::new(state))).unwrap();
+    let boltzmann = Weights::boltzmann(&set, &energy, Quantity::new(TEMPERATURE, KELVIN)).unwrap();
+    let bias = Weights::from_bias(&set).unwrap().into_weights();
+    assert_eq!(bias.source(), &WeightSource::Bias { state });
+    let untimed = Weights::given(vec![Some(0.5), Some(-0.5)], None).unwrap();
+    for weights in [Weights::equal(3), untimed, boltzmann, bias] {
+        let bytes = native::write(&weights, NativeWriteOptions::default()).unwrap();
+        assert_eq!(read(&bytes).unwrap().into_weights().unwrap(), weights);
+    }
+}
+
+#[test]
+fn stored_clusterings_are_checked() {
+    let clustering = clustering();
+    let bytes = native::write(&clustering, NativeWriteOptions::default()).unwrap();
+    assert_eq!(bytes[12], 14, "a clustering record");
+    assert_eq!(read(&bytes).unwrap().into_clustering().unwrap(), clustering);
+
+    // The geometry count, the cluster count, an optional cluster per
+    // geometry, and a representative per cluster.
+    assert_eq!(bytes[CONTENT..CONTENT + 4], 4u32.to_le_bytes());
+    assert_eq!(bytes[CONTENT + 4..CONTENT + 8], 2u32.to_le_bytes());
+    let first = CONTENT + 8;
+    assert_eq!(bytes[first], 1, "geometry 0 is in a cluster");
+    assert_eq!(bytes[first + 5], 0, "geometry 1 is in none");
+    let representatives = first + 16;
+    assert_eq!(bytes[representatives..representatives + 8], u32s(&[3, 2]));
+    let stored = "The stored clustering is not valid.";
+    for (offset, patch, case) in [
+        (first + 1, u32s(&[2]), "a cluster out of range"),
+        (
+            representatives,
+            u32s(&[1]),
+            "a representative outside its cluster",
+        ),
+        (representatives, u32s(&[9]), "a representative out of range"),
+    ] {
+        assert_invalid(&patched(&bytes, offset, &patch), stored, case);
+    }
+    assert_invalid(
+        &patched(&bytes, first + 5, &[2]),
+        "The cluster tag is 2, not 0 or 1.",
+        "a cluster tag",
+    );
 }
 
 #[test]
@@ -312,7 +254,7 @@ fn interpreted_structure_sets_store_their_geometries_and_one_report_each() {
         NativeWriteOptions::default(),
     )
     .unwrap();
-    assert_eq!(bytes[8..12], 9u32.to_le_bytes(), "format version 9");
+    assert_eq!(bytes[8..12], 10u32.to_le_bytes(), "format version 10");
     assert_eq!(bytes[12], 10);
     let plain = native::write(&set, NativeWriteOptions::default()).unwrap();
     assert_eq!(plain[12], 9);
@@ -320,8 +262,7 @@ fn interpreted_structure_sets_store_their_geometries_and_one_report_each() {
 
     // An empty column table follows the two steps, the absent sampling
     // record's tag and the geometries tag follow it, and the first
-    // geometry's positions follow that: a structure set record holds no
-    // distribution.
+    // geometry's positions follow that.
     let steps = find(&bytes, &STEPS[0].to_le_bytes());
     assert_eq!(bytes[steps + 8..steps + 16], STEPS[1].to_le_bytes());
     assert_eq!(bytes[steps + 16..steps + 20], 2u32.to_le_bytes(), "rows");
@@ -375,29 +316,22 @@ fn sweep(bytes: &[u8]) {
 
 #[test]
 fn every_truncation_and_corruption_of_a_structure_set_fails_cleanly() {
-    let ensemble = ensemble();
-    sweep(&native::write(&ensemble, NativeWriteOptions::default()).unwrap());
+    let set = geometries(Order::Step(STEPS.to_vec()));
+    sweep(&native::write(&set, NativeWriteOptions::default()).unwrap());
     sweep(
         &native::write(
-            &EnsembleDescription::of(&ensemble),
+            &StructureSetDescription::of(&set),
             NativeWriteOptions::default(),
         )
         .unwrap(),
     );
-    let set = ensemble.set();
-    sweep(&native::write(set, NativeWriteOptions::default()).unwrap());
-    sweep(
-        &native::write(
-            &StructureSetDescription::of(set),
-            NativeWriteOptions::default(),
-        )
-        .unwrap(),
-    );
+    sweep(&native::write(&weights(), NativeWriteOptions::default()).unwrap());
+    sweep(&native::write(&clustering(), NativeWriteOptions::default()).unwrap());
 }
 
 /// [`geometries`] in a step order of [`STEPS`], whose geometries 0 and 1
 /// hold the owner value `replica` as `first` and `second`, past the set's
-/// checks: a set moves such values into its columns.
+/// checks.
 fn with_owner_values(
     first: crate::properties::PropertyValue,
     second: crate::properties::PropertyValue,
@@ -415,17 +349,6 @@ fn with_owner_values(
     set
 }
 
-/// `bytes` of a version 9 set without a distribution, written as version
-/// 8: without the column table and the sampling tag after the steps.
-fn as_version_8(bytes: &[u8]) -> Vec<u8> {
-    let table = find(bytes, &STEPS[0].to_le_bytes()) + 24;
-    assert_eq!(bytes[table + 8], 0, "no sampling record");
-    let mut old = bytes[..table].to_vec();
-    old.extend_from_slice(&bytes[table + 9..]);
-    old[8..12].copy_from_slice(&8u32.to_le_bytes());
-    resealed(old)
-}
-
 #[test]
 fn a_set_geometry_with_values_of_its_own_fails_to_read() {
     use crate::properties::PropertyValue;
@@ -434,37 +357,6 @@ fn a_set_geometry_with_values_of_its_own_fails_to_read() {
     assert_invalid(
         &bytes,
         "A geometry of the structure set has values of its own. The set's columns hold them.",
-        "version 9",
-    );
-
-    // Before version 9 the values move into the set's columns.
-    let old = read(&as_version_8(&bytes))
-        .unwrap()
-        .into_structure_set()
-        .unwrap();
-    let key = crate::properties::PropertyKey::new("replica").unwrap();
-    assert_eq!(
-        old.columns().get(&key),
-        Some(&crate::properties::PropertyColumn::Int(vec![
-            Some(4),
-            Some(5),
-            None
-        ]))
-    );
-    assert_eq!(old.order(), set.order());
-}
-
-#[test]
-fn version_8_values_of_differing_types_fail_to_read() {
-    use crate::properties::PropertyValue;
-    let set = with_owner_values(PropertyValue::Int(4), PropertyValue::String("b".into()));
-    let bytes = native::write(&set, NativeWriteOptions::default()).unwrap();
-    let old = as_version_8(&bytes);
-    assert_invalid(&old, "The stored structure is not valid.", "version 8");
-    let error = read(&old).unwrap_err();
-    let source = std::error::Error::source(&error).unwrap();
-    assert_eq!(
-        source.to_string(),
-        "The value \"replica\" of geometry 1 has another type or unit than the column \"replica\"."
+        "values of a geometry",
     );
 }

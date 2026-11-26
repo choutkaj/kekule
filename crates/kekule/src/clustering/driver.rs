@@ -1,136 +1,66 @@
-//! Leader clustering of structure sets and ensembles: options, the shared
-//! driver, and errors.
+//! Leader clustering of structure sets, the members a clustering groups, and
+//! errors.
 
 use std::fmt;
 
 use super::run::Tracker;
+use super::Clustering;
 use crate::alignment::{
-    best_kabsch, check_fit_count, AlignmentError, AlignmentOptions, FitAtoms, NormalizedWeights,
+    best_kabsch, check_fit_count, AlignmentError, AlignmentOptions, Coordinates, FitAtoms,
+    NormalizedWeights, Pairs,
 };
-use crate::diagnostics::Cancelled;
+use crate::diagnostics::{Cancelled, IndexOutOfRange};
+use crate::fixed_u32_id::FixedId;
+use crate::math::Point3;
 use crate::parallel::{map_ranges, FirstFailure, Run, Stop};
+use crate::statistics::{Weights, WeightsError};
 use crate::structure::{
-    Distribution, Ensemble, GeometryError, Partition, Requirement, Samples, StructureSet,
-    StructureSetError, StructureSetReadError, StructureView,
+    visit_geometry, GeometryStorage, StructureSet, StructureSetRead, StructureSetReadError,
 };
+use crate::topology::TopologyAtomIndex;
 use crate::units::{Quantity, UnitError, CANONICAL_LENGTH_UNIT};
 
-/// The order in which leader clustering visits members.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-#[non_exhaustive]
-pub enum ClusterOrder {
-    /// Descending sample weight, so the heaviest sample of a cluster leads
-    /// it.
-    #[default]
-    Weight,
-    /// Ascending energy of each sample's state, so a sample of the
-    /// lowest-energy state leads its cluster; samples of one state keep
-    /// sample order.
-    Energy,
-}
-
-/// Options for [`Ensemble::cluster_by_radius`] and
-/// [`StructureSet::cluster_by_radius`].
-#[derive(Debug, Clone, Copy, Default)]
-pub struct ClusteringOptions<'a> {
-    alignment: AlignmentOptions<'a>,
-    order: ClusterOrder,
-}
-
-impl<'a> ClusteringOptions<'a> {
-    /// Fit weighting and periodic policy of every pairwise fit.
-    pub const fn alignment(&self) -> AlignmentOptions<'a> {
-        self.alignment
-    }
-
-    /// Sets [`Self::alignment`].
-    #[must_use]
-    pub const fn with_alignment(mut self, alignment: AlignmentOptions<'a>) -> Self {
-        self.alignment = alignment;
-        self
-    }
-
-    /// The order in which members are visited.
-    pub const fn order(&self) -> ClusterOrder {
-        self.order
-    }
-
-    /// Sets [`Self::order`].
-    #[must_use]
-    pub const fn with_order(mut self, order: ClusterOrder) -> Self {
-        self.order = order;
-        self
-    }
-}
-
-/// The structures a clustering groups, in member order: the samples of an
-/// ensemble's distribution, or every geometry of a set.
-pub(super) struct Clustered<'a> {
-    pub(super) views: Vec<StructureView<'a>>,
-    /// The geometry index of each member, which errors name.
-    pub(super) samples: &'a Samples,
+/// The geometries a clustering groups, in member order: the samples of the
+/// weights by increasing index, or every geometry without weights.
+pub(super) struct Clustered {
+    /// The number of geometries of the set, which the clustering covers.
+    len: usize,
+    /// The geometry index of each member.
+    pub(super) members: Vec<usize>,
     /// Each member's natural-logarithm weight.
     log_weights: Vec<f64>,
-    /// Each member's state energy in the canonical unit, or why there is
-    /// none.
-    energies: Result<Vec<f64>, ClusteringError>,
 }
 
-/// The members of a set: every geometry.
-static EVERY_GEOMETRY: Samples = Samples::All;
-
-impl<'a> Clustered<'a> {
-    /// The samples of `distribution` over `set`, or every geometry of `set`
-    /// without one.
-    pub(super) fn new(set: &'a StructureSet, distribution: Option<&'a Distribution>) -> Self {
-        let mut clustered = Self::of_members(set.len(), distribution);
-        clustered.views = match distribution {
-            None => set
-                .iter()
-                .map(|geometry| geometry.as_structure_view())
-                .collect(),
-            Some(distribution) => (0..distribution.sample_count())
-                .map(|position| {
-                    let view = set
-                        .get(distribution.sample(position))
-                        .expect("samples are geometries of the set");
-                    view.as_structure_view()
-                })
-                .collect(),
-        };
-        clustered
-    }
-
-    /// The samples of `distribution` over `len` geometries, or every
-    /// geometry without one, with their weights and energies but no views:
-    /// what clustering on a distance matrix needs.
-    pub(super) fn of_members(len: usize, distribution: Option<&'a Distribution>) -> Self {
-        let Some(distribution) = distribution else {
-            return Self {
-                views: Vec::new(),
-                samples: &EVERY_GEOMETRY,
+impl Clustered {
+    /// The members of a set of `len` geometries under `weights`.
+    pub(super) fn new(len: usize, weights: Option<&Weights>) -> Result<Self, ClusteringError> {
+        let Some(weights) = weights else {
+            return Ok(Self {
+                len,
+                members: (0..len).collect(),
                 log_weights: vec![0.0; len],
-                energies: Err(StructureSetError::Missing(Requirement::StateEnergies).into()),
-            };
+            });
         };
-        // Exact weights: the current partition's estimates must not steer
-        // the new grouping.
-        let log_weights = distribution.exact_log_weights();
-        let energies = distribution
-            .state_energies()
-            .map(|energies| sample_energies(&energies, distribution.partition()))
-            .map_err(ClusteringError::from);
-        Self {
-            views: Vec::new(),
-            samples: distribution.samples(),
+        weights.check_len(len)?;
+        let members = weights.samples().collect::<Vec<_>>();
+        let log_weights = members
+            .iter()
+            .map(|geometry| {
+                weights
+                    .log_weight(*geometry)
+                    .expect("a sample has a log weight")
+            })
+            .collect();
+        Ok(Self {
+            len,
+            members,
             log_weights,
-            energies,
-        }
+        })
     }
 
     /// The number of members.
     pub(super) fn len(&self) -> usize {
-        self.log_weights.len()
+        self.members.len()
     }
 
     /// Weights divided by the largest one, so the largest is one and sums
@@ -147,44 +77,74 @@ impl<'a> Clustered<'a> {
             .collect()
     }
 
-    /// Member positions in visiting order.
-    fn visiting_order(&self, order: ClusterOrder) -> Result<Vec<usize>, ClusteringError> {
-        let mut positions = (0..self.len()).collect::<Vec<_>>();
-        match order {
-            ClusterOrder::Weight => {
-                positions.sort_by(|&a, &b| self.log_weights[b].total_cmp(&self.log_weights[a]))
-            }
-            ClusterOrder::Energy => {
-                let energies = self.energies.as_ref().map_err(Clone::clone)?;
-                positions.sort_by(|&a, &b| energies[a].total_cmp(&energies[b]));
+    /// The member heaviest of `positions`, the first of equal weights.
+    pub(super) fn heaviest(&self, positions: &[usize]) -> usize {
+        let mut best = positions[0];
+        for &position in &positions[1..] {
+            if self.log_weights[position] > self.log_weights[best] {
+                best = position;
             }
         }
-        Ok(positions)
+        best
+    }
+
+    /// Checks that `distances` covers the members.
+    pub(super) fn check_matrix(&self, member_count: usize) -> Result<(), ClusteringError> {
+        if member_count != self.len() {
+            return Err(ClusteringError::MatrixMismatch {
+                expected: self.len(),
+                actual: member_count,
+            });
+        }
+        Ok(())
+    }
+
+    /// The clustering of the set from each member's cluster and each
+    /// cluster's representative member, both by member position; clusters
+    /// are numbered densely from zero and each contains its representative.
+    pub(super) fn clustering(
+        &self,
+        assignments: &[usize],
+        representatives: &[usize],
+    ) -> Clustering {
+        let mut cluster_of = vec![None; self.len];
+        for (position, cluster) in assignments.iter().enumerate() {
+            cluster_of[self.members[position]] = Some(*cluster);
+        }
+        let representatives = representatives
+            .iter()
+            .map(|position| self.members[*position])
+            .collect();
+        Clustering::from_parts_unchecked(cluster_of, representatives)
     }
 
     fn cluster_by_radius(
         &self,
+        reader: &dyn StructureSetRead,
         radius: Quantity<f64>,
         atoms: FitAtoms<'_>,
-        options: ClusteringOptions<'_>,
+        options: AlignmentOptions<'_>,
         run: Run<'_>,
-    ) -> Result<Partition, ClusteringError> {
+    ) -> Result<Clustering, ClusteringError> {
         let atoms = undirected(atoms)?;
         let radius = radius.value_in(CANONICAL_LENGTH_UNIT)?;
         if !(radius.is_finite() && radius >= 0.0) {
             return Err(ClusteringError::InvalidRadius);
         }
-        let order = self.visiting_order(options.order)?;
-        let (views, samples) = (&self.views, self.samples);
-        let Some(first) = views.first() else {
+        // Descending weight; ties keep member order.
+        let mut order = (0..self.len()).collect::<Vec<_>>();
+        order.sort_by(|&a, &b| self.log_weights[b].total_cmp(&self.log_weights[a]));
+        let Some(&first) = self.members.first() else {
             Tracker::start(run, 0, 0)?;
-            return Ok(Partition::state_per_sample(0));
+            return Ok(self.clustering(&[], &[]));
         };
-        let sets = atoms.pair_sets(*first, *first)?;
-        check_fit_count(atoms.pair_count())?;
-        let weights = NormalizedWeights::new(options.alignment.weighting(), atoms.pair_count())?;
-        let policy = options.alignment.periodic_policy();
-        let tracker = Tracker::start(run, views.len(), atoms.pair_count())?;
+        let fitted = FittedAtoms::new(reader, first, atoms)?;
+        let weights = NormalizedWeights::new(options.weighting(), atoms.pair_count())?;
+        let policy = options.periodic_policy();
+        let tracker = Tracker::start(run, self.len(), atoms.pair_count())?;
+        let loaded = fitted.load(reader, &self.members, &tracker)?;
+        let coordinates = FittedAtoms::coordinates(&loaded);
+        let sets = fitted.sets.as_slice();
 
         // The nearest of `representatives`, numbered from `first_cluster`,
         // within `radius` of `member`; the earlier cluster on ties.
@@ -195,14 +155,14 @@ impl<'a> Clustered<'a> {
                     tracker.poll()?;
                 }
                 let rmsd = best_kabsch(
-                    views[member],
-                    views[*representative],
-                    &sets,
+                    coordinates[member],
+                    coordinates[*representative],
+                    sets,
                     weights,
                     policy,
                 )
                 .map_err(|source| AlignmentError::Item {
-                    index: sample_index(samples, member),
+                    index: self.members[member],
                     source: Box::new(source),
                 })?
                 .rmsd()
@@ -215,7 +175,7 @@ impl<'a> Clustered<'a> {
         };
 
         let parallelism = tracker.executor().parallelism().get();
-        let mut assignments = vec![0; views.len()];
+        let mut assignments = vec![0; self.len()];
         let mut representatives: Vec<usize> = Vec::new();
         // Members placed and fits made since the last checkpoint.
         let (mut placed, mut fits) = (0, 0);
@@ -288,92 +248,131 @@ impl<'a> Clustered<'a> {
             }
         }
         tracker.finish(placed);
-        Ok(Partition::from_parts_unchecked(
-            assignments,
-            representatives,
-        ))
+        Ok(self.clustering(&assignments, &representatives))
     }
 }
 
-/// Each sample's state energy, from every state's energy and the samples'
-/// grouping into states.
-fn sample_energies(energies: &[f64], partition: &Partition) -> Vec<f64> {
-    partition
-        .assignments()
-        .iter()
-        .map(|state| energies[*state])
-        .collect()
+/// Members loaded by one work item at least: reading a geometry costs
+/// about as much as many fits.
+const MEMBERS_PER_WORK_ITEM: usize = 16;
+
+/// The atoms fits between members read, and the pair sets over them.
+///
+/// Only the fitted atoms of each member are kept: every member is lent or
+/// read once and its fitted positions copied out, so memory grows with the
+/// members times the fitted atoms rather than with whole geometries.
+pub(super) struct FittedAtoms {
+    /// The fitted atoms, sorted.
+    fitted: Vec<usize>,
+    /// The candidate pair sets, indexing [`Self::fitted`].
+    pub(super) sets: Vec<Pairs>,
 }
 
-/// The geometry index of the sample at `position` of `samples`.
-pub(super) fn sample_index(samples: &Samples, position: usize) -> usize {
-    match samples {
-        Samples::All => position,
-        Samples::Subset(indices) => indices[position],
+/// One member's fitted positions and whether it is periodic.
+pub(super) type Loaded = (Vec<Point3>, bool);
+
+impl FittedAtoms {
+    /// Checks `atoms` against `geometry` of `reader` and compacts its pair
+    /// sets onto the fitted atoms.
+    pub(super) fn new(
+        reader: &dyn StructureSetRead,
+        geometry: usize,
+        atoms: FitAtoms<'_>,
+    ) -> Result<Self, ClusteringError> {
+        let sets = visit_geometry(reader, geometry, ClusteringError::Read, |first| {
+            Ok(atoms.pair_sets(first, first)?)
+        })?;
+        check_fit_count(atoms.pair_count())?;
+        let mut fitted = sets
+            .iter()
+            .flatten()
+            .flat_map(|(moving, reference)| [moving.index(), reference.index()])
+            .collect::<Vec<_>>();
+        fitted.sort_unstable();
+        fitted.dedup();
+        let compact = |atom: TopologyAtomIndex| {
+            let position = fitted
+                .binary_search(&atom.index())
+                .expect("every paired atom is fitted");
+            TopologyAtomIndex::from_index(position)
+        };
+        let sets = sets
+            .iter()
+            .map(|pairs| {
+                pairs
+                    .iter()
+                    .map(|(moving, reference)| (compact(*moving), compact(*reference)))
+                    .collect()
+            })
+            .collect::<Vec<Pairs>>();
+        Ok(Self { fitted, sets })
     }
-}
 
-impl StructureSet {
-    /// Leader clustering on fitted RMSD within `radius`, a finite,
-    /// nonnegative length, of every geometry of the set, each weighing the
-    /// same; [`Ensemble::cluster_by_radius`] clusters the samples of a
-    /// distribution with their weights.
-    ///
-    /// The result groups the geometries, by geometry index. Install it as a
-    /// new distribution of every geometry, `Distribution::new(Samples::All,
-    /// partition)`, in [`Ensemble::new`]. Members are visited in geometry
-    /// order; the rest is as [`Ensemble::cluster_by_radius`] describes.
-    ///
-    /// # Errors
-    ///
-    /// As [`Ensemble::cluster_by_radius`], and
-    /// [`ClusteringError::StructureSet`] wrapping `Missing(StateEnergies)`
-    /// when ordering by [`ClusterOrder::Energy`], since a set has no states.
-    pub fn cluster_by_radius<'a>(
+    /// The fitted positions of the geometries `members` of `reader`, in
+    /// that order, loaded in ranges on the tracker's executor; cancellation
+    /// is polled before each one, and the first failing read in order is
+    /// reported.
+    pub(super) fn load(
         &self,
-        radius: Quantity<f64>,
-        atoms: impl Into<FitAtoms<'a>>,
-        options: ClusteringOptions<'_>,
-    ) -> Result<Partition, ClusteringError> {
-        self.cluster_by_radius_with(radius, atoms, options, Run::default())
+        reader: &dyn StructureSetRead,
+        members: &[usize],
+        tracker: &Tracker<'_>,
+    ) -> Result<Vec<Loaded>, ClusteringError> {
+        let loaded = map_ranges(
+            tracker.executor(),
+            members.len(),
+            MEMBERS_PER_WORK_ITEM,
+            |positions| {
+                positions
+                    .map(|position| {
+                        tracker.poll()?;
+                        visit_geometry(reader, members[position], ClusteringError::Read, |view| {
+                            let points = *view.positions().values().value();
+                            let points = self
+                                .fitted
+                                .iter()
+                                .map(|atom| points[*atom])
+                                .collect::<Vec<Point3>>();
+                            Ok((points, view.cell().is_some()))
+                        })
+                    })
+                    .collect::<Result<Vec<_>, ClusteringError>>()
+            },
+        );
+        let mut all = Vec::with_capacity(members.len());
+        for range in loaded {
+            all.extend(range?);
+        }
+        Ok(all)
     }
 
-    /// [`Self::cluster_by_radius`] under a [`Run`], as
-    /// [`Ensemble::cluster_by_radius_with`] runs.
-    ///
-    /// # Errors
-    ///
-    /// As [`Self::cluster_by_radius`], and [`ClusteringError::Cancelled`]
-    /// once `run`'s cancellation is requested.
-    pub fn cluster_by_radius_with<'a>(
-        &self,
-        radius: Quantity<f64>,
-        atoms: impl Into<FitAtoms<'a>>,
-        options: ClusteringOptions<'_>,
-        run: Run<'_>,
-    ) -> Result<Partition, ClusteringError> {
-        Clustered::new(self, None).cluster_by_radius(radius, atoms.into(), options, run)
+    /// The coordinates the kernels read from loaded members.
+    pub(super) fn coordinates(loaded: &[Loaded]) -> Vec<Coordinates<'_>> {
+        loaded
+            .iter()
+            .map(|(points, periodic)| Coordinates {
+                points,
+                periodic: *periodic,
+            })
+            .collect()
     }
 }
 
-impl Ensemble {
+impl<S: GeometryStorage> StructureSet<S>
+where
+    StructureSet<S>: StructureSetRead,
+{
     /// Leader clustering on fitted RMSD within `radius`, a finite,
-    /// nonnegative length, of the samples of the distribution.
+    /// nonnegative length.
     ///
-    /// The result groups exactly those samples, by sample position: entry
-    /// `i` of its assignments, and each representative, is the `i`th sample
-    /// ([`Distribution::samples`](crate::structure::Distribution::samples)).
-    /// Install it with
-    /// [`DistributionMut::regroup`](crate::structure::DistributionMut::regroup),
-    /// which keeps every weight. Geometries that are not samples are not
-    /// clustered.
+    /// With `weights`, it clusters their samples, visited by descending
+    /// weight, so the heaviest sample of a cluster leads it; geometries that
+    /// are not samples are in no cluster. Without, it clusters every
+    /// geometry in index order. Ties keep index order.
     ///
-    /// Members are visited in the [`ClusterOrder`] of `options`, by default
-    /// descending weight; ties keep member order.
-    /// [`ClusterOrder::Energy`] visits them by ascending energy of their
-    /// states. Each member joins the cluster whose representative is nearest
-    /// by RMSD after a [`fit`](crate::alignment::fit) over `atoms` with the
-    /// fit weights of `options`, by default uniform, if that RMSD is at most
+    /// Each member joins the cluster whose representative is nearest by
+    /// RMSD after a [`fit`](crate::alignment::fit) over `atoms` with the fit
+    /// weights of `options`, by default uniform, if that RMSD is at most
     /// `radius`; ties keep the earlier cluster. Otherwise it founds a new
     /// cluster and represents it. Every member is therefore within `radius`
     /// of its representative, and representatives are farther than `radius`
@@ -381,34 +380,35 @@ impl Ensemble {
     ///
     /// `atoms` is a selection or a
     /// [`SymmetricSelection`](crate::alignment::SymmetricSelection) of this
-    /// ensemble's layout, so each distance is the same whichever member
-    /// moves; an [`AtomCorrespondence`](crate::alignment::AtomCorrespondence)
-    /// is rejected. Each member is fitted to at most every representative,
-    /// so the cost grows with members times clusters (times symmetry
-    /// permutations). A distribution without samples gives an empty
-    /// partition.
+    /// set's layout, so each distance is the same whichever member moves; an
+    /// [`AtomCorrespondence`](crate::alignment::AtomCorrespondence) is
+    /// rejected. Each member is fitted to at most every representative, so
+    /// the cost grows with members times clusters (times symmetry
+    /// permutations). Each member is lent or read once, and only its fitted
+    /// atoms are kept, so a set over a file clusters too. No member gives
+    /// no cluster.
     ///
     /// # Errors
     ///
+    /// - [`ClusteringError::Weights`] when `weights` cover another number of
+    ///   geometries.
     /// - [`ClusteringError::Unit`] when `radius` is not a length, and
     ///   [`ClusteringError::InvalidRadius`] when it is negative or not finite.
     /// - [`ClusteringError::DirectedCorrespondence`] when `atoms` is an
     ///   [`AtomCorrespondence`](crate::alignment::AtomCorrespondence).
     /// - [`ClusteringError::Alignment`] when `atoms` does not belong to this
-    ///   ensemble's layout, has fewer than three pairs, or the explicit
-    ///   weights of `options` are invalid. A failed fit is wrapped in
-    ///   [`AlignmentError::Item`] naming the geometry index of the member
-    ///   being placed.
-    /// - [`ClusteringError::StructureSet`] wrapping `Missing(StateEnergies)`
-    ///   when ordering by [`ClusterOrder::Energy`] with a state without an
-    ///   energy.
+    ///   set's layout, has fewer than three pairs, or the explicit weights of
+    ///   `options` are invalid. A failed fit is wrapped in
+    ///   [`AlignmentError::Item`] naming the geometry being placed.
+    /// - [`ClusteringError::Read`] when a member cannot be read.
     pub fn cluster_by_radius<'a>(
         &self,
         radius: Quantity<f64>,
         atoms: impl Into<FitAtoms<'a>>,
-        options: ClusteringOptions<'_>,
-    ) -> Result<Partition, ClusteringError> {
-        self.cluster_by_radius_with(radius, atoms, options, Run::default())
+        weights: Option<&Weights>,
+        options: AlignmentOptions<'_>,
+    ) -> Result<Clustering, ClusteringError> {
+        self.cluster_by_radius_with(radius, atoms, weights, options, Run::default())
     }
 
     /// [`Self::cluster_by_radius`] under a [`Run`].
@@ -420,7 +420,7 @@ impl Ensemble {
     /// representatives founded before the batch, and then, as it is placed,
     /// to the few founded within it. The nearest is chosen in cluster order
     /// and the first failed fit in visiting order is reported, so the
-    /// partition or error is the one [`Self::cluster_by_radius`] returns.
+    /// clustering or error is the one [`Self::cluster_by_radius`] returns.
     /// Progress counts members placed, of the member count.
     ///
     /// # Errors
@@ -431,10 +431,12 @@ impl Ensemble {
         &self,
         radius: Quantity<f64>,
         atoms: impl Into<FitAtoms<'a>>,
-        options: ClusteringOptions<'_>,
+        weights: Option<&Weights>,
+        options: AlignmentOptions<'_>,
         run: Run<'_>,
-    ) -> Result<Partition, ClusteringError> {
-        Clustered::new(self.set(), Some(self.distribution())).cluster_by_radius(
+    ) -> Result<Clustering, ClusteringError> {
+        Clustered::new(self.len(), weights)?.cluster_by_radius(
+            self,
             radius,
             atoms.into(),
             options,
@@ -456,14 +458,14 @@ pub(super) fn undirected(atoms: FitAtoms<'_>) -> Result<FitAtoms<'_>, Clustering
     }
 }
 
-/// Failure of a structure set clustering operation.
+/// Failure of a clustering operation.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum ClusteringError {
     /// A clustering radius is not finite and nonnegative.
     InvalidRadius,
-    /// A distance matrix covers a different member count than there are
-    /// members to cluster.
+    /// A distance matrix or dendrogram covers a different member count than
+    /// there are members to cluster.
     MatrixMismatch {
         /// The number of members to cluster.
         expected: usize,
@@ -511,11 +513,30 @@ pub enum ClusteringError {
     /// [`AtomCorrespondence`](crate::alignment::AtomCorrespondence), whose
     /// fits depend on which member moves.
     DirectedCorrespondence,
+    /// A geometry or cluster index is outside the clustering.
+    IndexOutOfRange(IndexOutOfRange),
+    /// A geometry of a [`Clustering`] is in a cluster without a
+    /// representative.
+    ClusterOutOfRange {
+        /// The geometry's index.
+        geometry: usize,
+        /// Its cluster.
+        cluster: usize,
+        /// The number of clusters, one per representative.
+        clusters: usize,
+    },
+    /// A representative of a [`Clustering`] is not in its cluster.
+    RepresentativeNotMember {
+        /// The cluster.
+        cluster: usize,
+        /// The representative geometry.
+        geometry: usize,
+    },
+    /// The weights do not fit, or cannot give what was asked; see the
+    /// cause.
+    Weights(WeightsError),
     /// Fitting members or validating the fit atoms failed; see the source.
     Alignment(Box<AlignmentError>),
-    /// The ensemble lacks what the clustering needs, such as an energy for
-    /// every state; see the source.
-    StructureSet(Box<StructureSetError>),
     /// A quantity could not be converted to the required unit; see the source.
     Unit(Box<UnitError>),
     /// The run's [`Cancellation`](crate::diagnostics::Cancellation) stopped
@@ -565,8 +586,19 @@ impl fmt::Display for ClusteringError {
             Self::DirectedCorrespondence => formatter.write_str(
                 "Distances between members need an atom selection, not an atom correspondence.",
             ),
+            Self::IndexOutOfRange(error) => fmt::Display::fmt(error, formatter),
+            Self::ClusterOutOfRange {
+                geometry, cluster, ..
+            } => write!(
+                formatter,
+                "Geometry {geometry} is in cluster {cluster}, which has no representative."
+            ),
+            Self::RepresentativeNotMember { cluster, geometry } => write!(
+                formatter,
+                "Geometry {geometry} represents cluster {cluster} but is not in it."
+            ),
+            Self::Weights(error) => fmt::Display::fmt(error, formatter),
             Self::Alignment(_) => formatter.write_str("Cannot fit the members."),
-            Self::StructureSet(_) => formatter.write_str("Cannot cluster the geometries."),
             Self::Unit(_) => formatter.write_str("A clustering quantity has the wrong unit."),
             Self::Cancelled(_) => formatter.write_str("Clustering stopped."),
             Self::Read(error) => fmt::Display::fmt(error, formatter),
@@ -578,9 +610,9 @@ impl std::error::Error for ClusteringError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Alignment(error) | Self::PairFit { source: error, .. } => Some(error.as_ref()),
-            Self::StructureSet(error) => Some(error.as_ref()),
             Self::Unit(error) => Some(error.as_ref()),
             Self::Cancelled(cancelled) => Some(cancelled),
+            Self::Weights(error) => std::error::Error::source(error),
             Self::Read(error) => std::error::Error::source(error),
             _ => None,
         }
@@ -593,20 +625,14 @@ impl From<AlignmentError> for ClusteringError {
     }
 }
 
-impl From<StructureSetError> for ClusteringError {
-    fn from(error: StructureSetError) -> Self {
-        Self::StructureSet(Box::new(error))
-    }
-}
-
-impl From<GeometryError> for ClusteringError {
-    fn from(error: GeometryError) -> Self {
-        Self::StructureSet(Box::new(StructureSetError::Geometry(error)))
-    }
-}
-
 impl From<UnitError> for ClusteringError {
     fn from(error: UnitError) -> Self {
         Self::Unit(Box::new(error))
+    }
+}
+
+impl From<WeightsError> for ClusteringError {
+    fn from(error: WeightsError) -> Self {
+        Self::Weights(error)
     }
 }

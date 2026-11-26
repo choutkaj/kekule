@@ -1,6 +1,6 @@
 //! Frame tables: exact round trips, crash and NUL tails, corrupt rows,
 //! continuing at a checkpoint, following a growing file, and joining a
-//! table into sets in memory and in files by step, and reweighting a set
+//! table into sets in memory and in files by step, and bias weights of a set
 //! over a growing file.
 
 use std::fs;
@@ -11,10 +11,10 @@ use std::sync::Arc;
 
 use kekule::math::Point3;
 use kekule::properties::{PropertyColumn, PropertyKey, PropertyValue};
-use kekule::statistics::{CumulantOrder, Estimator};
+use kekule::statistics::Weights;
 use kekule::structure::{
-    ColumnRef, Ensemble, Geometry, Order, Positions, Samples, Sampling, StructureSet,
-    StructureSetError, ThermodynamicState,
+    ColumnRef, Geometry, Order, Positions, Sampling, StructureSet, StructureSetError,
+    ThermodynamicState,
 };
 use kekule::traj::frames::{
     append_frame_table, create_frame_table, read_frame_table, read_frame_table_from, ColumnSpec,
@@ -798,7 +798,7 @@ fn a_set_read_from_a_file_joins_the_table_and_keeps_it_on_refresh() {
 }
 
 #[test]
-fn a_reweighted_ensemble_over_a_growing_file_leaves_new_frames_out() {
+fn bias_weights_over_a_growing_file_leave_new_frames_out() {
     let directory = Directory::new();
     let path = directory.path("run.trr");
     let options = TrajectoryWriteOptions::new(TrajectoryFormat::Trr).with_trr_options(
@@ -815,13 +815,8 @@ fn a_reweighted_ensemble_over_a_growing_file_leaves_new_frames_out() {
     let growing = TrajectoryOpenOptions::default().with_growing(true);
     let mut set = open_indexed_structure_set(&path, Arc::clone(&topology), growing).unwrap();
     set.join_frames(&bias_table(12)).unwrap();
-    let mut ensemble =
-        Ensemble::reweighted(set, None, Estimator::Cumulant(CumulantOrder::Second)).unwrap();
-    assert_eq!(
-        ensemble.distribution().samples(),
-        &Samples::Subset(vec![1, 2])
-    );
-    let distribution = ensemble.distribution().clone();
+    let weights = Weights::from_bias(&set).unwrap().into_weights();
+    assert_eq!(weights.samples().collect::<Vec<_>>(), [1, 2]);
     // The run goes on: the file grows by two frames.
     let longer = directory.path("longer.trr");
     write_structure_set(
@@ -831,7 +826,11 @@ fn a_reweighted_ensemble_over_a_growing_file_leaves_new_frames_out() {
     )
     .unwrap();
     fs::copy(&longer, &path).unwrap();
-    assert_eq!(ensemble.refresh().unwrap(), 2);
-    assert_eq!(ensemble.set().len(), 6);
-    assert_eq!(ensemble.distribution(), &distribution);
+    assert_eq!(set.refresh().unwrap(), 2);
+    assert_eq!(set.len(), 6);
+    // Extended over the grown set, the weights keep their samples.
+    let extended = weights.clone().extended_to(set.len()).unwrap();
+    assert_eq!(extended.samples().collect::<Vec<_>>(), [1, 2]);
+    assert_eq!(extended.log_weight(1), weights.log_weight(1));
+    assert_eq!(extended.log_weight(5), None);
 }

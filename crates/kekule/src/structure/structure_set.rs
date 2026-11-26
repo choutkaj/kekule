@@ -47,9 +47,9 @@ pub use views::{GeometryIter, GeometryView, SetGeometryMut};
 /// out ([`GeometryView::to_structure`], [`Self::remove`],
 /// [`Self::into_geometries`]) carries its row's cells as owner values again.
 /// An order is recorded by the
-/// source, so it belongs to the set; a distribution over the geometries is
-/// inferred by an analysis, so it belongs to an
-/// [`Ensemble`](crate::structure::Ensemble) that reads the set. Operations
+/// source, so it belongs to the set; weights of the geometries are inferred
+/// by an analysis, so they are a value beside the set
+/// ([`Weights`](crate::statistics::Weights)). Operations
 /// ask for what they need and fail with [`StructureSetError::Missing`]
 /// naming it ([`Requirement`]).
 ///
@@ -330,13 +330,11 @@ impl StructureSet {
     /// reads geometry by geometry through [`StructureSetRead`] and builds the set
     /// itself.
     ///
-    /// An ensemble of trajectory frames, such as one for a structure
-    /// format, drops what the frames have and an ensemble does not:
+    /// Samples of trajectory frames, such as those for a structure format,
+    /// drop what the frames have and the format does not:
     ///
     /// ```
-    /// use kekule::structure::{
-    ///     Ensemble, Order, Place, Positions, Geometry, StructureSet, TimeAxis,
-    /// };
+    /// use kekule::structure::{Order, Place, Positions, Geometry, StructureSet, TimeAxis};
     /// use kekule::units::{Quantity, PICOSECOND};
     ///
     /// let topology = kekule::smiles::to_topology("O")?;
@@ -355,8 +353,7 @@ impl StructureSet {
     /// assert_eq!(samples.len(), 3);
     /// samples.set_order(None)?;
     /// samples.clear_velocities_and_forces();
-    /// let ensemble = Ensemble::uniform(samples);
-    /// assert_eq!(ensemble.distribution().sample_count(), 3);
+    /// assert!(samples.order().is_none());
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     ///

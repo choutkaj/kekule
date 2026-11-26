@@ -7,8 +7,8 @@ use std::sync::Arc;
 
 use kekule::diagnostics::{Countable, LengthMismatch, TopologyMismatch};
 use kekule::math::{PeriodicCell, Point3, Vector3};
-use kekule::structure::{Ensemble, Positions, Structure, StructureView};
 use kekule::structure::{Geometry, Order, StructureSet, TimeAxis};
+use kekule::structure::{Positions, Structure, StructureView};
 use kekule::topology::{AtomSelection, Topology, TopologyBuilder};
 use kekule::traj::FrameBuffer;
 use kekule::units::{Quantity, ELEMENTARY_CHARGE, NANOMETER};
@@ -345,17 +345,16 @@ fn potential_binds_its_layout_and_rejects_periodic_cells() {
 }
 
 #[test]
-fn distribution_samples_and_trajectory_frames_evaluate_like_structures() {
+fn set_members_and_trajectory_frames_evaluate_like_structures() {
     let topology = topology(1);
     let potential = OpenFfPotential::new(&parameterize(&topology)).unwrap();
     let structure = structure(&topology);
     let expected = potential.evaluate(structure.as_structure_view()).unwrap();
 
-    let ensemble = Ensemble::uniform(StructureSet::from_structures([structure.clone()]).unwrap());
-    let representative = ensemble.state(0).unwrap().representative_sample();
+    let set = StructureSet::from_structures([structure.clone()]).unwrap();
     assert_eq!(
         potential
-            .evaluate(representative.as_structure_view())
+            .evaluate(set.get(0).unwrap().as_structure_view())
             .unwrap(),
         expected
     );

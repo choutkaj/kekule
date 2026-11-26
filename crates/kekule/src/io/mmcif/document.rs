@@ -225,8 +225,8 @@ impl MmcifDocument {
     /// Interprets the coordinate models that `options` selects, by default
     /// all of them, in the exactly one structural block as an unordered
     /// structure set with one report per geometry. The set has no weights or
-    /// states; [`Ensemble::uniform`](crate::structure::Ensemble::uniform)
-    /// weighs its models the same.
+    /// clusters; [`Weights::equal`](crate::statistics::Weights::equal) weighs
+    /// its models the same.
     ///
     /// # Errors
     ///

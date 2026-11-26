@@ -1,10 +1,11 @@
-//! Energy surfaces: the samples of a distribution binned on one or two
-//! axes, with a free energy or a mean value per cell.
+//! Energy surfaces: the samples of weights binned on one or two axes, with a
+//! free energy or a mean value per cell.
 
 use std::fmt;
 
+use super::{kish, log_sum_exp, Estimator, Weights};
 use crate::diagnostics::{LimitExceeded, Resource};
-use crate::structure::{Distribution, Grouping, StructureSetError, ThermodynamicState};
+use crate::structure::{StructureSetError, ThermodynamicState};
 use crate::units::{Quantity, Unit, UnitError, CANONICAL_ENERGY_UNIT};
 
 /// Equal bins along one axis: `bins` bins from `start` to `end`, in the
@@ -198,10 +199,9 @@ impl Binning {
 /// One axis of a landscape: a value per geometry with its unit, and the
 /// bins they fall into.
 ///
-/// The values are indexed by geometry of the distribution's set, so a host
-/// bins set columns, the order, or its own measurements alike. Only the
-/// distribution's samples are read; a sample whose value is missing or not
-/// finite lies in no cell.
+/// The values are indexed by geometry of the weights' set, so a host bins
+/// set columns, the order, or its own measurements alike. Only the samples
+/// are read; a sample whose value is missing or not finite lies in no cell.
 #[derive(Debug, Clone, Copy)]
 pub struct GridAxis<'a> {
     values: &'a [Option<f64>],
@@ -234,11 +234,14 @@ impl<'a> GridAxis<'a> {
 ///
 /// Unless [`Self::with_fewest`] sets it, a free-energy cell needs
 /// [`Self::DEFAULT_FEWEST`] samples for a value, and a mean needs one: a
-/// mean over a single structure, such as a point of a scan, is exact.
+/// mean over a single structure, such as a point of a scan, is exact. Cell
+/// populations are exact unless [`Self::with_estimator`] sets another
+/// [`Estimator`].
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct LandscapeOptions {
     fewest: Option<usize>,
     temperature: Option<Quantity<f64>>,
+    estimator: Estimator,
 }
 
 impl LandscapeOptions {
@@ -261,9 +264,17 @@ impl LandscapeOptions {
         self
     }
 
-    /// Returns these options with the temperature of the free energy, for a
-    /// distribution without a target. A distribution with a target takes
-    /// only its own temperature.
+    /// Returns these options with the estimator of each cell's population
+    /// from the log weights of its samples; by default the exact
+    /// [`Estimator::Exponential`]. Shares within a cell stay exact.
+    #[must_use]
+    pub const fn with_estimator(mut self, estimator: Estimator) -> Self {
+        self.estimator = estimator;
+        self
+    }
+
+    /// Returns these options with the temperature of the free energy, for
+    /// weights without one. Weights with a temperature take only their own.
     ///
     /// # Errors
     ///
@@ -289,10 +300,15 @@ impl LandscapeOptions {
         self.fewest
     }
 
-    /// The temperature given for a distribution without a target, in
+    /// The temperature given for weights without one, in
     /// [`CANONICAL_TEMPERATURE_UNIT`](crate::units::CANONICAL_TEMPERATURE_UNIT).
     pub const fn temperature(&self) -> Option<Quantity<f64>> {
         self.temperature
+    }
+
+    /// The estimator of each cell's population.
+    pub const fn estimator(&self) -> Estimator {
+        self.estimator
     }
 }
 
@@ -331,9 +347,9 @@ impl Cell {
     }
 
     /// The natural logarithm of the cell's probability among the cells:
-    /// the distribution's estimator over the exact log weights of its
-    /// samples, normalized so that the cells' probabilities sum to one.
-    /// `None` for an empty cell or one whose estimate is not finite.
+    /// the options' estimator over the log weights of its samples,
+    /// normalized so that the cells' probabilities sum to one. `None` for an
+    /// empty cell or one whose estimate is not finite.
     pub const fn log_population(&self) -> Option<f64> {
         self.log_population
     }
@@ -352,28 +368,29 @@ impl Cell {
     }
 }
 
-/// The samples of a [`Distribution`] binned on one or two axes, with a
-/// value per cell: a free-energy surface or a map of a mean value.
+/// The samples of [`Weights`] binned on one or two axes, with a value per
+/// cell: a free-energy surface or a map of a mean value.
 ///
 /// **Cells.** A sample lies in the cell of its axis values. A sample whose
 /// value on some axis is missing or not finite is excluded
 /// ([`Self::excluded`]), and one whose value lies outside a binning that is
 /// not periodic is outside ([`Self::outside`]); neither is in any cell.
-/// Geometries that are not samples of the distribution are not read.
+/// Geometries that are not samples are not read.
 ///
 /// **Order.** Cells are stored with the first axis fastest: on axes of `nx`
 /// and `ny` bins, cell `(i, j)` is at index `j·nx + i`, from the lowest
 /// bins of both axes, so the rows of a plotted grid run from the lowest
 /// second-axis value up.
 ///
-/// **Populations.** A cell's population is the distribution's
-/// [`estimator`](Distribution::estimator) over the exact log weights of its
-/// samples, as [`Distribution::group_log_populations`] gives it, and the
-/// cells are normalized among themselves: [`Self::probabilities`] is the
-/// weighted histogram. A cell that holds exactly a state's samples, with
-/// every sample in a cell, has the state's probability. Within a cell, each
-/// sample's share is exact, `exp(ℓ_i) / Σ exp(ℓ_j)`; the effective count is
-/// Kish's over the same weights.
+/// **Populations.** A cell's population is the log-sum-exp of its samples'
+/// log weights, or the options' [`Estimator`] over them
+/// ([`LandscapeOptions::with_estimator`]), and the cells are normalized
+/// among themselves: [`Self::probabilities`] is the weighted histogram.
+/// With the exact estimator, the default, a cell that holds exactly some
+/// samples, with every sample in a cell, has their probability
+/// ([`Weights::log_population`]). Within a cell, each sample's share is
+/// exact, `exp(ℓ_i) / Σ exp(ℓ_j)`; the effective count is Kish's over the
+/// same weights.
 ///
 /// **Values.** A cell with fewer samples than [`Self::fewest`] is masked:
 /// it has no value, but keeps its count, population, and representative,
@@ -387,30 +404,28 @@ impl Cell {
 ///
 /// **Representative.** A cell's representative is the sample nearest its
 /// centre, measured in bin widths on each axis, across the period on a
-/// periodic axis; of equally near ones, the one with the larger exact
-/// weight, then the lowest geometry index. It does not depend on the
-/// estimator.
+/// periodic axis; of equally near ones, the one with the larger weight,
+/// then the lowest geometry index. It does not depend on the estimator.
 ///
-/// **Temperature.** The free energy is at the distribution's target
-/// temperature. A distribution without a target takes
-/// [`LandscapeOptions::with_temperature`]; one with a target refuses a
+/// **Temperature.** The free energy is at the weights' temperature
+/// ([`Weights::temperature`]). Weights without one take
+/// [`LandscapeOptions::with_temperature`]; weights with one refuse a
 /// different temperature.
 ///
 /// ```
-/// use kekule::statistics::{Binning, GridAxis, Landscape, LandscapeOptions};
-/// use kekule::structure::{Distribution, Partition, Samples};
+/// use kekule::statistics::{Binning, GridAxis, Landscape, LandscapeOptions, Weights};
 /// use kekule::units::{Quantity, DEGREE, KELVIN};
 ///
 /// // Four equally weighted samples: three near 0°, one near 90°, on bins
 /// // centred at 0°, 90°, 180°, and -90°.
-/// let distribution = Distribution::new(Samples::All, Partition::one_state(4))?;
+/// let weights = Weights::equal(4);
 /// let angles = [Some(-10.0), Some(5.0), Some(10.0), Some(95.0)];
 /// let quarters = Binning::periodic(-45.0, 315.0, 4)?;
 /// let axis = GridAxis::new(Quantity::new(&angles, DEGREE), quarters);
 /// let options = LandscapeOptions::new()
 ///     .with_fewest(1)
 ///     .with_temperature(Some(Quantity::new(300.0, KELVIN)))?;
-/// let surface = Landscape::free_energy(&distribution, &[axis], &options)?;
+/// let surface = Landscape::free_energy(&weights, &[axis], &options)?;
 /// assert_eq!(surface.shape(), [4]);
 /// assert_eq!(surface.cell_at(&[0.0]), Some(0));
 /// assert_eq!(surface.cell_at(&[90.0]), Some(1));
@@ -446,7 +461,7 @@ impl Landscape {
     /// The most cells a landscape holds, a grid of 2048 × 2048.
     pub const MAX_CELLS: usize = 1 << 22;
 
-    /// The free-energy surface of `distribution` on `axes`, in
+    /// The free-energy surface of the samples of `weights` on `axes`, in
     /// [`CANONICAL_ENERGY_UNIT`]. A cell with fewer samples than
     /// [`LandscapeOptions::with_fewest`] sets, or
     /// [`LandscapeOptions::DEFAULT_FEWEST`] unless set, is masked.
@@ -456,17 +471,17 @@ impl Landscape {
     /// [`LandscapeError::AxisCount`] for other than one or two axes,
     /// [`LandscapeError::TooManyCells`] beyond [`Self::MAX_CELLS`],
     /// [`LandscapeError::ShortAxis`] when an axis has no entry for a sample,
-    /// [`LandscapeError::MissingTemperature`] when neither the distribution
-    /// nor the options give a temperature, and
+    /// [`LandscapeError::MissingTemperature`] when neither the weights nor
+    /// the options give a temperature, and
     /// [`LandscapeError::ConflictingTemperature`] when the options give
-    /// another one than the distribution's target.
+    /// another one than the weights.
     pub fn free_energy(
-        distribution: &Distribution,
+        weights: &Weights,
         axes: &[GridAxis<'_>],
         options: &LandscapeOptions,
     ) -> Result<Self, LandscapeError> {
         Self::build(
-            distribution,
+            weights,
             axes,
             None,
             CANONICAL_ENERGY_UNIT,
@@ -476,7 +491,7 @@ impl Landscape {
     }
 
     /// The map of the probability-weighted mean of `of`, a value per
-    /// geometry, over the samples of each cell of `distribution` on `axes`,
+    /// geometry, over the samples of each cell of `weights` on `axes`,
     /// in the unit of `of`. A sample whose value of `of` is missing or not
     /// finite is excluded, as one missing an axis value is. A cell is masked
     /// only below the fewest samples [`LandscapeOptions::with_fewest`] sets:
@@ -488,13 +503,13 @@ impl Landscape {
     /// [`LandscapeError::MissingTemperature`], and
     /// [`LandscapeError::ShortValues`] when `of` has no entry for a sample.
     pub fn mean(
-        distribution: &Distribution,
+        weights: &Weights,
         axes: &[GridAxis<'_>],
         of: Quantity<&[Option<f64>]>,
         options: &LandscapeOptions,
     ) -> Result<Self, LandscapeError> {
         Self::build(
-            distribution,
+            weights,
             axes,
             Some(*of.value()),
             of.unit(),
@@ -504,7 +519,7 @@ impl Landscape {
     }
 
     fn build(
-        distribution: &Distribution,
+        weights: &Weights,
         axes: &[GridAxis<'_>],
         of: Option<&[Option<f64>]>,
         value_unit: Unit,
@@ -514,7 +529,7 @@ impl Landscape {
         if !(1..=2).contains(&axes.len()) {
             return Err(LandscapeError::AxisCount(axes.len()));
         }
-        let temperature = resolve_temperature(distribution, options)?;
+        let temperature = resolve_temperature(weights, options)?;
         let thermal_energy = match (quantity, temperature) {
             (SurfaceQuantity::FreeEnergy, None) => {
                 return Err(LandscapeError::MissingTemperature);
@@ -538,33 +553,46 @@ impl Landscape {
         LimitExceeded::check(Resource::Cells, Self::MAX_CELLS, cell_count)
             .map_err(LandscapeError::TooManyCells)?;
 
-        let samples = distribution.sample_count();
-        let mut group_of = Vec::with_capacity(samples);
+        let samples = weights.samples().collect::<Vec<_>>();
+        // Shifted by the largest log weight, cell populations keep their
+        // digits under a large common offset.
+        let shift = weights.maximum().unwrap_or(0.0);
+        let log_weights = samples
+            .iter()
+            .map(|&geometry| weights.log_weight(geometry).expect("a sample"))
+            .collect::<Vec<_>>();
+        let mut cell_of = Vec::with_capacity(samples.len());
         let (mut excluded, mut outside) = (0, 0);
-        for position in 0..samples {
-            let geometry = distribution.sample(position);
-            let cell = sample_cell(axes, of, geometry)?;
-            match cell {
-                Placement::Cell(cell) => {
-                    group_of.push(Some(
-                        u32::try_from(cell).expect("cells are bounded below u32::MAX"),
-                    ));
-                }
+        for &geometry in &samples {
+            match sample_cell(axes, of, geometry)? {
+                Placement::Cell(cell) => cell_of.push(Some(cell)),
                 Placement::Excluded => {
                     excluded += 1;
-                    group_of.push(None);
+                    cell_of.push(None);
                 }
                 Placement::Outside => {
                     outside += 1;
-                    group_of.push(None);
+                    cell_of.push(None);
                 }
             }
         }
-        let grouping =
-            Grouping::new(&group_of, cell_count).expect("every cell is below the cell count");
-        let log_populations = distribution.grouped_log_populations(&grouping);
+        let grouping = Grouping::new(&cell_of, cell_count);
+        let estimates = (0..cell_count)
+            .map(|cell| {
+                let values = grouping
+                    .members(cell)
+                    .iter()
+                    .map(|&position| log_weights[position] - shift)
+                    .collect::<Vec<_>>();
+                options.estimator.log_sum(&values)
+            })
+            .collect::<Vec<_>>();
+        let total = log_sum_exp(estimates.iter().flatten().copied());
+        let log_populations = estimates
+            .into_iter()
+            .map(|estimate| estimate.map(|estimate| estimate - total))
+            .collect::<Vec<_>>();
 
-        let log_weights = distribution.exact_log_weights();
         let fewest = options.fewest.unwrap_or(match quantity {
             SurfaceQuantity::FreeEnergy => LandscapeOptions::DEFAULT_FEWEST,
             SurfaceQuantity::Mean => 1,
@@ -575,6 +603,10 @@ impl Landscape {
             .fold(None, |highest: Option<f64>, value| {
                 Some(highest.map_or(value, |highest| highest.max(value)))
             });
+        let members = Members {
+            samples: &samples,
+            log_weights: &log_weights,
+        };
         let cells = (0..cell_count)
             .map(|cell| {
                 let positions = grouping.members(cell);
@@ -590,25 +622,21 @@ impl Landscape {
                                 (reference - population) * thermal_energy
                             }),
                         (SurfaceQuantity::Mean, _, Some(of)) => {
-                            weighted_mean(distribution, &log_weights, positions, of)
+                            members.weighted_mean(positions, of)
                         }
                         _ => None,
                     }
                 };
                 Cell {
                     count,
-                    effective_count: distribution
-                        .group_effective_sample_size(positions)
-                        .unwrap_or(0.0),
+                    effective_count: if count == 0 {
+                        0.0
+                    } else {
+                        kish(positions.iter().map(|&position| log_weights[position]))
+                    },
                     log_population,
                     value: value.filter(|value| value.is_finite()),
-                    representative: representative(
-                        distribution,
-                        &log_weights,
-                        axes,
-                        cell,
-                        positions,
-                    ),
+                    representative: members.representative(axes, cell, positions),
                 }
             })
             .collect::<Vec<_>>();
@@ -666,8 +694,8 @@ impl Landscape {
         self.value_unit
     }
 
-    /// The distribution's target temperature, or the one the options give
-    /// for a distribution without a target, in
+    /// The weights' temperature, or the one the options give for weights
+    /// without one, in
     /// [`CANONICAL_TEMPERATURE_UNIT`](crate::units::CANONICAL_TEMPERATURE_UNIT).
     /// `None` when neither gives one, which only a mean allows.
     pub const fn temperature(&self) -> Option<Quantity<f64>> {
@@ -791,81 +819,123 @@ fn find_lowest_cell(cells: &[Cell]) -> Option<usize> {
     lowest.map(|(index, _)| index)
 }
 
-/// The temperature of a landscape over `distribution`: its target's, or
-/// the options' when it has none.
+/// The temperature of a landscape over `weights`: theirs, or the options'
+/// when they have none.
 fn resolve_temperature(
-    distribution: &Distribution,
+    weights: &Weights,
     options: &LandscapeOptions,
 ) -> Result<Option<Quantity<f64>>, LandscapeError> {
-    let Some(target) = distribution.temperature() else {
+    let Some(own) = weights.temperature() else {
         return Ok(options.temperature);
     };
     if let Some(given) = options.temperature {
         let given = *given.value();
-        let target = *target.value();
-        if (given - target).abs() > 1e-12 * target {
-            return Err(LandscapeError::ConflictingTemperature { given, target });
+        let own = *own.value();
+        if (given - own).abs() > 1e-12 * own {
+            return Err(LandscapeError::ConflictingTemperature {
+                given,
+                weights: own,
+            });
         }
     }
-    Ok(Some(target))
+    Ok(Some(own))
 }
 
-/// The mean of `of` over the samples at `positions`, each with its exact
-/// share among them.
-fn weighted_mean(
-    distribution: &Distribution,
-    log_weights: &[f64],
-    positions: &[usize],
-    of: &[Option<f64>],
-) -> Option<f64> {
-    let highest = positions
-        .iter()
-        .map(|&position| log_weights[position])
-        .fold(f64::NEG_INFINITY, f64::max);
-    let (mut total, mut mean) = (0.0, 0.0);
-    for &position in positions {
-        let value = of[distribution.sample(position)]?;
-        let weight = (log_weights[position] - highest).exp();
-        if weight == 0.0 {
-            continue;
-        }
-        total += weight;
-        mean += weight / total * (value - mean);
-    }
-    (total > 0.0).then_some(mean)
+/// The sample positions of each cell, stored flat: every cell's members,
+/// cell after cell, by increasing position.
+struct Grouping {
+    /// Where each cell's members start in `members`, and one past the last.
+    starts: Vec<usize>,
+    members: Vec<usize>,
 }
 
-/// The sample of `positions` nearest the centre of `cell`, as
-/// [`Landscape`] chooses it.
-fn representative(
-    distribution: &Distribution,
-    log_weights: &[f64],
-    axes: &[GridAxis<'_>],
-    cell: usize,
-    positions: &[usize],
-) -> Option<usize> {
-    let mut best: Option<(f64, f64, usize)> = None;
-    for &position in positions {
-        let geometry = distribution.sample(position);
-        let mut remainder = cell;
-        let mut distance = 0.0;
-        for axis in axes {
-            let bin = remainder % axis.binning.bins;
-            remainder /= axis.binning.bins;
-            let offset = axis.values[geometry]
-                .and_then(|value| axis.binning.position(value))
-                .map_or(f64::INFINITY, |at| at - (bin as f64 + 0.5));
-            distance += offset * offset;
+impl Grouping {
+    /// The cells of `cells` that `cell_of` puts each sample position in,
+    /// leaving out the samples in no cell; every cell is below `cells`.
+    fn new(cell_of: &[Option<usize>], cells: usize) -> Self {
+        let mut starts = vec![0_usize; cells + 1];
+        for cell in cell_of.iter().flatten() {
+            starts[cell + 1] += 1;
         }
-        let weight = log_weights[position];
-        let nearer = best.is_none_or(|(best_distance, best_weight, _)| {
-            distance < best_distance || (distance == best_distance && weight > best_weight)
-        });
-        if nearer {
-            best = Some((distance, weight, geometry));
+        for cell in 0..cells {
+            starts[cell + 1] += starts[cell];
         }
+        let mut members = vec![0_usize; starts[cells]];
+        let mut next = starts[..cells].to_vec();
+        for (position, cell) in cell_of.iter().enumerate() {
+            if let Some(cell) = cell {
+                members[next[*cell]] = position;
+                next[*cell] += 1;
+            }
+        }
+        Self { starts, members }
     }
-    best.map(|(_, _, geometry)| geometry)
+
+    /// The sample positions of cell `cell`, by increasing position.
+    fn members(&self, cell: usize) -> &[usize] {
+        &self.members[self.starts[cell]..self.starts[cell + 1]]
+    }
+}
+
+/// The samples of a landscape, by position: each one's geometry and log
+/// weight.
+struct Members<'a> {
+    samples: &'a [usize],
+    log_weights: &'a [f64],
+}
+
+impl Members<'_> {
+    /// The mean of `of` over the samples at `positions`, each with its exact
+    /// share among them.
+    fn weighted_mean(&self, positions: &[usize], of: &[Option<f64>]) -> Option<f64> {
+        let highest = positions
+            .iter()
+            .map(|&position| self.log_weights[position])
+            .fold(f64::NEG_INFINITY, f64::max);
+        let (mut total, mut mean) = (0.0, 0.0);
+        for &position in positions {
+            let value = of[self.samples[position]]?;
+            let weight = (self.log_weights[position] - highest).exp();
+            if weight == 0.0 {
+                continue;
+            }
+            total += weight;
+            mean += weight / total * (value - mean);
+        }
+        (total > 0.0).then_some(mean)
+    }
+
+    /// The sample of `positions` nearest the centre of `cell`, as
+    /// [`Landscape`] chooses it.
+    fn representative(
+        &self,
+        axes: &[GridAxis<'_>],
+        cell: usize,
+        positions: &[usize],
+    ) -> Option<usize> {
+        let mut best: Option<(f64, f64, usize)> = None;
+        for &position in positions {
+            let geometry = self.samples[position];
+            let mut remainder = cell;
+            let mut distance = 0.0;
+            for axis in axes {
+                let bin = remainder % axis.binning.bins;
+                remainder /= axis.binning.bins;
+                let offset = axis.values[geometry]
+                    .and_then(|value| axis.binning.position(value))
+                    .map_or(f64::INFINITY, |at| at - (bin as f64 + 0.5));
+                distance += offset * offset;
+            }
+            let weight = self.log_weights[position];
+            let nearer = best.is_none_or(|(best_distance, best_weight, _)| {
+                distance < best_distance || (distance == best_distance && weight > best_weight)
+            });
+            if nearer {
+                best = Some((distance, weight, geometry));
+            }
+        }
+        best.map(|(_, _, geometry)| geometry)
+    }
 }
 
 /// Why a [`Landscape`] or a [`Binning`] cannot be built.
@@ -894,15 +964,15 @@ pub enum LandscapeError {
         /// The sample's geometry.
         geometry: usize,
     },
-    /// A free energy needs a temperature: the distribution has no target and
-    /// the options give none ([`LandscapeOptions::with_temperature`]).
+    /// A free energy needs a temperature: the weights have none and the
+    /// options give none ([`LandscapeOptions::with_temperature`]).
     MissingTemperature,
-    /// The options give another temperature than the distribution's target.
+    /// The options give another temperature than the weights have.
     ConflictingTemperature {
         /// The given temperature, in kelvin.
         given: f64,
-        /// The target's temperature, in kelvin.
-        target: f64,
+        /// The weights' temperature, in kelvin.
+        weights: f64,
     },
     /// A temperature is not finite and positive.
     InvalidTemperature,
@@ -945,9 +1015,9 @@ impl fmt::Display for LandscapeError {
             Self::MissingTemperature => {
                 f.write_str("The free energy has no temperature. Give one.")
             }
-            Self::ConflictingTemperature { given, target } => write!(
+            Self::ConflictingTemperature { given, weights } => write!(
                 f,
-                "The temperature {given} K differs from the target temperature {target} K."
+                "The temperature {given} K differs from the temperature of the weights, {weights} K."
             ),
             Self::InvalidTemperature => {
                 f.write_str("The landscape temperature is not positive or not finite.")

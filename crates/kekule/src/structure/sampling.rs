@@ -13,10 +13,12 @@ use super::{StructureSetError, ThermodynamicState};
 /// [`Self::from_step`] on, each geometry is a sample of [`Self::state`]
 /// under the bias of its row: the sum of the [`Self::bias`] columns, a
 /// static bias such as GaMD's boost or a per-frame one such as
-/// metadynamics' `V(s, t) − c(t)`. An analysis derives weights from the
-/// record against a target state. The potential-energy column, when named,
-/// lets it reweight to another temperature. The method is a label, such as
-/// `GaMD dual boost`; kekule gives it no meaning.
+/// metadynamics' `V(s, t) − c(t)`. An analysis derives weights of the
+/// sampled state from the record
+/// ([`Weights::from_bias`](crate::statistics::Weights::from_bias)). The
+/// potential-energy column, when named, records each frame's unbiased
+/// energy. The method is a label, such as `GaMD dual boost`; kekule gives
+/// it no meaning.
 ///
 /// A set has at most one record ([`StructureSet::sampling`](super::StructureSet::sampling)),
 /// and every column it names is a real column of energies or absent. A

@@ -1,13 +1,12 @@
-//! Superposition of the geometries of a [`StructureSet`] or [`Ensemble`] in
-//! memory, and RMSD over the geometries of any [`StructureSetRead`] through
+//! Superposition of the geometries of a [`StructureSet`] in memory, and RMSD over the geometries of any [`StructureSetRead`] through
 //! one loop.
 
 use crate::diagnostics::{Cancellation, Countable, IndexOutOfRange, TopologyMismatch};
 use crate::math::RigidTransform;
 use crate::parallel::{Progress, Run};
 use crate::structure::{
-    visit_geometry, AsStructureView, Ensemble, Geometry, GeometryStorage, GeometryView,
-    StructureSet, StructureSetRead, StructureView,
+    visit_geometry, AsStructureView, Geometry, GeometryStorage, GeometryView, StructureSet,
+    StructureSetRead, StructureView,
 };
 use crate::topology::{AtomSelection, Topology};
 use crate::units::{Quantity, CANONICAL_LENGTH_UNIT};
@@ -578,25 +577,6 @@ impl StructureSet {
     }
 }
 
-impl Ensemble {
-    /// Fits every geometry of the set onto `reference` and applies each
-    /// transform in place, as [`StructureSet::superpose`] does; the
-    /// distribution is unchanged. `reference` is a geometry index of the set
-    /// or any borrowed view.
-    ///
-    /// # Errors
-    ///
-    /// As [`StructureSet::superpose`]; on failure nothing changes.
-    pub fn superpose<'a>(
-        &mut self,
-        reference: impl Into<Reference<'a>>,
-        atoms: impl Into<FitAtoms<'a>>,
-        options: AlignmentOptions<'_>,
-    ) -> Result<SuperpositionReport, AlignmentError> {
-        self.parts_mut().0.superpose(reference, atoms, options)
-    }
-}
-
 impl<S: GeometryStorage> StructureSet<S>
 where
     Self: StructureSetRead,
@@ -607,9 +587,8 @@ where
     /// [`geometry_rmsd`] over all its geometries, so a set read from a file
     /// reads one geometry at a time; [`geometry_rmsd_with`] runs it under a
     /// [`Run`]. Values are in [`CANONICAL_LENGTH_UNIT`], one per geometry in
-    /// set order: plot them against the order's values, or weight an
-    /// ensemble's samples by
-    /// [`Distribution::sample_probabilities`](crate::structure::Distribution::sample_probabilities).
+    /// set order: plot them against the order's values, or weight the samples
+    /// by [`Weights::probabilities`](crate::statistics::Weights::probabilities).
     /// `options` selects the pair weights and the periodic policy.
     ///
     /// # Errors

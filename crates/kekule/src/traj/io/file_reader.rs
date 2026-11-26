@@ -629,7 +629,7 @@ impl SeekableTrajectoryReader for IndexedFileTrajectoryReader {
 /// Reads an entire trajectory file into a structure set in memory, one geometry
 /// per frame in file frame order: the frames' times and steps become a time
 /// order, and each frame's positions, cell, properties, velocities, and
-/// forces its geometry's. The set has no distribution.
+/// forces its geometry's.
 ///
 /// Accepts an owned topology or a shared `Arc<Topology>` and detects the format
 /// automatically. File coordinates must follow the topology's dense atom order;

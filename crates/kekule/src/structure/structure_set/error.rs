@@ -4,11 +4,11 @@ use crate::diagnostics::{IndexOutOfRange, LengthMismatch, TopologyMismatch};
 use std::fmt;
 
 use crate::properties::{PropertyError, PropertyKey};
-use crate::structure::{GeometryError, Unweighable};
+use crate::structure::GeometryError;
 use crate::topology::TopologySubsetError;
 use crate::units::UnitError;
 
-/// What an operation needs and a structure set or ensemble lacks.
+/// What an operation needs and a structure set lacks.
 ///
 /// Its `Display` text, such as "needs a time order", can be shown as it is,
 /// for example beside an operation a host cannot offer for a set.
@@ -25,18 +25,12 @@ pub enum Requirement {
     Steps,
     /// An [`Order::Coordinate`](super::Order::Coordinate).
     CoordinateOrder,
-    /// An energy on every state of the distribution.
-    StateEnergies,
-    /// A distribution with a temperature.
-    Temperature,
     /// A periodic cell on every geometry.
     Cell,
     /// Every geometry held in memory.
     InMemory,
     /// A sampling record ([`Sampling`](crate::structure::Sampling)).
     Sampling,
-    /// A sampling record that names a potential-energy column.
-    PotentialEnergy,
 }
 
 impl fmt::Display for Requirement {
@@ -47,37 +41,23 @@ impl fmt::Display for Requirement {
             Self::Times => "needs times",
             Self::Steps => "needs steps",
             Self::CoordinateOrder => "needs a coordinate order",
-            Self::StateEnergies => "needs an energy for every state",
-            Self::Temperature => "needs a temperature",
             Self::Cell => "needs a periodic cell on every geometry",
             Self::InMemory => "needs its geometries in memory",
             Self::Sampling => "needs a sampling record",
-            Self::PotentialEnergy => "needs a potential-energy column",
         })
     }
 }
 
-/// Failure of a [`super::StructureSet`] or [`Ensemble`](crate::structure::Ensemble)
-/// operation.
+/// Failure of a [`super::StructureSet`] operation.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum StructureSetError {
-    /// The operation needs something the set or ensemble lacks, such as a
-    /// time order or an energy for every state.
+    /// The operation needs something the set lacks, such as a time order.
     Missing(Requirement),
     /// A constructor received no structures.
     EmptySource,
-    /// Probabilities were asked of a distribution without samples.
-    EmptyDistribution,
     /// A geometry index is outside the set.
     IndexOutOfRange(IndexOutOfRange),
-    /// A state index is outside the distribution.
-    StateOutOfRange(IndexOutOfRange),
-    /// A geometry is not a sample of the distribution.
-    NotSample {
-        /// The geometry's index.
-        geometry: usize,
-    },
     /// A structure's topology layout differs from the others'
     /// ([`Topology::same_layout`](crate::topology::Topology::same_layout),
     /// [`TopologyMismatch::Structure`]).
@@ -134,118 +114,20 @@ pub enum StructureSetError {
         /// The index of the out-of-order geometry.
         geometry: usize,
     },
-    /// The samples of a distribution are not increasing geometry indices.
-    UnsortedSamples,
-    /// A distribution of every geometry ([`Samples::All`](crate::structure::Samples::All))
-    /// covers another number of geometries than the set has.
-    CoverageMismatch {
-        /// The number of geometries the distribution covers.
-        covered: usize,
-        /// The set's geometry count.
-        geometries: usize,
-    },
-    /// A partition groups another number of samples than the distribution
-    /// lists ([`Distribution::new`](crate::structure::Distribution::new),
-    /// [`DistributionMut::regroup`](crate::structure::DistributionMut::regroup)).
-    PartitionMismatch(LengthMismatch),
-    /// Log weights were given in a different number than the distribution
-    /// has samples.
-    LogWeightCountMismatch(LengthMismatch),
-    /// States were given in a different number than the partition has.
-    StateCountMismatch(LengthMismatch),
-    /// A log weight is not finite.
-    NonFiniteLogWeight {
-        /// The index of the geometry the log weight belongs to.
-        geometry: usize,
-    },
-    /// A new sample came without a log weight, and the distribution has
-    /// weights. Pass one, or clear the weights first.
-    LogWeightRequired,
-    /// The representative of a state with other samples cannot be removed;
-    /// choose another representative with
-    /// [`DistributionMut::regroup`](crate::structure::DistributionMut::regroup) first.
-    RepresentativeRemoval {
-        /// The representative geometry.
-        geometry: usize,
-        /// Its state.
-        state: usize,
-    },
-    /// A state energy is not finite ([`StateData::set_energy`](crate::structure::StateData::set_energy)).
-    NonFiniteEnergy,
     /// A temperature is not finite and positive.
     InvalidTemperature,
     /// A pressure is not finite and positive
     /// ([`ThermodynamicState::isothermal_isobaric`](crate::structure::ThermodynamicState::isothermal_isobaric)).
     InvalidPressure,
-    /// A Boltzmann population is too small for a finite log weight: the
-    /// state's energy lies so far above the lowest, relative to the thermal
-    /// energy of
-    /// [`DistributionMut::assign_boltzmann_populations`](crate::structure::DistributionMut::assign_boltzmann_populations),
-    /// that its population underflows even in log space. A higher
-    /// temperature, or leaving the state out with `select_states`, avoids it.
-    UnrepresentablePopulation {
-        /// The index of the state.
-        state: usize,
+    /// A structure set description covers more geometries than it is
+    /// extended to
+    /// ([`StructureSetDescription::extended_to`](crate::native::StructureSetDescription::extended_to)).
+    CoverageMismatch {
+        /// The number of geometries described.
+        covered: usize,
+        /// The number of geometries it is extended to.
+        geometries: usize,
     },
-    /// A geometry's step lies before the first step its set's sampling
-    /// record samples, so it is no sample of the sampled state
-    /// ([`Distribution::reweighted`](crate::structure::Distribution::reweighted)).
-    BeforeSampling {
-        /// The geometry's index.
-        geometry: usize,
-    },
-    /// A geometry has no value in a column reweighting reads: a bias column
-    /// of the set's sampling record, or its potential-energy column at
-    /// another temperature
-    /// ([`Distribution::reweighted`](crate::structure::Distribution::reweighted)).
-    MissingColumnValue {
-        /// The column's key.
-        key: PropertyKey,
-        /// The geometry's index.
-        geometry: usize,
-    },
-    /// None of the proposed samples can be weighed
-    /// ([`Distribution::weighable`](crate::structure::Distribution::weighable),
-    /// [`Ensemble::reweight`](crate::structure::Ensemble::reweight)). The
-    /// reason is that of the first sample that got furthest through the
-    /// checks: before the first sampled step, then a missing bias value, then
-    /// a missing potential energy.
-    NoWeighableSample(Unweighable),
-    /// A reduced bias is not finite or exceeds `1e100` in magnitude
-    /// ([`Distribution::reweighted`](crate::structure::Distribution::reweighted)):
-    /// the geometry's energy or bias values are not physical.
-    InvalidReducedBias {
-        /// The geometry's index.
-        geometry: usize,
-    },
-    /// The target of reweighted samples cannot be set apart from their
-    /// weights ([`DistributionMut::set_target`](crate::structure::DistributionMut::set_target));
-    /// reweight them with [`Ensemble::reweight`](crate::structure::Ensemble::reweight)
-    /// instead.
-    ReweightedTarget,
-    /// A new sample cannot join reweighted samples, whose weights come from
-    /// the set's sampling record ([`Ensemble::push_sample`](crate::structure::Ensemble::push_sample),
-    /// [`Ensemble::push_state`](crate::structure::Ensemble::push_state)). Push
-    /// the geometry outside the distribution with
-    /// [`Ensemble::push`](crate::structure::Ensemble::push).
-    ReweightedSample {
-        /// The new geometry's index.
-        geometry: usize,
-    },
-    /// An estimator was given to a distribution whose samples are not
-    /// reweighted ([`DistributionMut::set_estimator`](crate::structure::DistributionMut::set_estimator)).
-    NotReweighted,
-    /// A grouping of samples covers another number of samples than the
-    /// distribution has
-    /// ([`Distribution::group_log_populations`](crate::structure::Distribution::group_log_populations)).
-    GroupingMismatch(LengthMismatch),
-    /// A sample's group is not below the number of groups
-    /// ([`Distribution::group_log_populations`](crate::structure::Distribution::group_log_populations)).
-    GroupOutOfRange(IndexOutOfRange),
-    /// An energy window is not finite and nonnegative.
-    InvalidEnergyWindow,
-    /// A population fraction is not in `(0, 1]`.
-    InvalidFraction,
     /// The set has no column under the key
     /// ([`StructureSet::column_values`](super::StructureSet::column_values)).
     /// A column without values is not stored.
@@ -316,12 +198,7 @@ impl fmt::Display for StructureSetError {
         match self {
             Self::Missing(requirement) => write!(formatter, "The structure set {requirement}."),
             Self::EmptySource => formatter.write_str("There are no structures to collect."),
-            Self::EmptyDistribution => formatter.write_str("The distribution has no samples."),
             Self::IndexOutOfRange(error) => error.fmt(formatter),
-            Self::StateOutOfRange(error) => error.fmt(formatter),
-            Self::NotSample { geometry } => {
-                write!(formatter, "Geometry {geometry} is not a sample of the distribution.")
-            }
             Self::TopologyMismatch(mismatch) => mismatch.fmt(formatter),
             Self::GeometryCountMismatch(error) => error.fmt(formatter),
             Self::OrderLengthMismatch(error) => error.fmt(formatter),
@@ -362,74 +239,15 @@ impl fmt::Display for StructureSetError {
                 formatter,
                 "Geometry {geometry} is earlier than the geometry before it."
             ),
-            Self::UnsortedSamples => {
-                formatter.write_str("The samples of the distribution are not in increasing order.")
-            }
-            Self::CoverageMismatch { covered, geometries } => write!(
-                formatter,
-                "The distribution covers {}, but the structure set has {geometries}.",
-                counted(*covered, "geometry", "geometries")
-            ),
-            Self::PartitionMismatch(error) => error.fmt(formatter),
-            Self::LogWeightCountMismatch(error) => error.fmt(formatter),
-            Self::StateCountMismatch(error) => error.fmt(formatter),
-            Self::NonFiniteLogWeight { geometry } => write!(
-                formatter,
-                "The log weight of geometry {geometry} is not finite."
-            ),
-            Self::LogWeightRequired => formatter.write_str(
-                "The new sample has no log weight, but the other samples have log weights.",
-            ),
-            Self::RepresentativeRemoval { geometry, state } => write!(
-                formatter,
-                "Geometry {geometry} represents state {state}. Remove the state's other samples first."
-            ),
-            Self::NonFiniteEnergy => formatter.write_str("The state energy is not finite."),
             Self::InvalidTemperature => {
                 formatter.write_str("The temperature is not finite and positive.")
             }
             Self::InvalidPressure => formatter.write_str("The pressure is not finite and positive."),
-            Self::UnrepresentablePopulation { state } => write!(
+            Self::CoverageMismatch { covered, geometries } => write!(
                 formatter,
-                "The Boltzmann population of state {state} is too small to represent at this temperature. Raise the temperature."
+                "The description covers {}, but the structure set has {geometries}.",
+                counted(*covered, "geometry", "geometries")
             ),
-            Self::BeforeSampling { geometry } => write!(
-                formatter,
-                "Geometry {geometry} lies before the first sampled step."
-            ),
-            Self::MissingColumnValue { key, geometry } => write!(
-                formatter,
-                "Geometry {geometry} has no value in the column \"{key}\"."
-            ),
-            Self::NoWeighableSample(reason) => match reason {
-                Unweighable::BeforeSampling => formatter
-                    .write_str("No sample can be reweighted. Every sample lies before the first sampled step."),
-                Unweighable::MissingBias { key } => write!(
-                    formatter,
-                    "No sample can be reweighted. Samples lack values in the bias column \"{key}\"."
-                ),
-                Unweighable::MissingPotentialEnergy => formatter
-                    .write_str("No sample can be reweighted. Samples lack a potential energy."),
-            },
-            Self::InvalidReducedBias { geometry } => {
-                write!(formatter, "The bias of geometry {geometry} is out of range.")
-            }
-            Self::ReweightedTarget => formatter.write_str(
-                "The distribution is reweighted to its target. Reweight it to change the target.",
-            ),
-            Self::ReweightedSample { geometry } => write!(
-                formatter,
-                "Geometry {geometry} cannot join the reweighted samples. Add it outside the distribution."
-            ),
-            Self::NotReweighted => formatter.write_str("The distribution is not reweighted."),
-            Self::GroupingMismatch(error) => error.fmt(formatter),
-            Self::GroupOutOfRange(error) => error.fmt(formatter),
-            Self::InvalidEnergyWindow => {
-                formatter.write_str("The energy window is not finite and nonnegative.")
-            }
-            Self::InvalidFraction => {
-                formatter.write_str("The population fraction is not greater than 0 and at most 1.")
-            }
             Self::MissingColumn { key } => {
                 write!(formatter, "The structure set has no column \"{key}\".")
             }

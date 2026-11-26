@@ -5,8 +5,7 @@ use crate::molecule::{Atom, BondOrder, Element, MoleculeEditor};
 use crate::properties::{PropertyKey, PropertyValue};
 use crate::topology::{Topology, TopologyAtomIndex, TopologyBondIndex, TopologyBuilder};
 use crate::units::{
-    Quantity, UnitError, ANGSTROM, KELVIN, KILOCALORIE_PER_MOLE, KILOJOULE_PER_MOLE, NANOMETER,
-    PICOSECOND, SQUARE_ANGSTROM, SQUARE_NANOMETER,
+    Quantity, ANGSTROM, KELVIN, NANOMETER, PICOSECOND, SQUARE_ANGSTROM, SQUARE_NANOMETER,
 };
 use std::sync::Arc;
 
@@ -57,36 +56,6 @@ fn single_atom_topology() -> crate::topology::Topology {
 
 fn single_position(x: f64) -> Positions {
     Positions::new(Quantity::new([Point3::new(x, 0.0, 0.0)], NANOMETER)).unwrap()
-}
-
-/// Distinct, equally weighted geometries, each its own state.
-fn conformers(
-    topology: impl Into<Arc<crate::topology::Topology>>,
-    geometries: impl IntoIterator<Item = Geometry>,
-) -> Result<Ensemble, StructureSetError> {
-    let set = StructureSet::from_geometries(topology, geometries)?;
-    let partition = Partition::state_per_sample(set.len());
-    Ensemble::new(set, Distribution::new(Samples::All, partition)?)
-}
-
-/// Structures drawn from one distribution: one state of equal weights.
-fn bundle(structures: impl IntoIterator<Item = Structure>) -> Result<Ensemble, StructureSetError> {
-    Ok(Ensemble::uniform(StructureSet::from_structures(
-        structures,
-    )?))
-}
-
-/// Whether `actual` and `expected` agree to within a few units in the last
-/// place of the larger, as values computed through `exp` and `ln` do.
-fn close(actual: f64, expected: f64) -> bool {
-    (actual - expected).abs() <= 4.0 * f64::EPSILON * actual.abs().max(expected.abs())
-}
-
-fn assert_close(actual: &[f64], expected: &[f64]) {
-    assert_eq!(actual.len(), expected.len(), "{actual:?} != {expected:?}");
-    for (a, e) in actual.iter().zip(expected) {
-        assert!(close(*a, *e), "{actual:?} != {expected:?}");
-    }
 }
 
 fn cell() -> PeriodicCell {
@@ -276,16 +245,12 @@ fn sets_from_structures_accept_equal_layouts_and_refuse_others() {
 fn geometry_replacement_rejects_incompatible_geometries_without_changing_state() {
     let (structure, _, _) = structure_fixture();
     let topology = structure.shared_topology();
-    let mut set = conformers(
+    let mut set = StructureSet::from_geometries(
         Arc::clone(&topology),
         [Geometry::new(structure.positions().clone())],
     )
     .unwrap();
-    let log_weight = 0.75_f64.ln();
-    set.distribution_mut()
-        .set_log_weight(0, log_weight)
-        .unwrap();
-    let original = set.set().get(0).unwrap().payload().clone();
+    let original = set.get(0).unwrap().payload().clone();
     // Bound to another one-bond topology; matching bond rows rebind freely.
     let other = structure_fixture().0;
     let mut bound_elsewhere = StructureSet::from_geometries(
@@ -313,23 +278,17 @@ fn geometry_replacement_rejects_incompatible_geometries_without_changing_state()
         DenseArrayError::CountMismatch(LengthMismatch::new(Countable::Row, 2, 1)),
     )));
     assert_eq!(set.replace(0, replacement.clone()), Err(expected.clone()));
-    assert_eq!(
-        set.push_state(replacement, None, StateData::new(), Some(0.0)),
-        Err(expected)
-    );
-    assert_eq!(set.set().len(), 1);
-    assert_eq!(set.distribution().sample_count(), 1);
-    let member = set.set().get(0).unwrap();
+    assert_eq!(set.push(replacement, None), Err(expected));
+    assert_eq!(set.len(), 1);
+    let member = set.get(0).unwrap();
     assert_eq!(member.payload(), &original);
-    assert_eq!(set.distribution().log_weight(0), Some(log_weight));
     assert_eq!(
         member.as_structure_view().positions().len(),
         topology.atom_count()
     );
     // Same bond count: a payload bound elsewhere with matching rows is accepted.
-    set.push_sample(bound_elsewhere, None, 0, Some(0.0))
-        .unwrap();
-    assert_eq!(set.set().len(), 2);
+    set.push(bound_elsewhere, None).unwrap();
+    assert_eq!(set.len(), 2);
     set.remove(1).unwrap();
 
     for index in [1, usize::MAX] {
@@ -354,11 +313,10 @@ fn geometry_replacement_rejects_incompatible_geometries_without_changing_state()
     );
     assert!(empty.is_empty());
     assert_eq!(set.replace(0, original.clone()).unwrap(), original);
-    assert_eq!(set.distribution().log_weight(0), Some(log_weight));
 }
 
 #[test]
-fn geometry_replacement_preserves_order_and_membership_and_publishes_the_whole_geometry() {
+fn geometry_replacement_preserves_order_and_publishes_the_whole_geometry() {
     let (structure, _, _) = structure_fixture();
     let topology = structure.shared_topology();
     let original = Geometry::new(structure.positions().clone());
@@ -369,15 +327,7 @@ fn geometry_replacement_preserves_order_and_membership_and_publishes_the_whole_g
         .insert(score.clone(), PropertyValue::Int(9))
         .unwrap();
     let set_properties = set.properties().clone();
-    let mut set = Ensemble::new(
-        set,
-        Distribution::new(Samples::All, Partition::state_per_sample(2))
-            .unwrap()
-            .with_log_weights(vec![0.0, 0.5_f64.ln()])
-            .unwrap(),
-    )
-    .unwrap();
-    let original = set.set().get(0).unwrap().payload().clone();
+    let original = set.get(0).unwrap().payload().clone();
     let mut replacement = Geometry::new(Positions::zeros(2));
     replacement.set_cell(Some(cell()));
     replacement
@@ -392,16 +342,13 @@ fn geometry_replacement_preserves_order_and_membership_and_publishes_the_whole_g
         .unwrap();
 
     assert_eq!(set.replace(1, replacement.clone()).unwrap(), original);
-    assert_eq!(set.set().len(), 2);
-    assert_eq!(set.set().properties(), &set_properties);
-    assert_eq!(set.set().get(0).unwrap().payload(), &original);
-    let member = set.set().get(1).unwrap();
+    assert_eq!(set.len(), 2);
+    assert_eq!(set.properties(), &set_properties);
+    assert_eq!(set.get(0).unwrap().payload(), &original);
+    let member = set.get(1).unwrap();
     assert!(Arc::ptr_eq(&member.shared_topology(), &topology));
     assert_eq!(member.positions(), replacement.positions());
     assert_eq!(member.cell(), replacement.cell());
-    // The replacement takes the replaced geometry's log weight and state.
-    assert_eq!(set.distribution().log_weight(1), Some(0.5_f64.ln()));
-    assert_eq!(set.distribution().state_of(1), Some(1));
     assert!(member.properties().owner().is_empty());
     assert_eq!(
         &member.row().unwrap().to_properties(),
@@ -601,28 +548,15 @@ fn sets_read_chosen_geometries_of_another_set_without_consuming_it() {
         trajectory.properties()
     );
 
-    // Leave out equilibration, take every second geometry, and weight them.
-    let sampled = Ensemble::weighted(
-        StructureSet::from_reader(&trajectory, (1..5).step_by(2)).unwrap(),
-        vec![3.0_f64.ln(), 0.0],
-    )
-    .unwrap();
+    // Leave out equilibration and take every second geometry.
+    let sampled = StructureSet::from_reader(&trajectory, (1..5).step_by(2)).unwrap();
     assert_eq!(trajectory.len(), 5);
-    assert_eq!(sampled.distribution().state_count(), 1);
-    assert!(sampled.state(0).unwrap().energy().is_none());
     let geometries = sampled
-        .set()
         .iter()
-        .map(|geometry| {
-            (
-                geometry.positions().values().value()[0].x,
-                sampled.distribution().log_weight(geometry.index()),
-            )
-        })
+        .map(|geometry| geometry.positions().values().value()[0].x)
         .collect::<Vec<_>>();
-    assert_eq!(geometries, [(1.0, Some(3.0_f64.ln())), (3.0, Some(0.0))]);
+    assert_eq!(geometries, [1.0, 3.0]);
     assert!(sampled
-        .set()
         .get(0)
         .unwrap()
         .shares_storage_with(&trajectory.get(1).unwrap()));
@@ -874,295 +808,6 @@ fn structure_atom_views_join_topology_identity_with_geometry_state() {
     assert_eq!(view.atom(carbon).unwrap().position(), atom.position());
 }
 
-/// Equally weighted conformers of a one-atom topology, one state each, with
-/// state energies in kJ/mol.
-fn energy_conformers(energies: &[f64]) -> Ensemble {
-    let states = energies
-        .iter()
-        .map(|energy| {
-            StateData::new()
-                .with_energy(Quantity::new(*energy, KILOJOULE_PER_MOLE))
-                .unwrap()
-        })
-        .collect();
-    let set = StructureSet::from_geometries(
-        single_atom_topology(),
-        energies.iter().map(|_| Geometry::new(single_position(0.0))),
-    )
-    .unwrap();
-    let distribution = Distribution::new(Samples::All, Partition::state_per_sample(energies.len()))
-        .unwrap()
-        .with_log_weights(vec![0.0; energies.len()])
-        .unwrap()
-        .with_states(states)
-        .unwrap();
-    Ensemble::new(set, distribution).unwrap()
-}
-
-/// The natural logarithm of each weight.
-fn ln(weights: &[f64]) -> Vec<f64> {
-    weights.iter().map(|weight| weight.ln()).collect()
-}
-
-/// The exponential of each log weight.
-fn exponentials(log_weights: &[f64]) -> Vec<f64> {
-    log_weights
-        .iter()
-        .map(|log_weight| log_weight.exp())
-        .collect()
-}
-
-/// Geometries of a one-atom topology with these log weights, grouped by
-/// `assignments` with `representatives`.
-fn grouped(log_weights: &[f64], assignments: &[usize], representatives: &[usize]) -> Ensemble {
-    let set = StructureSet::from_geometries(
-        single_atom_topology(),
-        log_weights
-            .iter()
-            .map(|_| Geometry::new(single_position(0.0))),
-    )
-    .unwrap();
-    let partition = Partition::new(assignments.to_vec(), representatives.to_vec()).unwrap();
-    let distribution = Distribution::new(Samples::All, partition)
-        .unwrap()
-        .with_log_weights(log_weights.to_vec())
-        .unwrap();
-    Ensemble::new(set, distribution).unwrap()
-}
-
-/// Conformers of `topology` at the origin with these log weights, one state
-/// each.
-fn weighted(topology: Arc<crate::topology::Topology>, log_weights: &[f64]) -> Ensemble {
-    let geometries = log_weights
-        .iter()
-        .map(|_| Geometry::new(single_position(0.0)));
-    let mut ensemble = conformers(topology, geometries).unwrap();
-    ensemble
-        .distribution_mut()
-        .set_log_weights(log_weights.to_vec())
-        .unwrap();
-    ensemble
-}
-
-/// An empty set of `topology` with a distribution of no samples.
-fn with_empty_distribution(topology: impl Into<Arc<crate::topology::Topology>>) -> Ensemble {
-    Ensemble::uniform(StructureSet::new(topology))
-}
-
-fn kj(value: f64) -> Option<Quantity<f64>> {
-    Some(Quantity::new(value, KILOJOULE_PER_MOLE))
-}
-
-/// Sets the energy of every state, in kJ/mol where given.
-fn set_energies(set: &mut Ensemble, energies: &[Option<f64>]) {
-    let mut distribution = set.distribution_mut();
-    for (state, energy) in energies.iter().enumerate() {
-        distribution
-            .state_mut(state)
-            .unwrap()
-            .set_energy(energy.and_then(kj))
-            .unwrap();
-    }
-}
-
-/// The log weight of every geometry, each a sample.
-fn log_weights(ensemble: &Ensemble) -> Vec<f64> {
-    (0..ensemble.set().len())
-        .map(|geometry| ensemble.distribution().log_weight(geometry).unwrap())
-        .collect()
-}
-
-fn energies(ensemble: &Ensemble) -> Vec<Option<Quantity<f64>>> {
-    ensemble.states().map(|state| state.energy()).collect()
-}
-
-fn representatives(ensemble: &Ensemble) -> Vec<usize> {
-    ensemble
-        .distribution()
-        .partition()
-        .representatives()
-        .to_vec()
-}
-
-#[test]
-fn state_energies_are_canonical_finite_and_never_on_geometries() {
-    let state = StateData::new();
-    assert_eq!(state.energy(), None);
-    let mut state = state
-        .with_energy(Quantity::new(1.0, KILOCALORIE_PER_MOLE))
-        .unwrap();
-    assert_eq!(state.energy(), kj(4.184));
-
-    // Invalid energies are rejected without changing the stored one.
-    for value in [f64::NAN, f64::INFINITY] {
-        assert_eq!(
-            state.set_energy(Some(Quantity::new(value, KILOJOULE_PER_MOLE))),
-            Err(StructureSetError::NonFiniteEnergy)
-        );
-    }
-    assert_eq!(
-        state.set_energy(Some(Quantity::new(1.0, KELVIN))),
-        Err(StructureSetError::Unit(UnitError::IncompatibleUnits {
-            from: KELVIN,
-            to: KILOJOULE_PER_MOLE,
-        }))
-    );
-    assert_eq!(state.energy(), kj(4.184));
-
-    let mut set = with_empty_distribution(single_atom_topology());
-    let index = set
-        .push_state(
-            Geometry::new(single_position(0.0)),
-            None,
-            state,
-            Some(2.0_f64.ln()),
-        )
-        .unwrap();
-    assert_eq!(index, 0);
-    set.distribution_mut()
-        .state_mut(0)
-        .unwrap()
-        .set_energy(kj(-3.0))
-        .unwrap();
-    // Energies describe the sampled structure, so subsets keep them.
-    let all = crate::topology::AtomSelection::all(set.set().shared_topology());
-    assert_eq!(energies(&set.subset(&all).unwrap()), [kj(-3.0)]);
-    let state = set.distribution().state_of(0).unwrap();
-    assert_eq!(set.state(state).unwrap().energy(), kj(-3.0));
-    let mut distribution = set.distribution_mut();
-    distribution.state_mut(0).unwrap().set_energy(None).unwrap();
-    assert!(distribution.state_mut(1).is_none());
-    assert_eq!(energies(&set), [None]);
-
-    // Structures carry no energy.
-    let (structure, _, _) = structure_fixture();
-    assert_eq!(energies(&bundle([structure]).unwrap()), [None]);
-}
-
-#[test]
-fn every_sample_is_in_one_state_that_contains_its_representative() {
-    let mut set = with_empty_distribution(single_atom_topology());
-    assert_eq!(set.distribution().state_count(), 0);
-    let geometry = |x| Geometry::new(single_position(x));
-    assert_eq!(
-        set.push_sample(geometry(0.0), None, 0, None),
-        Err(StructureSetError::StateOutOfRange(IndexOutOfRange::new(
-            Countable::State,
-            0,
-            0
-        )))
-    );
-    set.push_state(geometry(0.0), None, StateData::new(), None)
-        .unwrap();
-    set.push_state(geometry(1.0), None, StateData::new(), None)
-        .unwrap();
-    set.push_sample(geometry(2.0), None, 0, None).unwrap();
-    assert_eq!(set.distribution().partition().assignments(), [0, 1, 0]);
-    assert_eq!(representatives(&set), [0, 1]);
-    let state = set.state(0).unwrap();
-    assert_eq!(state.geometries().collect::<Vec<_>>(), [0, 2]);
-    assert_eq!(state.representative(), 0);
-    assert_eq!(state.representative_sample().index(), 0);
-    assert_eq!(set.state(1).unwrap().representative(), 1);
-    assert_eq!(set.distribution().state_of(2), Some(0));
-
-    // A representative of a state with other samples stays.
-    assert_eq!(
-        set.remove(0),
-        Err(StructureSetError::RepresentativeRemoval {
-            geometry: 0,
-            state: 0
-        })
-    );
-    // Removing a state's only sample removes the state; later indices shift.
-    set.remove(1).unwrap();
-    assert_eq!(set.distribution().partition().assignments(), [0, 0]);
-    assert_eq!(representatives(&set), [0]);
-    set.remove(1).unwrap();
-    set.remove(0).unwrap();
-    assert!(set.set().is_empty());
-    assert_eq!(set.distribution().state_count(), 0);
-
-    // A distribution of every geometry covers all of them.
-    let two = StructureSet::from_geometries(single_atom_topology(), [geometry(0.0), geometry(1.0)])
-        .unwrap();
-    assert_eq!(
-        Ensemble::new(
-            two,
-            Distribution::new(Samples::All, Partition::one_state(3)).unwrap()
-        )
-        .unwrap_err(),
-        StructureSetError::CoverageMismatch {
-            covered: 3,
-            geometries: 2
-        }
-    );
-    assert_eq!(
-        Partition::new(vec![0, 1], vec![1, 0]),
-        Err(PartitionError::RepresentativeNotInState {
-            state: 0,
-            sample: 1
-        })
-    );
-    assert_eq!(
-        Partition::new(vec![0, 2], vec![0, 1]),
-        Err(PartitionError::StateOutOfRange {
-            sample: 1,
-            state: 2,
-            states: 2
-        })
-    );
-    assert_eq!(
-        Partition::new(vec![0], vec![0, 3]),
-        Err(PartitionError::RepresentativeOutOfRange {
-            state: 1,
-            sample: 3,
-            samples: 1
-        })
-    );
-    assert_eq!(Partition::one_state(0).state_count(), 0);
-    assert_eq!(Partition::one_state(2).representatives(), [0]);
-}
-
-#[test]
-fn populations_are_derived_from_sample_weights() {
-    // Two states: geometries 0 and 2 (weights 1 and 3) and geometry 1 (weight 4).
-    let mut set = grouped(&ln(&[1.0, 4.0, 3.0]), &[0, 1, 0], &[2, 1]);
-    // Log populations are on the scale of the log weights: ln(1 + 3) and
-    // ln 4, which a state of one sample has exactly.
-    assert!(close(set.state(0).unwrap().log_population(), 4.0_f64.ln()));
-    assert_eq!(set.state(1).unwrap().log_population(), 4.0_f64.ln());
-    let distribution = set.distribution();
-    assert_close(&distribution.probabilities().unwrap(), &[0.125, 0.5, 0.375]);
-    assert_close(&distribution.state_probabilities().unwrap(), &[0.5, 0.5]);
-    // Kish: (1 + 4 + 3)² / (1 + 16 + 9) = 64 / 26.
-    assert!(close(
-        distribution.effective_sample_size().unwrap(),
-        64.0 / 26.0
-    ));
-
-    set.distribution_mut()
-        .set_log_weight(1, 12.0_f64.ln())
-        .unwrap();
-    assert_eq!(set.state(1).unwrap().log_population(), 12.0_f64.ln());
-    let distribution = set.distribution();
-    assert_close(&distribution.state_probabilities().unwrap(), &[0.25, 0.75]);
-    assert_eq!(distribution.ranked_by_population(), [1, 0]);
-    set.distribution_mut().normalize_log_weights().unwrap();
-    // Weights 1, 12, and 3 of 16.
-    assert_close(&exponentials(&log_weights(&set)), &[0.0625, 0.75, 0.1875]);
-    assert_close(
-        &set.distribution().state_probabilities().unwrap(),
-        &[0.25, 0.75],
-    );
-
-    let empty = with_empty_distribution(single_atom_topology());
-    assert_eq!(
-        empty.distribution().state_probabilities(),
-        Err(StructureSetError::EmptyDistribution)
-    );
-}
-
 fn x(set: &StructureSet, geometry: usize) -> f64 {
     set.get(geometry).unwrap().positions().values().value()[0].x
 }
@@ -1233,159 +878,6 @@ fn editing_one_geometry_of_a_shared_set_copies_that_geometry_alone() {
     assert_eq!(
         failed.get(0).unwrap().payload(),
         original.get(0).unwrap().payload()
-    );
-}
-
-#[test]
-fn selection_copies_geometries_and_whole_or_partial_states() {
-    // State 0: geometries 0 and 1, represented by 1; state 1: geometry 2.
-    let [one, two, three] = [1.0_f64.ln(), 2.0_f64.ln(), 3.0_f64.ln()];
-    let mut set = grouped(&[one, two, three], &[0, 0, 1], &[1, 2]);
-    set_energies(&mut set, &[Some(1.0), Some(2.0)]);
-
-    // Weights are relative, so selection keeps them as stored.
-    let whole = set.select([2, 0, 1, 1]).unwrap();
-    assert_eq!(log_weights(&whole), [three, one, two, two]);
-    assert_eq!(whole.distribution().partition().assignments(), [1, 0, 0, 0]);
-    assert_eq!(representatives(&whole), [2, 0]);
-    assert_eq!(energies(&whole), [kj(1.0), kj(2.0)]);
-
-    // A partly selected state has no energy.
-    let partial = set.select([0, 2]).unwrap();
-    assert_eq!(log_weights(&partial), [one, three]);
-    assert_eq!(partial.distribution().partition().assignments(), [0, 1]);
-    assert_eq!(representatives(&partial), [0, 1]);
-    assert_eq!(energies(&partial), [None, kj(2.0)]);
-
-    // Whole states keep their samples, representative, and energy.
-    let states = set.select_states([1, 0]).unwrap();
-    assert_eq!(log_weights(&states), [three, one, two]);
-    assert_eq!(states.distribution().partition().assignments(), [0, 1, 1]);
-    assert_eq!(representatives(&states), [0, 2]);
-    assert_eq!(energies(&states), [kj(2.0), kj(1.0)]);
-    assert_eq!(
-        set.select_states([2]).unwrap_err(),
-        StructureSetError::StateOutOfRange(IndexOutOfRange::new(Countable::State, 2, 2))
-    );
-}
-
-#[test]
-fn population_ranking_and_coverage_select_the_most_populated_states() {
-    let topology = Arc::new(single_atom_topology());
-    let weights = ln(&[1.0, 4.0, 2.0, 2.0, 1.0]);
-    let set = weighted(Arc::clone(&topology), &weights);
-    let distribution = set.distribution();
-
-    // Equal weights and populations keep geometry and state order.
-    assert_eq!(distribution.ranked_by_weight(), [1, 2, 3, 0, 4]);
-    assert_eq!(distribution.ranked_by_population(), [1, 2, 3, 0, 4]);
-    assert_close(
-        &distribution.probabilities().unwrap(),
-        &[0.1, 0.4, 0.2, 0.2, 0.1],
-    );
-    assert_eq!(log_weights(&set), weights);
-
-    assert_eq!(distribution.covering_population(0.4).unwrap(), [1]);
-    assert_eq!(distribution.covering_population(0.5).unwrap(), [1, 2]);
-    assert_eq!(
-        distribution.covering_population(0.85).unwrap(),
-        [1, 2, 3, 0]
-    );
-    assert_eq!(
-        distribution.covering_population(1.0).unwrap(),
-        [1, 2, 3, 0, 4]
-    );
-    for fraction in [0.0, -0.5, 1.5, f64::NAN] {
-        assert_eq!(
-            distribution.covering_population(fraction),
-            Err(StructureSetError::InvalidFraction)
-        );
-    }
-    // States of several samples rank by their summed weight.
-    let pooled = grouped(&ln(&[3.0, 2.0, 2.0]), &[0, 1, 1], &[0, 1]);
-    let pooled = pooled.distribution();
-    assert_eq!(pooled.ranked_by_weight(), [0, 1, 2]);
-    assert_eq!(pooled.ranked_by_population(), [1, 0]);
-    assert_eq!(pooled.covering_population(0.5).unwrap(), [1]);
-
-    // A full fraction keeps states too light to change the total.
-    let light = weighted(Arc::clone(&topology), &ln(&[1.0, 1.0e-20]));
-    let light = light.distribution();
-    assert_eq!(light.covering_population(1.0).unwrap(), [0, 1]);
-    assert_eq!(light.covering_population(0.999).unwrap(), [0]);
-
-    // Kish: (2 + 1 + 1)² / (4 + 1 + 1) = 8 / 3.
-    let skewed = weighted(Arc::clone(&topology), &ln(&[2.0, 1.0, 1.0]));
-    assert!(close(
-        skewed.distribution().effective_sample_size().unwrap(),
-        8.0 / 3.0
-    ));
-    let uniform = weighted(Arc::clone(&topology), &[7.0_f64.ln(); 4]);
-    assert!(close(
-        uniform.distribution().effective_sample_size().unwrap(),
-        4.0
-    ));
-
-    let empty = with_empty_distribution(topology);
-    let empty = empty.distribution();
-    assert_eq!(empty.ranked_by_weight(), Vec::<usize>::new());
-    assert_eq!(empty.ranked_by_population(), Vec::<usize>::new());
-    assert_eq!(
-        empty.probabilities(),
-        Err(StructureSetError::EmptyDistribution)
-    );
-    assert_eq!(
-        empty.effective_sample_size(),
-        Err(StructureSetError::EmptyDistribution)
-    );
-    assert_eq!(
-        empty.covering_population(0.5),
-        Err(StructureSetError::EmptyDistribution)
-    );
-}
-
-#[test]
-fn energy_ranking_and_windows_are_relative_to_the_lowest_state() {
-    let mut set = energy_conformers(&[10.0, 0.0, 30.0, 4.184, 0.0]);
-    let distribution = set.distribution();
-    assert_eq!(distribution.ranked_by_energy().unwrap(), [1, 4, 3, 0, 2]);
-    // The window bound is inclusive and converted to the canonical unit.
-    assert_eq!(
-        distribution
-            .within_energy_window(Quantity::new(1.0, KILOCALORIE_PER_MOLE))
-            .unwrap(),
-        [1, 3, 4]
-    );
-    assert_eq!(
-        distribution
-            .within_energy_window(Quantity::new(0.0, KILOJOULE_PER_MOLE))
-            .unwrap(),
-        [1, 4]
-    );
-    let window = distribution
-        .within_energy_window(Quantity::new(10.0, KILOJOULE_PER_MOLE))
-        .unwrap();
-    assert_eq!(window, [0, 1, 3, 4]);
-    assert_eq!(
-        energies(&set.select_states(window).unwrap()),
-        [10.0, 0.0, 4.184, 0.0].map(kj)
-    );
-
-    for value in [-1.0, f64::NAN, f64::INFINITY] {
-        assert_eq!(
-            distribution.within_energy_window(Quantity::new(value, KILOJOULE_PER_MOLE)),
-            Err(StructureSetError::InvalidEnergyWindow)
-        );
-    }
-    set_energies(&mut set, &[Some(10.0), Some(0.0), Some(30.0), None]);
-    let distribution = set.distribution();
-    assert_eq!(
-        distribution.ranked_by_energy(),
-        Err(StructureSetError::Missing(Requirement::StateEnergies))
-    );
-    assert_eq!(
-        distribution.within_energy_window(Quantity::new(1.0, KILOJOULE_PER_MOLE)),
-        Err(StructureSetError::Missing(Requirement::StateEnergies))
     );
 }
 
