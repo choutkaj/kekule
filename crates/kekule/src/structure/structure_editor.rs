@@ -492,22 +492,15 @@ impl StructureEditor {
     /// Publishes the completed structure, preserving coordinates and entity properties.
     /// Editing handles are draft-only; inspect the returned structure for its final IDs.
     pub fn finish(self) -> Result<Structure, StructureEditError> {
-        self.finish_with_correspondence()
-            .map(|(structure, _)| structure)
+        let published = self.topology.into_publication()?;
+        structure_from(&self.slots, published)
     }
     /// Publishes the structure and maps surviving draft atom/bond handles to its layout.
     pub fn finish_with_correspondence(
         self,
     ) -> Result<(Structure, crate::topology::edit::EditCorrespondence), StructureEditError> {
         let (published, correspondence) = self.topology.into_mapped_publication()?;
-        let mut data = self
-            .slots
-            .project(&published.atom_slots, &published.bond_slots)?;
-        *data.properties.owner_mut() = self.slots.properties.owner().clone();
-        Ok((
-            Structure::from_parts(published.topology, Geometry::from_data(data))?,
-            correspondence,
-        ))
+        Ok((structure_from(&self.slots, published)?, correspondence))
     }
     /// Publishes a structure, returning the draft with any publication error.
     pub fn try_finish(self) -> Result<Structure, DraftError<Self, StructureEditError>> {
@@ -540,6 +533,20 @@ impl StructureEditor {
     fn atom_slots(&self) -> Vec<usize> {
         self.topology.live_atom_slots()
     }
+}
+
+/// The structure of a published topology and the draft geometry rows its
+/// atoms and bonds come from.
+fn structure_from(
+    slots: &GeometryData,
+    published: crate::topology::editor::TopologyPublication,
+) -> Result<Structure, StructureEditError> {
+    let mut data = slots.project(&published.atom_slots, &published.bond_slots)?;
+    *data.properties.owner_mut() = slots.properties.owner().clone();
+    Ok(Structure::from_parts(
+        published.topology,
+        Geometry::from_data(data),
+    )?)
 }
 
 fn atom_row(slot: usize) -> TopologyAtomIndex {

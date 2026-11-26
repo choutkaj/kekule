@@ -1173,3 +1173,91 @@ fn a_class_edit_of_one_water_leaves_the_others() {
         .all(|water| water.definition_id() == others[0].definition_id()));
     assert_ne!(ion.definition_id(), others[0].definition_id());
 }
+
+/// Appended copies whose chains are renamed keep every residue label and
+/// site metadata of their source, except that a site's chain identifiers
+/// take the new ones where they named the old ones. The source keeps its
+/// own.
+#[test]
+fn renamed_copies_keep_their_labels_and_site_metadata() {
+    let kras = kras();
+    // The first site names a chain of its own, which renaming keeps.
+    let mut editor = kras.to_editor();
+    let odd = kras.topology().atom_sites().next().unwrap();
+    let handle = editor.topology().atom_site_handle(odd.id()).unwrap();
+    let metadata = odd.metadata().clone().with_label_asym_id(Some("Z".into()));
+    editor.set_atom_site_metadata(handle, metadata).unwrap();
+    let source = editor.finish().unwrap();
+    // Owned copies, taken before appending: a change to the shared rows in
+    // place would show in the source as in the copies.
+    let labels = |site: kekule::topology::AtomSiteView<'_>| {
+        let residue = site.residue();
+        format!(
+            "{:?}",
+            (
+                residue.name(),
+                residue.label_comp_id(),
+                residue.author_comp_id(),
+                residue.label_seq_id(),
+                residue.author_seq_id(),
+                residue.insertion_code(),
+            )
+        )
+    };
+    let snapshot = |structure: &Structure| {
+        structure
+            .topology()
+            .atom_sites()
+            .map(|site| {
+                let chain = site.residue().chain();
+                (
+                    labels(site),
+                    site.metadata().clone(),
+                    chain.label_id().to_owned(),
+                    chain.author_id().map(str::to_owned),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    let sites = snapshot(&source);
+
+    let copies = 3;
+    let mut editor = StructureEditor::new();
+    for copy in 0..copies {
+        let appended = editor.append_structure(&source).unwrap();
+        for chain in source.topology().chains().filter(|_| copy > 0) {
+            editor
+                .set_chain_identifiers(
+                    appended.chain(chain.id()).unwrap(),
+                    format!("{}{copy}", chain.label_id()),
+                    chain.author_id().map(|author| format!("{author}{copy}")),
+                )
+                .unwrap();
+        }
+    }
+    let merged = editor.finish().unwrap();
+    assert_eq!(snapshot(&source), sites);
+    assert_eq!(merged.topology().atom_sites().len(), copies * sites.len());
+    for (index, site) in merged.topology().atom_sites().enumerate() {
+        let copy = index / sites.len();
+        let (residue_labels, metadata, label, author) = &sites[index % sites.len()];
+        assert_eq!(&labels(site), residue_labels, "site {index}");
+        let mut expected = metadata.clone();
+        if copy > 0 {
+            if expected.label_asym_id() == Some(label) {
+                expected = expected.with_label_asym_id(Some(format!("{label}{copy}")));
+            }
+            if expected.auth_asym_id().is_some() && expected.auth_asym_id() == author.as_deref() {
+                expected = expected
+                    .with_auth_asym_id(author.as_ref().map(|author| format!("{author}{copy}")));
+            }
+        }
+        assert_eq!(site.metadata(), &expected, "site {index}");
+    }
+    let first = merged.topology().atom_sites().nth(sites.len()).unwrap();
+    assert_eq!(first.metadata().label_asym_id(), Some("Z"));
+    assert_ne!(
+        first.metadata().auth_asym_id(),
+        odd.metadata().auth_asym_id()
+    );
+}

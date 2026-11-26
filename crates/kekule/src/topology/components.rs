@@ -7,7 +7,7 @@ use crate::molecule::{
 };
 use crate::properties::{MoleculeProperties, PropertyError};
 use crate::stereo::{StereoCarrier, StereoElement, StereoElementKind, StereoGroup};
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, VecDeque};
 
 pub(super) struct ComponentDefinition {
     pub(super) id: super::MoleculeDefinitionId,
@@ -15,7 +15,13 @@ pub(super) struct ComponentDefinition {
     pub(super) source_bonds: Vec<BondId>,
 }
 
-/// Fails with the caller's own error, which wraps each cause.
+/// The component and component-local ID of each source atom or bond slot;
+/// `None` for one outside every component.
+type LocalIds<Id> = [Option<(usize, Id)>];
+
+/// Publishes the connected components of the atoms of `source_molecule`
+/// that `selected` flags, one flag per atom slot, as new definitions. Fails
+/// with the caller's own error, which wraps each cause.
 ///
 /// A selected atom with a fixed implicit-hydrogen count gains a hydrogen for
 /// each unit of bond valence it loses to unselected neighbors, as deleting
@@ -25,7 +31,7 @@ pub(super) struct ComponentDefinition {
 pub(super) fn build_component_definitions<E, L: SlotLiveness>(
     source_molecule: &Graph<L>,
     source_properties: &MoleculeProperties,
-    selected_local: &BTreeSet<AtomId>,
+    selected: &[bool],
     class: Option<(super::MoleculeClass, bool)>,
     builder: &mut TopologyBuilder,
 ) -> Result<Vec<ComponentDefinition>, E>
@@ -35,15 +41,20 @@ where
         + From<PropertyError>
         + From<super::TopologyBuildError>,
 {
-    let whole_instance_selected = selected_local.len() == source_molecule.atom_count()
-        && source_molecule.connected_components().len() == 1;
+    debug_assert_eq!(selected.len(), source_molecule.atom_slot_count());
+    let is_selected = |atom: AtomId| selected.get(atom.index()).copied().unwrap_or(false);
     let mut definitions = Vec::new();
-    let mut visited = BTreeSet::new();
+    let mut visited = vec![false; source_molecule.atom_slot_count()];
     let mut components = Vec::new();
-    let mut local_atoms = BTreeMap::new();
-    let mut local_bonds = BTreeMap::new();
+    let mut local_atoms = vec![None; source_molecule.atom_slot_count()];
+    let mut local_bonds = vec![None; source_molecule.bond_slot_count()];
+    let mut selected_count = 0;
     for seed in source_molecule.atom_ids() {
-        if !selected_local.contains(&seed) || !visited.insert(seed) {
+        if !is_selected(seed) {
+            continue;
+        }
+        selected_count += 1;
+        if std::mem::replace(&mut visited[seed.index()], true) {
             continue;
         }
         let mut queue = VecDeque::from([seed]);
@@ -51,7 +62,8 @@ where
         while let Some(atom) = queue.pop_front() {
             component.push(atom);
             for neighbor in source_molecule.require_neighbors(atom)? {
-                if selected_local.contains(&neighbor) && visited.insert(neighbor) {
+                if is_selected(neighbor) && !std::mem::replace(&mut visited[neighbor.index()], true)
+                {
                     queue.push_back(neighbor);
                 }
             }
@@ -60,7 +72,7 @@ where
         let mut editor = MoleculeEditor::new();
         for &atom in &component {
             let mut value = source_molecule.require_atom(atom)?.clone();
-            let (before, after) = cut_valence(source_molecule, selected_local, atom)?;
+            let (before, after) = cut_valence(source_molecule, &is_selected, atom)?;
             let settled = settle(&value, 0, before, after)
                 .map_err(|count| MoleculeError::HydrogenCountOverflow { atom, count })?;
             if let Some(settled) = settled {
@@ -68,7 +80,7 @@ where
                 value.radical = settled.radical;
             }
             let target_atom = editor.add_atom(value)?;
-            local_atoms.insert(atom, (components.len(), target_atom));
+            local_atoms[atom.index()] = Some((components.len(), target_atom));
         }
         components.push(ComponentDraft {
             editor,
@@ -76,29 +88,32 @@ where
             source_bonds: Vec::new(),
         });
     }
+    // Every atom selected, in one component: the whole connected instance.
+    let whole_instance_selected =
+        selected_count == source_molecule.atom_count() && components.len() == 1;
 
     // Scan source bonds and stereo once for all components, rather than
     // scanning or cloning the whole source molecule for every fragment.
     for (source_bond, bond) in source_molecule.bonds() {
-        let (Some(&(component, a)), Some(&(other_component, b))) =
-            (local_atoms.get(&bond.a()), local_atoms.get(&bond.b()))
+        let (Some((component, a)), Some((other_component, b))) =
+            (local_atoms[bond.a().index()], local_atoms[bond.b().index()])
         else {
             continue;
         };
         debug_assert_eq!(component, other_component);
         let target_bond = components[component].editor.add_bond(a, b, bond.order)?;
         components[component].source_bonds.push(source_bond);
-        local_bonds.insert(source_bond, (component, target_bond));
+        local_bonds[source_bond.index()] = Some((component, target_bond));
     }
     let mut local_stereo = BTreeMap::new();
     // A cut protium of an atom whose capped count is exactly one is that
     // implicit hydrogen.
     let capped_hydrogen = |focus: AtomId, carrier: AtomId| {
-        !selected_local.contains(&carrier)
+        !is_selected(carrier)
             && source_molecule.atom(carrier).is_some_and(|atom| {
                 atom.element.atomic_number() == 1 && atom.isotope.is_none_or(|mass| mass.get() == 1)
             })
-            && local_atoms.get(&focus).is_some_and(|&(component, target)| {
+            && local_of(&local_atoms, focus.index()).is_some_and(|(component, target)| {
                 components[component]
                     .editor
                     .graph()
@@ -187,17 +202,23 @@ struct ComponentDraft {
     source_bonds: Vec<BondId>,
 }
 
-/// `atom`'s bond valence in `molecule`, and within `selected`.
+/// The component and local ID of the source atom or bond in slot `index`.
+fn local_of<Id: Copy>(ids: &LocalIds<Id>, index: usize) -> Option<(usize, Id)> {
+    ids.get(index).copied().flatten()
+}
+
+/// `atom`'s bond valence in `molecule`, and within the atoms `selected`
+/// accepts.
 fn cut_valence<L: SlotLiveness>(
     molecule: &Graph<L>,
-    selected: &BTreeSet<AtomId>,
+    selected: &dyn Fn(AtomId) -> bool,
     atom: AtomId,
 ) -> Result<(usize, usize), MoleculeError> {
     let mut before = 0;
     let mut after = 0;
     for (_, bond) in molecule.require_incident_bonds(atom)? {
         before += bond_valence(bond.order);
-        if selected.contains(&bond.other_atom(atom)) {
+        if selected(bond.other_atom(atom)) {
             after += bond_valence(bond.order);
         }
     }
@@ -210,24 +231,22 @@ fn cut_valence<L: SlotLiveness>(
 // says replaces it.
 fn remap_subset_stereo(
     element: &StereoElement,
-    atoms: &BTreeMap<AtomId, (usize, AtomId)>,
-    bonds: &BTreeMap<BondId, (usize, BondId)>,
+    atoms: &LocalIds<AtomId>,
+    bonds: &LocalIds<BondId>,
     capped_hydrogen: &dyn Fn(AtomId, AtomId) -> bool,
 ) -> Option<(usize, StereoElement)> {
     let component = match &element.kind {
-        StereoElementKind::Tetrahedral(stereo) => atoms.get(&stereo.center)?.0,
-        StereoElementKind::DoubleBond(stereo) => bonds.get(&stereo.bond)?.0,
-        StereoElementKind::Axis(stereo) => bonds.get(&stereo.axis)?.0,
+        StereoElementKind::Tetrahedral(stereo) => local_of(atoms, stereo.center.index())?.0,
+        StereoElementKind::DoubleBond(stereo) => local_of(bonds, stereo.bond.index())?.0,
+        StereoElementKind::Axis(stereo) => local_of(bonds, stereo.axis.index())?.0,
     };
-    let atom = |source| {
-        atoms
-            .get(&source)
-            .and_then(|&(owner, target)| (owner == component).then_some(target))
+    let atom = |source: AtomId| {
+        local_of(atoms, source.index())
+            .and_then(|(owner, target)| (owner == component).then_some(target))
     };
-    let bond = |source| {
-        bonds
-            .get(&source)
-            .and_then(|&(owner, target)| (owner == component).then_some(target))
+    let bond = |source: BondId| {
+        local_of(bonds, source.index())
+            .and_then(|(owner, target)| (owner == component).then_some(target))
     };
     let carrier = |focus: AtomId, source| match source {
         StereoCarrier::Atom(source) if capped_hydrogen(focus, source) => {

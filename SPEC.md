@@ -166,7 +166,8 @@ treating unfinished work as a tie.
 Perception runs once per reusable definition and publishes atomically: a
 definition whose installed default perception is unchanged since perception
 installed it is shared rather than perceived again, so perceiving after an edit
-costs the definitions the edit changed. Perceiving a structure or structure set
+costs the definitions the edit changed, which a run's executor perceives in
+parallel with the one-thread result. Perceiving a structure or structure set
 installs a new topology snapshot that keeps the source's layout identity, so
 selections, prepared potentials, and streaming bindings stay usable. Failure
 leaves all definitions and geometry state intact.

@@ -366,6 +366,18 @@ impl Hierarchy {
         self.metadata.row(self.site_metadata[site.index()])
     }
 
+    /// Each residue's labels, by residue index, for another hierarchy to
+    /// take ([`SharedRows::rows_for`]).
+    pub(crate) fn residue_labels_to_take(&self) -> Vec<SharedRow<ResidueLabels>> {
+        self.labels.rows_for(&self.residue_labels)
+    }
+
+    /// Each site's metadata, by site index, for another hierarchy to take
+    /// ([`SharedRows::rows_for`]).
+    pub(crate) fn site_metadata_to_take(&self) -> Vec<SharedRow<AtomSiteMetadata>> {
+        self.metadata.rows_for(&self.site_metadata)
+    }
+
     /// Every placed atom with its site, in qualified atom order.
     pub(crate) fn atom_lookup_entries(&self) -> Vec<(InstanceAtomId, AtomSiteId)> {
         let mut entries = self

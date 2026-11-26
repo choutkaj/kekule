@@ -779,6 +779,15 @@ the main branch migrates by the table under "From the SampleSet API".
   does. GROMACS reads only the lower triangle of the box. All three writers
   take elements above the diagonal within a billionth of the longest
   vector, such as a fit's rounding, as zeros.
+- `Topology::perceived_with`, and `perceive_with` on structures and structure
+  sets, perceive the definitions on the run's executor in parallel. The
+  result, the error and a panic are those of one thread, except that a
+  cancellation names one of the definitions being perceived.
+- Edits publish faster, with the same result. The fragments of a split
+  molecule are built over per-atom arrays, and `StructureEditor::finish`
+  skips the correspondence it drops. Appended residues and sites share their
+  source's labels, or copies of them when the source's tables hold many more
+  rows. The sites a chain rename changes get their new rows in one table.
 
 ### Removed
 

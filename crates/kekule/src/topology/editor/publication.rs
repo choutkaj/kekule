@@ -537,15 +537,16 @@ impl TopologyEditor {
                     );
                 }
                 GroupChemistry::Draft(draft) => {
+                    let graph = draft.graph();
+                    let mut live = vec![false; graph.atom_slot_count()];
+                    for atom in graph.atom_ids() {
+                        live[atom.index()] = true;
+                    }
                     let components = super::super::components::build_component_definitions::<
                         TopologyEditError,
                         _,
                     >(
-                        draft.graph(),
-                        draft.properties(),
-                        &draft.atom_ids().collect(),
-                        None,
-                        &mut builder,
+                        graph, draft.properties(), &live, None, &mut builder
                     )?;
                     for component in components {
                         let atoms = component

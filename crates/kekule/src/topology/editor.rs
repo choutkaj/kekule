@@ -28,6 +28,7 @@ mod properties;
 mod publication;
 mod sharing;
 mod stereo;
+pub(crate) use publication::TopologyPublication;
 pub use publication::{DenseCorrespondence, EditCorrespondence};
 pub use stereo::PrunedStereo;
 
@@ -50,7 +51,7 @@ use crate::properties::{
 pub(crate) use append::{AppendMapping, ChainIds};
 pub use error::TopologyEditError;
 use fixed_counts::{FixedCount, ValenceChanges};
-use hierarchy::EditHierarchy;
+use hierarchy::{retargeted_site_ids, EditHierarchy};
 pub use hierarchy::{EditAtomSite, EditChain, EditResidue};
 pub use identity::{EditAtomId, EditAtomSiteId, EditBondId, EditChainId, EditResidueId};
 use overlay::{HandleBlock, Overlay};

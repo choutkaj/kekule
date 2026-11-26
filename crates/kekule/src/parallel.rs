@@ -48,8 +48,10 @@
 //! ```
 
 mod executor;
+mod failure;
 mod run;
 
 pub(crate) use executor::{map_ranges, map_weighted_ranges};
 pub use executor::{Executor, ScopedThreads};
+pub(crate) use failure::{FirstFailure, Stop};
 pub use run::{Progress, Run};

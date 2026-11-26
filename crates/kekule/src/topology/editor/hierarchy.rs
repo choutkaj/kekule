@@ -348,6 +348,22 @@ impl TopologyEditor {
         author_seq: Option<String>,
         insertion: Option<String>,
     ) -> Result<EditResidueId, TopologyEditError> {
+        self.insert_residue(
+            chain,
+            SharedRow::new(ResidueLabels::new(
+                name.into(),
+                label_seq,
+                author_seq,
+                insertion,
+            )),
+        )
+    }
+    /// [`Self::add_residue`] with its labels as a shared row.
+    pub(super) fn insert_residue(
+        &mut self,
+        chain: EditChainId,
+        labels: SharedRow<ResidueLabels>,
+    ) -> Result<EditResidueId, TopologyEditError> {
         self.require_chain(chain)?;
         let id = EditResidueId::new();
         let slot = self.properties.residues().len();
@@ -355,12 +371,7 @@ impl TopologyEditor {
             id,
             EditResidue {
                 chain,
-                labels: SharedRow::new(ResidueLabels::new(
-                    name.into(),
-                    label_seq,
-                    author_seq,
-                    insertion,
-                )),
+                labels,
                 class: None,
                 class_explicit: false,
                 slot,
@@ -385,6 +396,15 @@ impl TopologyEditor {
         atom: EditAtomId,
         metadata: AtomSiteMetadata,
     ) -> Result<EditAtomSiteId, TopologyEditError> {
+        self.insert_atom_site(residue, atom, SharedRow::new(metadata))
+    }
+    /// [`Self::add_atom_site`] with its metadata as a shared row.
+    pub(super) fn insert_atom_site(
+        &mut self,
+        residue: EditResidueId,
+        atom: EditAtomId,
+        metadata: SharedRow<AtomSiteMetadata>,
+    ) -> Result<EditAtomSiteId, TopologyEditError> {
         self.require_residue(residue)?;
         self.atom_location(atom)?;
         if self.site_of_atom(atom).is_some() {
@@ -397,7 +417,7 @@ impl TopologyEditor {
             EditAtomSite {
                 residue,
                 atom,
-                metadata: SharedRow::new(metadata),
+                metadata,
                 slot,
             },
         );
@@ -514,43 +534,34 @@ impl TopologyEditor {
         if chain.label == label && chain.author == author {
             return Ok(());
         }
-        let new = EditChain {
-            label,
-            author,
-            slot: chain.slot,
-        };
+        let old = (chain.label.as_str(), chain.author.as_deref());
+        let mut retargeted = Vec::new();
         for residue in self.chain_residues(id) {
             for atom in self.residue_atom_list(residue) {
                 if let Some(site) = self.site_of_atom(atom) {
-                    self.retarget_site_chain(site, &chain, &new)?;
+                    let metadata = self.require_atom_site(site)?.metadata;
+                    if let Some(metadata) =
+                        retargeted_site_ids(&metadata, old, (&label, author.as_deref()))
+                    {
+                        retargeted.push((site, metadata));
+                    }
                 }
             }
         }
+        self.set_site_rows(retargeted);
         let chain = self.chain_mut(id);
-        chain.label = new.label;
-        chain.author = new.author;
+        chain.label = label;
+        chain.author = author;
         self.changed();
         Ok(())
     }
-    /// Gives a site's chain identifiers that name `old` those of `new`.
-    fn retarget_site_chain(
-        &mut self,
-        id: EditAtomSiteId,
-        old: &EditChain,
-        new: &EditChain,
-    ) -> Result<(), TopologyEditError> {
-        let site = self.require_atom_site(id)?;
-        let mut metadata = (*site.metadata).clone();
-        if metadata.label_asym_id.as_deref() == Some(old.label.as_str()) {
-            metadata.label_asym_id = Some(new.label.clone());
+    /// Gives live sites new metadata, held by one table, so publication
+    /// shares rather than copies the rows.
+    pub(super) fn set_site_rows(&mut self, rows: Vec<(EditAtomSiteId, AtomSiteMetadata)>) {
+        let (sites, rows): (Vec<_>, Vec<_>) = rows.into_iter().unzip();
+        for (site, row) in sites.into_iter().zip(SharedRow::table(rows)) {
+            self.site_mut(site).metadata = row;
         }
-        if metadata.auth_asym_id.is_some() && metadata.auth_asym_id == old.author {
-            metadata.auth_asym_id = new.author.clone();
-        }
-        if metadata != *site.metadata {
-            self.site_mut(id).metadata = SharedRow::new(metadata);
-        }
-        Ok(())
     }
     /// Replaces a residue's label and author component identifiers, invalidating
     /// its inferred class.
@@ -659,7 +670,13 @@ impl TopologyEditor {
         let to = self.require_residue(residue)?.chain;
         if from != to {
             let (from, to) = (self.require_chain(from)?, self.require_chain(to)?);
-            self.retarget_site_chain(id, &from, &to)?;
+            if let Some(metadata) = retargeted_site_ids(
+                &site.metadata,
+                (&from.label, from.author.as_deref()),
+                (&to.label, to.author.as_deref()),
+            ) {
+                self.site_mut(id).metadata = SharedRow::new(metadata);
+            }
         }
         self.site_mut(id).residue = residue;
         let atom = site.atom;
@@ -889,4 +906,26 @@ impl TopologyEditor {
             ..EditHierarchy::default()
         };
     }
+}
+
+/// `metadata` with the chain identifiers that name the `old` label and
+/// author those of `new`, or `None` when that changes nothing.
+pub(super) fn retargeted_site_ids(
+    metadata: &AtomSiteMetadata,
+    old: (&str, Option<&str>),
+    new: (&str, Option<&str>),
+) -> Option<AtomSiteMetadata> {
+    let label = metadata.label_asym_id.as_deref() == Some(old.0);
+    let author = metadata.auth_asym_id.is_some() && metadata.auth_asym_id.as_deref() == old.1;
+    if !label && !author {
+        return None;
+    }
+    let mut retargeted = metadata.clone();
+    if label {
+        retargeted.label_asym_id = Some(new.0.to_owned());
+    }
+    if author {
+        retargeted.auth_asym_id = new.1.map(str::to_owned);
+    }
+    (retargeted != *metadata).then_some(retargeted)
 }

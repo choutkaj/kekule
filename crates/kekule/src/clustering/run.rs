@@ -1,7 +1,6 @@
 //! The bookkeeping of a clustering run's cancellation and progress across
 //! work items.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, PoisonError};
 
 use crate::parallel::{Executor, Progress, Run};
@@ -88,50 +87,5 @@ impl<'r> Tracker<'r> {
             .unwrap_or_else(PoisonError::into_inner);
         *done += completed;
         self.run.report(Progress::of(*done, self.total));
-    }
-}
-
-/// The earliest failed work index of one stage, so work items past it stop:
-/// their results cannot matter once an earlier index has failed.
-pub(super) struct FirstFailure(AtomicUsize);
-
-impl FirstFailure {
-    pub(super) fn new() -> Self {
-        Self(AtomicUsize::new(usize::MAX))
-    }
-
-    pub(super) fn record(&self, index: usize) {
-        self.0.fetch_min(index, Ordering::Relaxed);
-    }
-
-    /// Whether an index before `index` has failed.
-    pub(super) fn precedes(&self, index: usize) -> bool {
-        self.0.load(Ordering::Relaxed) < index
-    }
-}
-
-/// Why a work item stopped before its last fit.
-pub(super) enum Stop {
-    /// A fit failed or cancellation was requested.
-    Error(ClusteringError),
-    /// An earlier work item's fit failed, so this item's results cannot
-    /// matter.
-    Superseded,
-}
-
-impl From<ClusteringError> for Stop {
-    fn from(error: ClusteringError) -> Self {
-        Self::Error(error)
-    }
-}
-
-impl Stop {
-    /// The error of the first stopped work item in order. A superseded item
-    /// always follows the failed one that superseded it.
-    pub(super) fn into_error(self) -> ClusteringError {
-        match self {
-            Self::Error(error) => error,
-            Self::Superseded => unreachable!("a failed work item precedes every superseded one"),
-        }
     }
 }
