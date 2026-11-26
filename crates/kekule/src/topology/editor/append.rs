@@ -15,6 +15,22 @@ pub(crate) struct AppendMapping {
 }
 
 impl TopologyEditor {
+    /// Whether [`Self::append_topology`] takes every annotation of `source`:
+    /// each table of `source` has a row per entity it copies, and no column of
+    /// the draft clashes with one of the same key in `source`.
+    pub(crate) fn accepts_properties_of(&self, source: &Topology) -> bool {
+        let rows = [
+            source.instance_count(),
+            source.atom_ids().len(),
+            source.bond_ids().len(),
+            source.chains().len(),
+            source.residues().len(),
+            source.atom_sites().len(),
+        ];
+        source.properties().validate_dimensions(rows).is_ok()
+            && self.properties.accepts_rows_of(source.properties())
+    }
+
     /// The coordinating structure operation owns rollback. Source identity is
     /// local to this import, separate from the editor's original source
     /// correspondence. `chain_ids` gives each source chain's label and author

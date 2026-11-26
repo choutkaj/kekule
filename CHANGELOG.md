@@ -1135,6 +1135,9 @@ the main branch migrates by the table under "From the SampleSet API".
   `12.345(3)` parse.
 - The PDB writer lists a polymer link stretched beyond bonding distance in
   any geometry as `CONECT`.
+- Appending structures one after another to a `StructureEditor` no longer
+  takes time quadratic in the draft's size: an append whose property columns
+  cannot clash with the draft's runs in place, without a copy.
 
 ### From the SampleSet API
 
