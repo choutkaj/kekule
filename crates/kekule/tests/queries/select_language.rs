@@ -78,6 +78,21 @@ fn canonical_printing_normalizes_and_round_trips() {
         ("property tag a-b", "property tag a-b"),
         ("property q 1-2 e", "property q 1 e to 2 e"),
         ("property q -1 to 2 e", "property q -1 e to 2 e"),
+        // Text that would read back as a range or a unit stays quoted.
+        ("property tag \"1-2\"", "property tag \"1-2\""),
+        (
+            "property tag '-1-2' \"1--2\" \"1-2e-3\"",
+            "property tag \"-1-2\" \"1--2\" \"1-2e-3\"",
+        ),
+        ("property tag 1-2e 1e-5", "property tag 1-2e 1e-5"),
+        ("property label 5 \"K\"", "property label 5 \"K\""),
+        ("property label 1-2 \"Da\"", "property label 1 to 2 \"Da\""),
+        (
+            "property label 5 'A' \"Å\" \"kJ/mol\" \"kcal/mol\"",
+            "property label 5 \"A\" \"Å\" \"kJ/mol\" \"kcal/mol\"",
+        ),
+        ("property label 5 K K", "property label 5 K \"K\""),
+        ("property label == \"K\"", "property label == \"K\""),
         ("resclass amino_acid dna", "resclass amino_acid dna"),
         ("molclass small_molecule", "molclass small_molecule"),
         (
@@ -144,6 +159,14 @@ fn parse_errors_are_typed_and_located() {
         .is_err());
     assert!(SelectParseOptions::default()
         .with_host_keywords(["two words"])
+        .is_err());
+    // Values print bare unless they are lower-case words, so a host keyword
+    // with an upper-case letter or a digit could read back as a value.
+    assert!(SelectParseOptions::default()
+        .with_host_keywords(["Shown"])
+        .is_err());
+    assert!(SelectParseOptions::default()
+        .with_host_keywords(["set2"])
         .is_err());
 }
 
