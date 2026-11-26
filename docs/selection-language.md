@@ -107,8 +107,8 @@ of a MOL/SDF synthetic hierarchy, matches on its label identifier. The
 | `protein` | Atoms of protein molecules | `protein` |
 | `nucleic` | Atoms of DNA and RNA molecules | `nucleic` |
 | `water`, `ion`, `ligand` | Atoms of water, ion, and small-molecule molecules | `ligand` |
-| `backbone` | `N CA C O` of amino-acid residues in proteins; `P OP1 OP2 OP3 O1P O2P O5' C5' C4' C3' O3'` of nucleotides | `backbone` |
-| `sidechain` | Atoms of amino-acid residues in proteins that are neither backbone nor `OXT`, nor hydrogens bonded to those | `sidechain and heavy` |
+| `backbone` | `N CA C O` of amino-acid residues in proteins, with a C terminus's `O` also as CHARMM's `OT1` and GROMACS's `OC1`; `P OP1 OP2 OP3 O1P O2P O5' C5' C4' C3' O3'` of nucleotides | `backbone` |
+| `sidechain` | Atoms of amino-acid residues in proteins that are neither backbone nor `OXT` (`OT2`, `OC2`), nor hydrogens bonded to those | `sidechain and heavy` |
 
 Residue classes are `amino_acid`, `dna`, `rna`, `carbohydrate`, `water`,
 `ion`, and `other`. Molecule classes are `protein`, `dna`, `rna`,
