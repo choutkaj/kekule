@@ -7,7 +7,7 @@ mod atom_site;
 mod build;
 mod connections;
 pub(super) mod connectivity;
-mod disulfides;
+pub(super) mod disulfides;
 mod follow_edit;
 pub(crate) use connections::is_metal;
 mod mmcif;
