@@ -171,6 +171,14 @@ fn unrepresentable(message: impl Into<String>) -> FormatError {
     FormatError::write(Format::Native, DiagnosticKind::Unsupported, message)
 }
 
+/// The stored length of `value`, which must be below [`ABSENT_STRING`].
+fn string_length(value: &str) -> Result<u32> {
+    u32::try_from(value.len())
+        .ok()
+        .filter(|&len| len != ABSENT_STRING)
+        .ok_or_else(|| unrepresentable("A string is too long for the native format."))
+}
+
 type Result<T = ()> = std::result::Result<T, FormatError>;
 
 impl<W: Write> Encoder<'_, W> {
@@ -195,6 +203,23 @@ impl<W: Write> Encoder<'_, W> {
                 .map_err(|error| FormatError::sink(Format::Native, error));
         }
         self.buffer.extend_from_slice(bytes);
+        Ok(())
+    }
+
+    /// Writes one record of `N` bytes.
+    fn record<const N: usize>(&mut self, record: [u8; N]) -> Result {
+        if self.buffer.len() + N > STAGE_BYTES {
+            self.flush_stage()?;
+        }
+        self.buffer.extend_from_slice(&record);
+        Ok(())
+    }
+
+    /// Writes each record of `records` in order.
+    fn records<const N: usize>(&mut self, records: impl IntoIterator<Item = [u8; N]>) -> Result {
+        for record in records {
+            self.record(record)?;
+        }
         Ok(())
     }
 
@@ -240,12 +265,7 @@ impl<W: Write> Encoder<'_, W> {
     }
 
     fn str(&mut self, value: &str) -> Result {
-        if u32::try_from(value.len()).map_or(true, |len| len == ABSENT_STRING) {
-            return Err(unrepresentable(
-                "A string is too long for the native format.",
-            ));
-        }
-        self.count(value.len())?;
+        self.u32(string_length(value)?)?;
         self.bytes(value.as_bytes())
     }
 
@@ -281,17 +301,8 @@ impl<W: Write> Encoder<'_, W> {
         values: impl Fn() -> I,
     ) -> Result {
         for value in values() {
-            match value {
-                Some(value) => {
-                    if u32::try_from(value.len()).map_or(true, |len| len == ABSENT_STRING) {
-                        return Err(unrepresentable(
-                            "A string is too long for the native format.",
-                        ));
-                    }
-                    self.count(value.len())?;
-                }
-                None => self.u32(ABSENT_STRING)?,
-            }
+            let length = value.map_or(Ok(ABSENT_STRING), string_length)?;
+            self.record(length.to_le_bytes())?;
         }
         for value in values().flatten() {
             self.bytes(value.as_bytes())?;
@@ -307,18 +318,12 @@ impl<W: Write> Encoder<'_, W> {
         for list in lists() {
             self.count(list.len())?;
         }
-        for id in lists().flatten() {
-            self.u32(id)?;
-        }
-        Ok(())
+        self.records(lists().flatten().map(u32::to_le_bytes))
     }
 
     fn ids(&mut self, ids: impl ExactSizeIterator<Item = u32>) -> Result {
         self.count(ids.len())?;
-        for id in ids {
-            self.u32(id)?;
-        }
-        Ok(())
+        self.records(ids.map(u32::to_le_bytes))
     }
 
     fn header(&mut self, kind: NativeKind) -> Result {
@@ -647,34 +652,62 @@ impl<W: Write> Encoder<'_, W> {
         self.strings(|| chains().map(|chain| Some(chain.label_id())))?;
         self.strings(|| chains().map(|chain| chain.author_id()))?;
         self.lists(|| chains().map(|chain| chain.residues().map(|residue| residue.id().raw())))?;
-        let residues = || topology.residues();
-        self.count(residues().len())?;
-        self.strings(|| residues().map(|residue| Some(residue.name())))?;
-        self.strings(|| residues().map(|residue| residue.label_comp_id()))?;
-        self.strings(|| residues().map(|residue| residue.author_comp_id()))?;
-        self.bits(residues().map(|residue| residue.label_seq_id().is_some()))?;
-        for sequence in residues().filter_map(|residue| residue.label_seq_id()) {
-            self.i32(sequence)?;
-        }
-        self.strings(|| residues().map(|residue| residue.author_seq_id()))?;
-        self.strings(|| residues().map(|residue| residue.insertion_code()))?;
-        for residue in residues() {
-            self.u8(residue_class_code(residue.class()))?;
-        }
-        self.bits(residues().map(|residue| residue.class_assignment().is_explicit()))?;
-        self.lists(|| residues().map(|residue| residue.atom_sites().map(|site| site.id().raw())))?;
-        let sites = || topology.atom_sites();
-        self.count(sites().len())?;
-        for site in sites() {
-            let atom = site.atom().id();
-            self.u32(atom.instance().raw())?;
-            self.u32(atom.atom().raw())?;
-        }
-        self.strings(|| sites().map(|site| site.metadata().type_symbol()))?;
-        self.strings(|| sites().map(|site| site.metadata().label_asym_id()))?;
-        self.strings(|| sites().map(|site| site.metadata().auth_asym_id()))?;
-        self.strings(|| sites().map(|site| site.metadata().label_atom_id()))?;
-        self.strings(|| sites().map(|site| site.metadata().auth_atom_id()))?;
+        // Each node's labels are found once, not once per column.
+        let hierarchy = topology.hierarchy();
+        let labels = hierarchy
+            .residue_ids()
+            .map(|residue| hierarchy.residue_labels(residue))
+            .collect::<Vec<_>>();
+        self.count(labels.len())?;
+        self.strings(|| labels.iter().map(|row| Some(row.name())))?;
+        self.strings(|| labels.iter().map(|row| row.label_comp_id()))?;
+        self.strings(|| labels.iter().map(|row| row.author_comp_id()))?;
+        self.bits(labels.iter().map(|row| row.label_seq_id().is_some()))?;
+        self.records(
+            labels
+                .iter()
+                .filter_map(|row| row.label_seq_id())
+                .map(i32::to_le_bytes),
+        )?;
+        self.strings(|| labels.iter().map(|row| row.author_seq_id()))?;
+        self.strings(|| labels.iter().map(|row| row.insertion_code()))?;
+        self.records(
+            hierarchy
+                .residue_ids()
+                .map(|residue| [residue_class_code(hierarchy.residue_class(residue))]),
+        )?;
+        self.bits(
+            hierarchy
+                .residue_ids()
+                .map(|residue| hierarchy.explicit_residue_class(residue).is_some()),
+        )?;
+        self.lists(|| {
+            hierarchy.residue_ids().map(|residue| {
+                hierarchy
+                    .residue_sites(residue)
+                    .iter()
+                    .map(|site| site.raw())
+            })
+        })?;
+        let atoms = hierarchy.site_atom_ids();
+        self.count(atoms.len())?;
+        self.records(atoms.iter().map(|atom| {
+            let mut record = [0; 8];
+            record[..4].copy_from_slice(&atom.instance().raw().to_le_bytes());
+            record[4..].copy_from_slice(&atom.atom().raw().to_le_bytes());
+            record
+        }))?;
+        let rows = hierarchy.metadata_rows();
+        let metadata = hierarchy
+            .site_metadata_keys()
+            .iter()
+            .map(|&key| rows.get(key))
+            .collect::<Vec<_>>();
+        self.strings(|| metadata.iter().map(|row| row.type_symbol()))?;
+        self.strings(|| metadata.iter().map(|row| row.label_asym_id()))?;
+        self.strings(|| metadata.iter().map(|row| row.auth_asym_id()))?;
+        self.strings(|| metadata.iter().map(|row| row.label_atom_id()))?;
+        self.strings(|| metadata.iter().map(|row| row.auth_atom_id()))?;
         let properties = topology.properties();
         self.owner(properties.owner())?;
         self.table(properties.molecule_instances())?;
@@ -688,21 +721,15 @@ impl<W: Write> Encoder<'_, W> {
     // Structures.
 
     fn points(&mut self, points: &[Point3]) -> Result {
-        for point in points {
-            self.f64(point.x)?;
-            self.f64(point.y)?;
-            self.f64(point.z)?;
-        }
-        Ok(())
+        self.records(points.iter().map(|point| xyz(point.x, point.y, point.z)))
     }
 
     fn vectors(&mut self, vectors: &[Vector3]) -> Result {
-        for vector in vectors {
-            self.f64(vector.x)?;
-            self.f64(vector.y)?;
-            self.f64(vector.z)?;
-        }
-        Ok(())
+        self.records(
+            vectors
+                .iter()
+                .map(|vector| xyz(vector.x, vector.y, vector.z)),
+        )
     }
 
     fn cell(&mut self, cell: Option<&PeriodicCell>) -> Result {
@@ -721,10 +748,7 @@ impl<W: Write> Encoder<'_, W> {
         };
         self.u8(1)?;
         self.bits(values.iter().map(Option::is_some))?;
-        for value in values.iter().flatten() {
-            self.f64(*value)?;
-        }
-        Ok(())
+        self.records(values.iter().flatten().map(|value| value.to_le_bytes()))
     }
 
     fn geometry_properties(&mut self, properties: &GeometryProperties) -> Result {
@@ -934,6 +958,15 @@ pub(super) const BASE_DIMENSIONS: [BaseDimension; 7] = [
     BaseDimension::Charge,
     BaseDimension::Angle,
 ];
+
+/// Three coordinates as one record.
+fn xyz(x: f64, y: f64, z: f64) -> [u8; 24] {
+    let mut record = [0; 24];
+    record[..8].copy_from_slice(&x.to_le_bytes());
+    record[8..16].copy_from_slice(&y.to_le_bytes());
+    record[16..].copy_from_slice(&z.to_le_bytes());
+    record
+}
 
 fn radical_codes(radical: AtomRadical) -> (u8, u8) {
     (
