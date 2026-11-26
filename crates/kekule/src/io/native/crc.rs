@@ -1,12 +1,15 @@
 //! CRC-32 (IEEE 802.3, reflected polynomial `0xEDB88320`), as used by zlib
-//! and PNG, computed eight bytes at a time.
+//! and PNG, computed sixteen bytes at a time.
 
 const POLYNOMIAL: u32 = 0xEDB8_8320;
 
-const TABLES: [[u32; 256]; 8] = tables();
+/// Bytes the CRC takes per step, one table each.
+const SLICES: usize = 16;
 
-const fn tables() -> [[u32; 256]; 8] {
-    let mut tables = [[0u32; 256]; 8];
+const TABLES: [[u32; 256]; SLICES] = tables();
+
+const fn tables() -> [[u32; 256]; SLICES] {
+    let mut tables = [[0u32; 256]; SLICES];
     let mut byte = 0;
     while byte < 256 {
         let mut crc = byte as u32;
@@ -23,7 +26,7 @@ const fn tables() -> [[u32; 256]; 8] {
         byte += 1;
     }
     let mut table = 1;
-    while table < 8 {
+    while table < SLICES {
         let mut byte = 0;
         while byte < 256 {
             let previous = tables[table - 1][byte];
@@ -44,21 +47,30 @@ impl Crc32 {
         Self(!0)
     }
 
-    pub(super) fn update(&mut self, mut bytes: &[u8]) {
+    pub(super) fn update(&mut self, bytes: &[u8]) {
         let mut crc = self.0;
-        while let Some((chunk, rest)) = bytes.split_first_chunk::<8>() {
+        let (chunks, rest) = bytes.as_chunks::<SLICES>();
+        for chunk in chunks {
             let low = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]) ^ crc;
-            crc = TABLES[7][(low & 0xFF) as usize]
-                ^ TABLES[6][((low >> 8) & 0xFF) as usize]
-                ^ TABLES[5][((low >> 16) & 0xFF) as usize]
-                ^ TABLES[4][(low >> 24) as usize]
-                ^ TABLES[3][chunk[4] as usize]
-                ^ TABLES[2][chunk[5] as usize]
-                ^ TABLES[1][chunk[6] as usize]
-                ^ TABLES[0][chunk[7] as usize];
-            bytes = rest;
+            // Byte `i` of the chunk moves `SLICES - 1 - i` bytes further.
+            crc = TABLES[15][(low & 0xFF) as usize]
+                ^ TABLES[14][((low >> 8) & 0xFF) as usize]
+                ^ TABLES[13][((low >> 16) & 0xFF) as usize]
+                ^ TABLES[12][(low >> 24) as usize]
+                ^ TABLES[11][chunk[4] as usize]
+                ^ TABLES[10][chunk[5] as usize]
+                ^ TABLES[9][chunk[6] as usize]
+                ^ TABLES[8][chunk[7] as usize]
+                ^ TABLES[7][chunk[8] as usize]
+                ^ TABLES[6][chunk[9] as usize]
+                ^ TABLES[5][chunk[10] as usize]
+                ^ TABLES[4][chunk[11] as usize]
+                ^ TABLES[3][chunk[12] as usize]
+                ^ TABLES[2][chunk[13] as usize]
+                ^ TABLES[1][chunk[14] as usize]
+                ^ TABLES[0][chunk[15] as usize];
         }
-        for &byte in bytes {
+        for &byte in rest {
             crc = (crc >> 8) ^ TABLES[0][((crc ^ u32::from(byte)) & 0xFF) as usize];
         }
         self.0 = crc;
