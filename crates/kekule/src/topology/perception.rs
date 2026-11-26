@@ -1,9 +1,11 @@
+use std::any::Any;
 use std::fmt;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::panic::{self, AssertUnwindSafe};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use crate::algorithms::{perceive_molecule_with, PerceptionError};
-use crate::parallel::{map_weighted_ranges, Progress, Run};
+use crate::diagnostics::Cancellation;
+use crate::parallel::{map_weighted_ranges, FirstFailure, Progress, Run, Stop};
 
 use crate::molecule::perception::PerceptionWarning;
 use crate::molecule::Molecule;
@@ -37,7 +39,8 @@ impl std::error::Error for TopologyPerceptionError {
 impl Topology {
     /// Returns a new snapshot with the default molecular perception profile.
     ///
-    /// Each reusable definition is perceived once, in definition order, using
+    /// Each reusable definition is perceived once, and the result equals
+    /// perceiving them in definition order, using
     /// [`crate::molecule::Molecule::perceive`]: RDKit-like valence and implicit
     /// hydrogens, the default deterministic ring set, and RDKit-like aromaticity.
     /// Existing perception is recomputed and dependent CIP state is cleared,
@@ -73,11 +76,11 @@ impl Topology {
 
     /// [`Self::perceived`] under a [`Run`]. Definitions are independent, so
     /// the run's executor perceives them in parallel, in work items of about
-    /// equal atom counts; the result, and the error, are those of the calling
-    /// thread alone. Its cancellation is polled between definitions and
-    /// inside each, as [`Molecule::perceive_with`] polls it. Progress counts
-    /// the definitions done, of the definition count; the shared ones count
-    /// first.
+    /// equal atom counts. The result, the error, and a panic are those of
+    /// perceiving them in definition order on the calling thread. Its
+    /// cancellation is polled between definitions and inside each, as
+    /// [`Molecule::perceive_with`] polls it. Progress counts the definitions
+    /// done, of the definition count; the shared ones count first.
     ///
     /// # Errors
     ///
@@ -149,27 +152,30 @@ impl Topology {
     }
 }
 
+/// How perceiving one definition failed.
+enum Failure {
+    Error(TopologyPerceptionError),
+    /// A panic, resumed on the calling thread.
+    Panic(Box<dyn Any + Send>),
+}
+
 /// Perceives `pending` on `run`'s executor and returns their molecules in
 /// order. Each work item, a contiguous range of about equal atom count,
-/// stops at its first failure, or once an earlier definition has failed, so
-/// the first failure in range order is the first in definition order, as on
-/// one thread. Progress counts on from `done` definitions.
+/// stops at its first failure or panic. Once a definition has failed, the
+/// later ones stop too, partway through perception, and their outcomes do
+/// not count. The first failure in range order is then the first in
+/// definition order, as on one thread. Progress counts on from `done`
+/// definitions.
 fn perceive_definitions(
     pending: &[&MoleculeDefinition],
     run: Run<'_>,
     done: usize,
 ) -> Result<Vec<Arc<Molecule>>, TopologyPerceptionError> {
-    // Each definition polls the cancellation; only the topology reports
-    // progress.
-    let inner = match run.cancellation() {
-        Some(cancellation) => Run::new().with_cancellation(cancellation),
-        None => Run::new(),
-    };
     let total = done + pending.len();
     // Counting and reporting under one lock keeps calls one at a time and
     // their counts nondecreasing.
     let completed = Mutex::new(done);
-    let first_failure = AtomicUsize::new(usize::MAX);
+    let failure = Arc::new(FirstFailure::new());
     let weights = pending
         .iter()
         .map(|definition| definition.molecule.atom_count())
@@ -177,20 +183,44 @@ fn perceive_definitions(
     let ranges = map_weighted_ranges(run.executor(), &weights, |range| {
         let mut molecules = Vec::with_capacity(range.len());
         for position in range {
-            if first_failure.load(Ordering::Relaxed) < position {
-                // An earlier failure is the error, whatever this range holds.
-                return Err(None);
+            if failure.precedes(position) {
+                return Err(Stop::Superseded);
             }
             let definition = pending[position];
-            let mut molecule = Molecule::clone(&definition.molecule);
-            if let Err(source) = perceive_molecule_with(&mut molecule, inner) {
-                first_failure.fetch_min(position, Ordering::Relaxed);
-                return Err(Some(TopologyPerceptionError {
+            // A definition stops once the run is cancelled or an earlier one
+            // has failed; only the topology reports progress.
+            let cancellation = {
+                let (failure, run) = (Arc::clone(&failure), run.cancellation().cloned());
+                Cancellation::new(move || {
+                    failure.precedes(position)
+                        || run.as_ref().is_some_and(Cancellation::is_cancelled)
+                })
+            };
+            let perceived = panic::catch_unwind(AssertUnwindSafe(|| {
+                let mut molecule = Molecule::clone(&definition.molecule);
+                perceive_molecule_with(&mut molecule, Run::new().with_cancellation(&cancellation))
+                    .map(|()| molecule)
+            }));
+            let failed = match perceived {
+                Ok(Ok(molecule)) => {
+                    molecules.push(Arc::new(molecule));
+                    None
+                }
+                Ok(Err(source)) => Some(Failure::Error(TopologyPerceptionError {
                     definition: definition.id,
                     source,
-                }));
+                })),
+                Err(panic) => Some(Failure::Panic(panic)),
+            };
+            if let Some(failed) = failed {
+                // After an earlier failure, this one cannot matter, whether
+                // the earlier one stopped it or not.
+                if failure.precedes(position) {
+                    return Err(Stop::Superseded);
+                }
+                failure.record(position);
+                return Err(Stop::Error(failed));
             }
-            molecules.push(Arc::new(molecule));
             if run.reports_progress() {
                 let mut completed = completed.lock().unwrap_or_else(PoisonError::into_inner);
                 *completed += 1;
@@ -204,9 +234,10 @@ fn perceive_definitions(
     });
     let mut molecules = Vec::with_capacity(pending.len());
     for range in ranges {
-        match range {
+        match range.map_err(Stop::into_error) {
             Ok(range) => molecules.extend(range),
-            Err(error) => return Err(error.expect("a stopped range follows a failed one")),
+            Err(Failure::Error(error)) => return Err(error),
+            Err(Failure::Panic(panic)) => panic::resume_unwind(panic),
         }
     }
     Ok(molecules)

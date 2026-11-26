@@ -6,7 +6,7 @@ use crate::alignment::{
 };
 use crate::fixed_u32_id::FixedId;
 use crate::math::Point3;
-use crate::parallel::map_ranges;
+use crate::parallel::{map_ranges, FirstFailure, Stop};
 use crate::structure::{
     visit_geometry, Ensemble, GeometryStorage, Partition, Samples, StructureSet, StructureSetRead,
 };
@@ -14,7 +14,7 @@ use crate::topology::TopologyAtomIndex;
 use crate::units::{Quantity, CANONICAL_LENGTH_UNIT};
 
 use super::driver::{sample_index, undirected, Clustered};
-use super::run::{FirstFailure, Stop, Tracker};
+use super::run::Tracker;
 use super::ClusteringError;
 use crate::parallel::Run;
 

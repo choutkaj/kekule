@@ -590,18 +590,10 @@ fn cancellable_perception_stops_once_cancellation_is_requested() {
     assert_default_perception(perceived.topology());
 }
 
-/// Perception on several threads gives what one thread gives: every
-/// definition's chemistry, perception and properties, in definition order,
-/// progress counts that never fall, and the first failing definition.
-#[test]
-fn perception_on_several_threads_equals_one_thread() {
-    use kekule::parallel::{Progress, ScopedThreads};
-    use std::num::NonZeroUsize;
-    use std::sync::Mutex;
-
-    // Deleting every glycine of perceived adenylate kinase cuts its chains
-    // into fragments, each a definition to perceive, beside the shared
-    // definitions of its waters and ligands.
+/// Adenylate kinase, perceived, without its glycines: its chains cut into
+/// fragments, each a definition to perceive, beside the shared definitions
+/// of its waters and ligands.
+fn glycine_free_adenylate_kinase() -> Structure {
     let mut structure = kekule::mmcif::parse_str(
         include_str!("../fixtures/mmcif/1AKE.cif"),
         Default::default(),
@@ -622,7 +614,76 @@ fn perception_on_several_threads_equals_one_thread() {
         .map(|atom| editor.topology().atom_handle(atom.id()).unwrap())
         .collect::<Vec<_>>();
     editor.delete_atoms(glycines).unwrap();
-    let topology = editor.finish().unwrap().shared_topology();
+    editor.finish().unwrap()
+}
+
+/// Twelve distinct one-atom molecules. The 6th and the 10th fail valence
+/// perception.
+fn twelve_ions_two_failing() -> Topology {
+    let overfull = |symbol: &str, hydrogens: u8| {
+        let mut editor = MoleculeEditor::new();
+        let atom = Atom::new(Element::from_symbol(symbol).unwrap())
+            .with_hydrogens(ImplicitHydrogens::Fixed(hydrogens));
+        editor.add_atom(atom).unwrap();
+        editor.finish().unwrap()
+    };
+    let mut molecules = smiles::to_molecules("C.N.O.S.[Na+].[K+].[Cl-].[Br-].[Li+].[F-]").unwrap();
+    molecules.insert(5, overfull("C", 5));
+    molecules.insert(9, overfull("N", 4));
+    assert!(molecules.iter().all(|molecule| molecule.atom_count() == 1));
+    Topology::from_molecules(molecules).unwrap()
+}
+
+/// Runs work items one at a time on the calling thread, all in order or all
+/// in reverse, so which failure comes first never depends on timing.
+struct OneAtATime {
+    reverse: bool,
+}
+
+impl kekule::parallel::Executor for OneAtATime {
+    fn parallelism(&self) -> std::num::NonZeroUsize {
+        std::num::NonZeroUsize::new(16).unwrap()
+    }
+
+    fn run(&self, count: usize, body: &(dyn Fn(usize) + Sync)) {
+        if self.reverse {
+            (0..count).rev().for_each(body);
+        } else {
+            (0..count).for_each(body);
+        }
+    }
+}
+
+/// Progress counts recorded one call at a time.
+#[derive(Default)]
+struct Counts(std::sync::Mutex<Vec<u64>>);
+
+impl Counts {
+    /// A progress callback that records the counts.
+    fn recorder(&self) -> impl Fn(kekule::parallel::Progress) + Sync + '_ {
+        move |progress| self.0.lock().unwrap().push(progress.completed())
+    }
+
+    /// The counts, after checking that they never fall.
+    fn checked(&self) -> Vec<u64> {
+        let counts = self.0.lock().unwrap().clone();
+        assert!(
+            counts.windows(2).all(|pair| pair[0] <= pair[1]),
+            "{counts:?}"
+        );
+        counts
+    }
+}
+
+/// Perception on several threads gives what one thread gives: every
+/// definition's chemistry, perception and properties, in definition order,
+/// progress counts that never fall, and the first failing definition.
+#[test]
+fn perception_on_several_threads_equals_one_thread() {
+    use kekule::parallel::ScopedThreads;
+    use std::num::NonZeroUsize;
+
+    let topology = glycine_free_adenylate_kinase().shared_topology();
     let pending = topology
         .definitions()
         .filter(|definition| definition.molecule().perception().rings().is_none())
@@ -632,8 +693,8 @@ fn perception_on_several_threads_equals_one_thread() {
     let serial = topology.perceived().unwrap();
     for threads in [2, 3, 8] {
         let executor = ScopedThreads::new(NonZeroUsize::new(threads).unwrap());
-        let counts = Mutex::new(Vec::new());
-        let record = |progress: Progress| counts.lock().unwrap().push(progress.completed());
+        let counts = Counts::default();
+        let record = counts.recorder();
         let parallel = topology
             .perceived_with(Run::new().with_executor(&executor).with_progress(&record))
             .unwrap();
@@ -646,30 +707,12 @@ fn perception_on_several_threads_equals_one_thread() {
             assert_eq!(left.molecule().properties(), right.molecule().properties());
         }
         assert_default_perception(&parallel);
-        let counts = counts.into_inner().unwrap();
-        assert!(
-            counts.windows(2).all(|pair| pair[0] <= pair[1]),
-            "{counts:?}"
-        );
+        let counts = counts.checked();
         assert_eq!(counts.first(), Some(&0));
         assert_eq!(counts.last(), Some(&(topology.definition_count() as u64)));
     }
 
-    // Distinct molecules, of which the 6th and 10th fail valence perception.
-    let bad = || {
-        let mut editor = MoleculeEditor::new();
-        let carbon = Atom::new(Element::from_symbol("C").unwrap())
-            .with_hydrogens(ImplicitHydrogens::Fixed(5));
-        editor.add_atom(carbon).unwrap();
-        editor.finish().unwrap()
-    };
-    let mut molecules = smiles::to_molecules(
-        "c1ccccc1.CCO.C1CC1N.c1ccncc1.CC(=O)[O-].[NH4+].c1ccc2ccccc2c1.OCC(O)CO.C#N.CS(=O)C",
-    )
-    .unwrap();
-    molecules.insert(5, bad());
-    molecules.insert(9, bad());
-    let topology = Topology::from_molecules(molecules).unwrap();
+    let topology = twelve_ions_two_failing();
     let serial = topology.perceived().unwrap_err();
     assert_eq!(serial.definition, MoleculeDefinitionId::new(5));
     for threads in 1..=6 {
@@ -678,5 +721,129 @@ fn perception_on_several_threads_equals_one_thread() {
             .perceived_with(Run::new().with_executor(&executor))
             .unwrap_err();
         assert_eq!(error, serial, "{threads} threads");
+    }
+}
+
+/// The error is the first failing definition, whichever failure comes
+/// first. In order, no definition after it finishes; in reverse, every
+/// other one does.
+#[test]
+fn perception_fails_with_the_first_failing_definition_in_any_order() {
+    let topology = twelve_ions_two_failing();
+    let serial = topology.perceived().unwrap_err();
+    assert_eq!(serial.definition, MoleculeDefinitionId::new(5));
+    for (reverse, finished) in [(false, 5), (true, 10)] {
+        let counts = Counts::default();
+        let record = counts.recorder();
+        let executor = OneAtATime { reverse };
+        let error = topology
+            .perceived_with(Run::new().with_executor(&executor).with_progress(&record))
+            .unwrap_err();
+        assert_eq!(error, serial, "reverse {reverse}");
+        assert_eq!(
+            counts.checked().last(),
+            Some(&finished),
+            "reverse {reverse}"
+        );
+    }
+}
+
+/// A panic while perceiving a definition is the outcome only when no
+/// earlier definition fails, as on one thread.
+#[test]
+fn a_panic_after_the_first_failing_definition_is_not_the_outcome() {
+    use std::panic::{catch_unwind, AssertUnwindSafe};
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    // A check that panics the first time it runs, in the first definition
+    // perceived.
+    let panics_once = || {
+        let first = AtomicBool::new(true);
+        kekule::diagnostics::Cancellation::new(move || {
+            assert!(!first.swap(false, Ordering::Relaxed), "the check panicked");
+            false
+        })
+    };
+    let topology = twelve_ions_two_failing();
+    let serial = topology.perceived().unwrap_err();
+
+    // In reverse, the last definition panics before the 6th fails.
+    let check = panics_once();
+    let executor = OneAtATime { reverse: true };
+    let error = topology
+        .perceived_with(
+            Run::new()
+                .with_executor(&executor)
+                .with_cancellation(&check),
+        )
+        .unwrap_err();
+    assert_eq!(error, serial);
+
+    // In order, the first definition panics, and so does perception.
+    let check = panics_once();
+    let executor = OneAtATime { reverse: false };
+    let panic = catch_unwind(AssertUnwindSafe(|| {
+        topology.perceived_with(
+            Run::new()
+                .with_executor(&executor)
+                .with_cancellation(&check),
+        )
+    }))
+    .unwrap_err();
+    let message = panic
+        .downcast_ref::<&str>()
+        .map(|message| message.to_string())
+        .or_else(|| panic.downcast_ref::<String>().cloned());
+    assert_eq!(message.as_deref(), Some("the check panicked"));
+}
+
+/// Cancelled partway on four threads, perception fails as cancelled, leaves
+/// the structure as it was, and counts progress that never falls.
+#[test]
+fn perception_on_several_threads_stops_once_cancellation_is_requested() {
+    use kekule::parallel::ScopedThreads;
+    use std::num::NonZeroUsize;
+    use std::sync::atomic::Ordering;
+
+    let structure = glycine_free_adenylate_kinase();
+    let threads = ScopedThreads::new(NonZeroUsize::new(4).unwrap());
+    let (never, polls) = requested_after(usize::MAX);
+    let mut perceived = structure.clone();
+    perceived
+        .perceive_with(Run::new().with_executor(&threads).with_cancellation(&never))
+        .unwrap();
+    assert_default_perception(perceived.topology());
+    let polls = polls.load(Ordering::Relaxed);
+    let definitions = structure.topology().definition_count() as u64;
+    assert!(
+        polls as u64 > definitions,
+        "perception polled only {polls} times"
+    );
+    for after in [1, polls / 2, polls] {
+        let (cancellation, _) = requested_after(after);
+        let counts = Counts::default();
+        let record = counts.recorder();
+        let mut cancelled = structure.clone();
+        let error = cancelled
+            .perceive_with(
+                Run::new()
+                    .with_executor(&threads)
+                    .with_cancellation(&cancellation)
+                    .with_progress(&record),
+            )
+            .unwrap_err();
+        assert!(
+            matches!(error.source, perception::PerceptionError::Cancelled(_)),
+            "poll {after}: {error}"
+        );
+        assert!(Arc::ptr_eq(
+            &cancelled.shared_topology(),
+            &structure.shared_topology()
+        ));
+        let counts = counts.checked();
+        assert!(
+            counts.last() < Some(&definitions),
+            "poll {after}: {counts:?}"
+        );
     }
 }

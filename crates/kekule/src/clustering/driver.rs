@@ -3,13 +3,12 @@
 
 use std::fmt;
 
-use super::run::{FirstFailure, Stop, Tracker};
+use super::run::Tracker;
 use crate::alignment::{
     best_kabsch, check_fit_count, AlignmentError, AlignmentOptions, FitAtoms, NormalizedWeights,
 };
 use crate::diagnostics::Cancelled;
-use crate::parallel::map_ranges;
-use crate::parallel::Run;
+use crate::parallel::{map_ranges, FirstFailure, Run, Stop};
 use crate::structure::{
     Distribution, Ensemble, GeometryError, Partition, Requirement, Samples, StructureSet,
     StructureSetError, StructureSetReadError, StructureView,
