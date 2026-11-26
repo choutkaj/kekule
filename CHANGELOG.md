@@ -695,6 +695,12 @@ the main branch migrates by the table under "From the SampleSet API".
   neutral lysine `NZ` without hydrogens, fails under strict chemistry
   (`ChargeNotReadBack`) and is otherwise reported as
   `WriteOmission::FormalCharges`, which names the first such atom.
+- **Breaking:** The PDB and mmCIF writers check for atoms the structure
+  leaves unbonded that their reader bonds from distance: a standard polymer
+  link or a disulfide whose atoms lie within bonding distance, as after an
+  edit deletes the bond. Such a pair fails under strict chemistry
+  (`InferredBond`) and is otherwise reported as
+  `WriteOmission::InferredBonds`.
 - **Breaking:** A PDB atom name starting in column 14 reads a one-letter
   element only in an entry that follows the alignment convention, where some
   short name starts in column 13 with a two-letter element. In an entry that

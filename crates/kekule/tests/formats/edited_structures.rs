@@ -712,3 +712,125 @@ fn a_hydrogen_far_from_the_atom_its_name_places_it_on_keeps_its_place() {
         .collect::<Vec<_>>();
     assert_eq!(far, [("H2", "N")]);
 }
+
+/// Crambin without the peptide bond from residue 10 to 11 and the
+/// disulfide between cysteines 3 and 40; the atoms stay where they were,
+/// within bonding distance.
+fn crambin_with_links_deleted() -> kekule::structure::Structure {
+    let source = pdb_fixture(include_str!("../fixtures/pdb/1CRN.pdb"));
+    let mut editor = source.structure().to_editor();
+    let find = |editor: &StructureEditor, sequence: &str, name: &str| {
+        editor
+            .topology()
+            .atom_sites()
+            .find(|(_, site)| {
+                let residue = editor.topology().residue(site.residue()).unwrap();
+                residue.author_seq_id().map(str::trim) == Some(sequence)
+                    && site.metadata().auth_atom_id() == Some(name)
+            })
+            .map(|(_, site)| site.atom())
+            .unwrap()
+    };
+    for [(left, left_name), (right, right_name)] in
+        [[("10", "C"), ("11", "N")], [("3", "SG"), ("40", "SG")]]
+    {
+        let (left, right) = (
+            find(&editor, left, left_name),
+            find(&editor, right, right_name),
+        );
+        let bond = editor
+            .topology()
+            .bond_between(left, right)
+            .unwrap()
+            .unwrap();
+        editor.delete_bond(bond).unwrap();
+    }
+    editor.finish().unwrap()
+}
+
+#[test]
+fn atoms_left_unbonded_that_readers_bond_are_reported() {
+    use kekule::diagnostics::{FormatErrorDetail, WriteOmission};
+    use kekule::mmcif::{MmcifWriteErrorKind, MmcifWriteOptions};
+    use kekule::pdb::PdbWriteErrorKind;
+
+    let edited = crambin_with_links_deleted();
+    // No record keeps the atoms apart, so writing fails by default.
+    let error = pdb::write(&edited, PdbWriteOptions::default()).unwrap_err();
+    assert!(
+        matches!(
+            error.detail(),
+            Some(FormatErrorDetail::PdbWrite(
+                PdbWriteErrorKind::InferredBond { .. }
+            ))
+        ),
+        "{error}"
+    );
+    assert!(
+        error
+            .to_string()
+            .ends_with("are not bonded, but a reader bonds them from their distance."),
+        "{error}"
+    );
+    let error = mmcif::write([&edited], MmcifWriteOptions::default()).unwrap_err();
+    assert!(
+        matches!(
+            error.detail(),
+            Some(FormatErrorDetail::MmcifWrite(
+                MmcifWriteErrorKind::InferredBond { .. }
+            ))
+        ),
+        "{error}"
+    );
+    // Omitted, they are reported, and readers bond exactly those atoms.
+    let key = |residue: &str, number: &str, name: &str| {
+        (
+            "A".to_owned(),
+            residue.to_owned(),
+            number.to_owned(),
+            name.to_owned(),
+        )
+    };
+    let bonded = [
+        key("ARG", "10", "C"),
+        key("SER", "11", "N"),
+        key("CYS", "3", "SG"),
+        key("CYS", "40", "SG"),
+    ];
+    let changed = |reread: &kekule::structure::Structure| {
+        let mut keys = chemistry_changes(&edited, reread)
+            .into_iter()
+            .map(|(key, _, _)| key)
+            .collect::<Vec<_>>();
+        keys.sort();
+        keys
+    };
+    let mut expected = bonded.to_vec();
+    expected.sort();
+    let (written, report) = pdb::write(
+        &edited,
+        PdbWriteOptions::default().with_chemistry(UnrepresentablePolicy::Omit),
+    )
+    .unwrap();
+    assert_eq!(
+        report.omissions(),
+        [WriteOmission::InferredBonds { bonds: 2 }]
+    );
+    assert_eq!(changed(pdb_fixture(&written).structure()), expected);
+    let (written, report) = mmcif::write(
+        [&edited],
+        MmcifWriteOptions::default().with_chemistry(UnrepresentablePolicy::Omit),
+    )
+    .unwrap();
+    assert_eq!(
+        report.omissions(),
+        [WriteOmission::InferredBonds { bonds: 2 }]
+    );
+    assert_eq!(changed(reread(&written).structure()), expected);
+    // Crambin as read keeps both bonds, so nothing is left out.
+    let source = pdb_fixture(include_str!("../fixtures/pdb/1CRN.pdb"));
+    let (_, report) = pdb::write(source.structure(), PdbWriteOptions::default()).unwrap();
+    assert!(report.omissions().is_empty(), "{:?}", report.omissions());
+    let (_, report) = mmcif::write([source.structure()], MmcifWriteOptions::default()).unwrap();
+    assert!(report.omissions().is_empty(), "{:?}", report.omissions());
+}
