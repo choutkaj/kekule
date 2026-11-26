@@ -337,6 +337,8 @@ impl<R: Read> Decoder<'_, R> {
         present: &[bool],
         value: impl Fn([u8; N]) -> T,
     ) -> Result<Vec<Option<T>>> {
+        // Each chunk holds whole values.
+        const { assert!(CHUNK_BYTES.is_multiple_of(N)) };
         let count = present.iter().filter(|&&present| present).count();
         let mut stored = Vec::with_capacity(count.min(CHUNK_BYTES / N));
         self.chunks(count.saturating_mul(N), |bytes| {
