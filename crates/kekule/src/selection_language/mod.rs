@@ -244,23 +244,22 @@ impl SelectParseOptions {
     ///
     /// # Errors
     ///
-    /// [`DiagnosticKind::InvalidValue`] when a keyword is not an ASCII
-    /// identifier (a letter or `_`, then letters, digits, or `_`) or is a
-    /// built-in keyword.
+    /// [`DiagnosticKind::InvalidValue`] when a keyword is not a lower-case
+    /// word (ASCII `a` to `z` and `_`) or is a built-in keyword. Canonical
+    /// text quotes values of that form, so they never read as keywords.
     pub fn with_host_keywords(
         mut self,
         keywords: impl IntoIterator<Item = impl Into<String>>,
     ) -> Result<Self, FormatError> {
         let keywords = keywords.into_iter().map(Into::into).collect::<Vec<_>>();
         for keyword in &keywords {
-            let mut characters = keyword.chars();
-            let identifier = characters
-                .next()
-                .is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
-                && characters.all(|next| next.is_ascii_alphanumeric() || next == '_');
-            if !identifier || syntax::KEYWORDS.contains(&keyword.as_str()) {
+            let word = !keyword.is_empty()
+                && keyword
+                    .chars()
+                    .all(|character| character.is_ascii_lowercase() || character == '_');
+            if !word || syntax::KEYWORDS.contains(&keyword.as_str()) {
                 return Err(option_error(format!(
-                    "The host keyword {keyword:?} is not an identifier, or is a selection keyword."
+                    "The host keyword {keyword:?} is not a lower-case word, or is a selection keyword."
                 )));
             }
         }
