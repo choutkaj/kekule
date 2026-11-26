@@ -28,6 +28,7 @@ mod properties;
 mod publication;
 mod sharing;
 mod stereo;
+pub(crate) use publication::TopologyPublication;
 pub use publication::{DenseCorrespondence, EditCorrespondence};
 pub use stereo::PrunedStereo;
 
