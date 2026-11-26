@@ -485,6 +485,30 @@ impl<L: SlotLiveness> Graph<L> {
         components
     }
 
+    /// Whether the atoms form exactly one connected component, as
+    /// `connected_components().len() == 1` without listing them.
+    pub(crate) fn is_connected(&self) -> bool {
+        let Some(start) = self.atom_ids().next() else {
+            return false;
+        };
+        let mut seen = vec![false; self.atom_slot_count()];
+        seen[start.index()] = true;
+        let mut stack = vec![start];
+        let mut reached = 1;
+        while let Some(atom) = stack.pop() {
+            for neighbor in self
+                .neighbors(atom)
+                .expect("component traversal visits live atoms")
+            {
+                if !std::mem::replace(&mut seen[neighbor.index()], true) {
+                    reached += 1;
+                    stack.push(neighbor);
+                }
+            }
+        }
+        reached == self.atom_count()
+    }
+
     /// [`Self::atom`] for staging code that reports a missing atom.
     pub(crate) fn require_atom(&self, id: AtomId) -> Result<&Atom, MoleculeError> {
         self.atom(id).ok_or(MoleculeError::InvalidAtomId(id))

@@ -158,11 +158,15 @@ impl Topology {
             {
                 std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
                 std::collections::btree_map::Entry::Vacant(entry) => {
+                    let mut flags = vec![false; source_molecule.atom_slot_count()];
+                    for atom in &entry.key().1 {
+                        flags[atom.index()] = true;
+                    }
                     let definitions =
                         super::components::build_component_definitions::<TopologySubsetError, _>(
                             source_molecule,
                             source_molecule.properties(),
-                            &entry.key().1,
+                            &flags,
                             Some((
                                 molecule_view.class(),
                                 this.molecule_class_overrides

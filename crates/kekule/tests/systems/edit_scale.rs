@@ -712,3 +712,84 @@ fn appended_perceived_copies_keep_their_perception_profile() {
     // The edited benzene's new definition and the added methane.
     assert_eq!(fresh, 2);
 }
+
+/// Deleting every glycine cuts the chains of adenylate kinase into fragments.
+/// Each fragment publishes as the molecule the same deletion gives when the
+/// rest of its chain goes too, which leaves the chain one molecule.
+#[test]
+fn split_fragments_equal_the_molecules_they_publish_as_alone() {
+    use kekule::topology::{InstanceAtomId, MoleculeInstanceId};
+    use std::collections::{BTreeMap, BTreeSet};
+
+    let structure = kekule::mmcif::parse_str(
+        include_str!("../fixtures/mmcif/1AKE.cif"),
+        Default::default(),
+    )
+    .unwrap()
+    .interpret(Default::default())
+    .unwrap()
+    .into_structure();
+    let topology = structure.topology();
+    let glycines = topology
+        .atoms()
+        .filter(|atom| {
+            atom.residue()
+                .is_some_and(|residue| residue.name() == "GLY")
+        })
+        .map(|atom| atom.id())
+        .collect::<BTreeSet<_>>();
+    let deleted = |atoms: &BTreeSet<InstanceAtomId>| {
+        let mut editor = structure.to_editor();
+        let handles = topology
+            .atom_ids()
+            .iter()
+            .map(|&atom| (atom, editor.topology().atom_handle(atom).unwrap()))
+            .collect::<Vec<_>>();
+        editor
+            .delete_atoms(
+                handles
+                    .iter()
+                    .filter(|(atom, _)| atoms.contains(atom))
+                    .map(|&(_, handle)| handle),
+            )
+            .unwrap();
+        let (edited, map) = editor.finish_with_correspondence().unwrap();
+        // The source atoms of each published instance.
+        let mut sources = BTreeMap::<MoleculeInstanceId, Vec<InstanceAtomId>>::new();
+        for (atom, handle) in handles {
+            if let Some((published, _)) = map.atom(handle) {
+                sources.entry(published.instance()).or_default().push(atom);
+            }
+        }
+        (edited, sources)
+    };
+    let (split, fragments) = deleted(&glycines);
+    let mut compared = BTreeMap::<MoleculeInstanceId, usize>::new();
+    for (&published, atoms) in &fragments {
+        let source = atoms[0].instance();
+        if !glycines.iter().any(|atom| atom.instance() == source) {
+            continue;
+        }
+        let rest = topology
+            .atom_ids()
+            .iter()
+            .copied()
+            .filter(|atom| atom.instance() == source && !atoms.contains(atom));
+        let (alone, instances) = deleted(&rest.chain(glycines.iter().copied()).collect());
+        let (&instance, _) = instances
+            .iter()
+            .find(|(_, sources)| *sources == atoms)
+            .expect("the fragment is one molecule alone");
+        assert_eq!(
+            split.topology().instance(published).unwrap().molecule(),
+            alone.topology().instance(instance).unwrap().molecule(),
+        );
+        *compared.entry(source).or_default() += 1;
+    }
+    // Both chains split into many fragments.
+    assert_eq!(compared.len(), 2, "{compared:?}");
+    assert!(
+        compared.values().all(|&fragments| fragments > 10),
+        "{compared:?}"
+    );
+}

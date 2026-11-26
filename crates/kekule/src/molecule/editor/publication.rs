@@ -103,8 +103,8 @@ impl Draft for MoleculeEditor {
             Ok(()),
             "editors keep graph storage consistent"
         );
-        let components = self.graph.connected_components().len();
-        if components != 1 {
+        if !self.graph.is_connected() {
+            let components = self.graph.connected_components().len();
             return Err(MoleculePublicationError::Disconnected { components });
         }
         if let Some(issue) = stereo_violations(&self.graph).into_iter().next() {

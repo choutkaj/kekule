@@ -333,7 +333,7 @@ impl MoleculeEditor {
 
     /// Empty editing state is not a connected molecule.
     pub fn is_connected(&self) -> bool {
-        self.graph.connected_components().len() == 1
+        self.graph.is_connected()
     }
 
     /// Mutable represented atom state. Mutable access through the guard
