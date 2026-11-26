@@ -110,8 +110,8 @@ impl<R: Read + Seek> IndexedTrrReader<R> {
 impl<R: Read + Seek> IndexedCodec for TrrReader<R> {
     type Stream = R;
     type Frame = TrrDecodedFrame;
-    /// The header read ahead, where it starts, and whether sequential reads
-    /// have seen mixed widths.
+    /// The header read ahead, where it starts, whether sequential reads have
+    /// seen mixed widths, and the frames without positions they skipped.
     type State = (Option<TrrFrameHeader>, u64, bool, usize);
     const FORMAT: TrajectoryFormat = FORMAT;
     const SEEK_OPERATION: TrajectoryIoOperation = TrajectoryIoOperation::Index;
