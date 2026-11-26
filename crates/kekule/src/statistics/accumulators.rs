@@ -97,7 +97,7 @@ pub enum StatisticsError {
     /// A sample cannot be read; see the source.
     Read(StructureSetReadError),
     /// The weights do not fit the set; see the cause.
-    Weights(WeightsError),
+    Weights(Box<WeightsError>),
     /// The observation was cancelled.
     Cancelled(Cancelled),
 }
@@ -192,7 +192,7 @@ impl std::error::Error for StatisticsError {
             Self::Selection(error) => Some(error),
             Self::Unit(error) => Some(error),
             Self::Read(error) => std::error::Error::source(error),
-            Self::Weights(error) => std::error::Error::source(error),
+            Self::Weights(error) => std::error::Error::source(error.as_ref()),
             _ => None,
         }
     }
@@ -200,7 +200,7 @@ impl std::error::Error for StatisticsError {
 
 impl From<WeightsError> for StatisticsError {
     fn from(error: WeightsError) -> Self {
-        Self::Weights(error)
+        Self::Weights(Box::new(error))
     }
 }
 

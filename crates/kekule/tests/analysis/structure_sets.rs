@@ -689,10 +689,10 @@ fn set_statistics_weigh_every_geometry_or_their_samples() {
     assert_eq!(
         set.rmsf(&all(set.shared_topology()), Some(&Weights::equal(3)))
             .unwrap_err(),
-        StatisticsError::Weights(WeightsError::CoverageMismatch {
+        StatisticsError::Weights(Box::new(WeightsError::CoverageMismatch {
             covered: 3,
             geometries: 8
-        })
+        }))
     );
 
     // So does a trajectory, whatever its order and velocities.

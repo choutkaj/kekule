@@ -844,9 +844,7 @@ fn bias(state: ThermodynamicState) -> Weights {
     let mut set = rich_set();
     set.set_order(Some(Order::Step(vec![0, 500, 1000])))
         .unwrap();
-    let sampling = Sampling::new(state.clone())
-        .with_bias([key("bias")])
-        .unwrap();
+    let sampling = Sampling::new(state).with_bias([key("bias")]).unwrap();
     set.set_sampling(Some(sampling)).unwrap();
     let weights = Weights::from_bias(&set).unwrap().into_weights();
     assert_eq!(weights.source(), &WeightSource::Bias { state });
