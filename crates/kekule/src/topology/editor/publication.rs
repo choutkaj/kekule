@@ -431,7 +431,11 @@ impl TopologyEditor {
             }))?;
         }
         let mut added_definitions = BTreeMap::new();
-        let mut staged = StagedInstances::default();
+        let mut staged = StagedInstances {
+            bonds: Vec::with_capacity(self.bonds.len()),
+            bond_slots: Vec::with_capacity(self.bonds.len()),
+            ..StagedInstances::default()
+        };
         let mut plain = vec![None; source.map_or(0, Topology::instance_count)];
         for (index, group) in groups.into_iter().enumerate() {
             let group = match group {
@@ -579,15 +583,20 @@ impl TopologyEditor {
             }
         }
         // Publish atoms in slot order: survivors keep their source dense
-        // order, and added atoms follow in creation order. Touched atoms are
-        // in slot order too. Added atoms then join their residues; see
-        // `Self::residue_order`.
+        // order, and added atoms follow in creation order, except that an
+        // added atom placed in a residue follows the residue's earlier atoms
+        // (see `Self::residue_followers`). Touched atoms are in slot order
+        // too.
         staged.touched.sort_unstable_by_key(|&(slot, _, _)| slot);
-        let atom_count = self.atoms.len();
-        let mut order = Vec::with_capacity(atom_count);
-        let mut atom_slots = Vec::with_capacity(atom_count);
-        let mut atom_published = vec![None; self.atoms.block().len];
-        let mut atom_sources = Vec::with_capacity(atom_count);
+        let followers = self.residue_followers();
+        let mut moved = followers.iter().map(|&(_, slot)| slot).collect::<Vec<_>>();
+        moved.sort_unstable();
+        let added_base = if sourced { self.atoms.block().len } else { 0 };
+        let mut atoms = PublishedAtoms::new(
+            self.atoms.len(),
+            SlotIndex::new(self.atoms.block().len, added_base, self.atom_slot_count()),
+            &followers,
+        );
         let mut next = staged.touched.iter().peekable();
         if let (Some(source), true) = (source, sourced) {
             for (slot, id) in source.atom_ids().iter().enumerate() {
@@ -598,35 +607,22 @@ impl TopologyEditor {
                 } else {
                     continue;
                 };
-                atom_published[slot] = Some(TopologyAtomIndex::from_index(order.len()));
-                atom_sources.push(Some(TopologyAtomIndex::from_index(slot)));
-                order.push(target);
-                atom_slots.push(slot);
+                atoms.push(slot, target, Some(slot), &staged.touched);
             }
         }
         for &(slot, _, target) in next {
-            atom_sources.push(None);
-            order.push(target);
-            atom_slots.push(slot);
-        }
-        if let Some(moved) = self.residue_order() {
-            let mut position = vec![usize::MAX; atom_slots.iter().max().map_or(0, |&s| s + 1)];
-            for (index, &slot) in atom_slots.iter().enumerate() {
-                position[slot] = index;
-            }
-            let positions = moved
-                .iter()
-                .map(|(_, loc)| position[loc.slot])
-                .collect::<Vec<_>>();
-            order = positions.iter().map(|&p| order[p]).collect();
-            atom_slots = positions.iter().map(|&p| atom_slots[p]).collect();
-            atom_sources = positions.iter().map(|&p| atom_sources[p]).collect();
-            for (published, source) in atom_sources.iter().enumerate() {
-                if let Some(source) = source {
-                    atom_published[source.index()] = Some(TopologyAtomIndex::from_index(published));
-                }
+            if moved.binary_search(&slot).is_err() {
+                atoms.push(slot, target, None, &staged.touched);
             }
         }
+        debug_assert!(atoms.followers.is_empty(), "every anchor is published");
+        let PublishedAtoms {
+            order,
+            slots: atom_slots,
+            sources: atom_sources,
+            index: slot_index,
+            ..
+        } = atoms;
         let slot_counts = |slots: fn(&Molecule) -> usize| {
             staged
                 .instances
@@ -660,8 +656,7 @@ impl TopologyEditor {
                 })
             })
             .collect();
-        let published =
-            self.publish_hierarchy(source, (&atom_published, &atom_slots, atom_order.order()));
+        let published = self.publish_hierarchy(source, &slot_index, atom_order.order());
         let index = HierarchyIndex::from_site_atoms(
             published.site_dense,
             atom_order.len(),
@@ -688,7 +683,7 @@ impl TopologyEditor {
             bond_slots: staged.bond_slots,
             chains: published.chains,
             residues: published.residues,
-            atoms: DenseCorrespondence::from_maps(atom_published, atom_sources),
+            atoms: DenseCorrespondence::from_maps(slot_index.by_source, atom_sources),
             bonds: DenseCorrespondence::from_maps(bond_published, bond_sources),
         })
     }
@@ -696,18 +691,14 @@ impl TopologyEditor {
     /// The published hierarchy: chains, residues and atom sites in handle
     /// order, each residue's sites in site handle order and each chain's
     /// residues in residue handle order. Unchanged source nodes carry their
-    /// labels and metadata over by key. `atoms` gives each live source atom's
-    /// published index, each published atom's slot, and the published atoms.
+    /// labels and metadata over by key. `slots` gives the published index of
+    /// each live atom's slot, and `order` the published atoms.
     fn publish_hierarchy(
         &self,
         source: Option<&Topology>,
-        atoms: (&[Option<TopologyAtomIndex>], &[usize], &[InstanceAtomId]),
+        slots: &SlotIndex,
+        order: &[InstanceAtomId],
     ) -> PublishedHierarchy {
-        let (atom_published, atom_slots, order) = atoms;
-        let mut dense_of_slot = vec![usize::MAX; atom_slots.iter().max().map_or(0, |&s| s + 1)];
-        for (dense, &slot) in atom_slots.iter().enumerate() {
-            dense_of_slot[slot] = dense;
-        }
         let hierarchy = &self.hierarchy;
         let source_hierarchy = source.map(Topology::hierarchy);
         let mut labels =
@@ -831,16 +822,16 @@ impl TopologyEditor {
                             .map(|residue| ResidueId::new(residue_ids[residue.index()])),
                     );
                     for atom in &source.site_atoms()[range.clone()] {
-                        let dense = atom_published[atom.index()].expect("site atoms are live");
-                        site_dense.push(dense);
-                        site_atoms.push(order[dense.index()]);
+                        let dense = slots.published(atom.index());
+                        site_dense.push(TopologyAtomIndex::from_index(dense));
+                        site_atoms.push(order[dense]);
                     }
                     site_metadata.extend_from_slice(&site.site_metadata_keys()[range.clone()]);
                     site_slots.extend(range);
                 }
                 Run::Stored(_, site) => {
                     let atom_slot = self.atom_location(site.atom).expect("live site atom").slot;
-                    let dense = dense_of_slot[atom_slot];
+                    let dense = slots.published(atom_slot);
                     site_residues.push(ResidueId::new(residue_of(site.residue)));
                     site_atoms.push(order[dense]);
                     site_dense.push(TopologyAtomIndex::from_index(dense));
@@ -912,6 +903,111 @@ impl TopologyEditor {
                 .bond_slots
                 .push(self.bond_location(handle).expect("live bond").slot);
         }
+    }
+}
+
+/// The published index of each draft slot: a source atom's by source
+/// index, an added atom's by slot from the first added slot.
+struct SlotIndex {
+    /// Per source atom: its published index, or `None` when deleted.
+    by_source: Vec<Option<TopologyAtomIndex>>,
+    /// The first added slot: the source's atom count when the draft reads
+    /// its source, else zero.
+    added_base: usize,
+    /// Per slot from `added_base`: the published index.
+    added: Vec<usize>,
+}
+
+impl SlotIndex {
+    fn new(source_count: usize, added_base: usize, slot_count: usize) -> Self {
+        Self {
+            by_source: vec![None; source_count],
+            added_base,
+            added: vec![usize::MAX; slot_count - added_base],
+        }
+    }
+
+    fn set(&mut self, slot: usize, source: Option<usize>, published: usize) {
+        match source {
+            Some(source) => self.by_source[source] = Some(TopologyAtomIndex::from_index(published)),
+            None => self.added[slot - self.added_base] = published,
+        }
+    }
+
+    /// The published index of the live atom at `slot`.
+    fn published(&self, slot: usize) -> usize {
+        match slot.checked_sub(self.added_base) {
+            Some(offset) => self.added[offset],
+            None => self.by_source[slot]
+                .expect("live atoms are published")
+                .index(),
+        }
+    }
+}
+
+/// The published atoms as publication orders them, with each one's slot and
+/// source index.
+struct PublishedAtoms<'a> {
+    order: Vec<InstanceAtomId>,
+    slots: Vec<usize>,
+    sources: Vec<Option<TopologyAtomIndex>>,
+    index: SlotIndex,
+    /// The `(anchor, follower)` slots not yet published, by anchor.
+    followers: &'a [(usize, usize)],
+    /// The first pending anchor, or `usize::MAX`.
+    next_anchor: usize,
+}
+
+impl<'a> PublishedAtoms<'a> {
+    /// Room for `atom_count` atoms, which follow `followers`.
+    fn new(atom_count: usize, index: SlotIndex, followers: &'a [(usize, usize)]) -> Self {
+        Self {
+            order: Vec::with_capacity(atom_count),
+            slots: Vec::with_capacity(atom_count),
+            sources: Vec::with_capacity(atom_count),
+            index,
+            followers,
+            next_anchor: followers.first().map_or(usize::MAX, |&(anchor, _)| anchor),
+        }
+    }
+
+    /// Publishes the atom at `slot` as `target`, then the added atoms that
+    /// follow it, whose targets `touched` holds by slot.
+    #[inline]
+    fn push(
+        &mut self,
+        slot: usize,
+        target: InstanceAtomId,
+        source: Option<usize>,
+        touched: &[(usize, EditAtomId, InstanceAtomId)],
+    ) {
+        self.index.set(slot, source, self.order.len());
+        self.sources.push(source.map(TopologyAtomIndex::from_index));
+        self.order.push(target);
+        self.slots.push(slot);
+        if slot == self.next_anchor {
+            self.push_followers(slot, touched);
+        }
+    }
+
+    fn push_followers(&mut self, anchor: usize, touched: &[(usize, EditAtomId, InstanceAtomId)]) {
+        while let Some((&(next, follower), rest)) = self.followers.split_first() {
+            if next != anchor {
+                break;
+            }
+            self.followers = rest;
+            let position = touched
+                .binary_search_by_key(&follower, |&(slot, _, _)| slot)
+                .expect("followers are touched");
+            self.index.set(follower, None, self.order.len());
+            self.sources.push(None);
+            self.order.push(touched[position].2);
+            self.slots.push(follower);
+        }
+        self.next_anchor = self
+            .followers
+            .first()
+            .map_or(usize::MAX, |&(anchor, _)| anchor);
     }
 }
 
