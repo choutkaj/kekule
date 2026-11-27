@@ -1,9 +1,7 @@
 //! Structure sets: the order, views, and copy on write.
 
 use super::*;
-use crate::diagnostics::{
-    CapacityExceeded, Countable, IndexOutOfRange, LengthMismatch, TopologyMismatch,
-};
+use crate::diagnostics::{Countable, IndexOutOfRange, LengthMismatch, TopologyMismatch};
 use crate::units::{DEGREE, PICOSECOND};
 
 /// Geometries of a one-atom topology at these x positions, unordered.
@@ -36,35 +34,11 @@ fn time_axis(times: Vec<f64>, steps: Vec<u64>) -> Order {
     Order::Time(TimeAxis::new(Some(Quantity::new(times, PICOSECOND)), Some(steps)).unwrap())
 }
 
-fn velocities(x: f64) -> Velocities {
-    Velocities::new(Quantity::new(
-        [Vector3::new(x, 0.0, 0.0)],
-        CANONICAL_VELOCITY,
-    ))
-    .unwrap()
-}
-
-const CANONICAL_VELOCITY: crate::units::Unit = crate::units::CANONICAL_VELOCITY_UNIT;
-
 fn shares_every_geometry(a: &StructureSet, b: &StructureSet) -> bool {
     a.len() == b.len()
         && a.iter()
             .zip(b.iter())
             .all(|(a, b)| Arc::ptr_eq(a.payload().data(), b.payload().data()))
-}
-
-#[test]
-fn requirements_read_as_they_are() {
-    assert_eq!(Requirement::TimeOrder.to_string(), "needs a time order");
-    assert_eq!(
-        StructureSetError::Missing(Requirement::TimeOrder).to_string(),
-        "The structure set needs a time order."
-    );
-    let set = set_at(&[0.0]);
-    assert_eq!(
-        set.validate_monotonic_time(),
-        Err(StructureSetError::Missing(Requirement::TimeOrder))
-    );
 }
 
 #[test]
@@ -246,136 +220,6 @@ fn order_values_belong_to_the_set_not_to_its_geometries() {
 }
 
 #[test]
-fn any_geometry_may_carry_site_fields_and_dynamics() {
-    let mut set = set_at(&[0.0]);
-    set.set_order(Some(Order::Step(vec![0]))).unwrap();
-    let mut geometry = set.get_mut(0).unwrap();
-    geometry.set_occupancies(Some(vec![Some(0.5)])).unwrap();
-    geometry.set_velocities(Some(velocities(1.0))).unwrap();
-    assert_eq!(
-        geometry.set_forces(Some(Forces::zeros(2))),
-        Err(GeometryError::Array(Box::new(
-            DenseArrayError::CountMismatch(LengthMismatch::new(Countable::Row, 1, 2))
-        )))
-    );
-    let view = set.get(0).unwrap();
-    assert_eq!(view.occupancy(ATOM0), Some(0.5));
-    let StructureKind::InSet(context) = view.as_structure_view().kind() else {
-        panic!("a geometry's view is a geometry");
-    };
-    assert_eq!(context.place(), Some(Place::Step(0)));
-    assert_eq!(
-        view.as_structure_view().velocities(),
-        Some(&velocities(1.0))
-    );
-    assert_eq!(view.as_structure_view().forces(), None);
-    assert_eq!(view.as_structure_view().occupancy(ATOM0), Some(0.5));
-    // A structure keeps the geometry, velocities included, and drops its
-    // context.
-    let structure = view.to_structure();
-    assert_eq!(
-        structure.as_structure_view().kind(),
-        StructureKind::Standalone
-    );
-    assert_eq!(structure.occupancy(ATOM0), Some(0.5));
-    assert_eq!(structure.velocities(), Some(&velocities(1.0)));
-    // A rigid motion rotates the velocities with the positions.
-    use crate::math::{Matrix3, RigidTransform};
-    let turn = Matrix3::from_columns(
-        Vector3::new(0.0, 1.0, 0.0),
-        Vector3::new(-1.0, 0.0, 0.0),
-        Vector3::new(0.0, 0.0, 1.0),
-    );
-    let transform = RigidTransform::from_canonical(turn, Vector3::zero()).unwrap();
-    let mut geometry = set.get_mut(0).unwrap();
-    geometry.apply_rigid_transform(&transform).unwrap();
-    assert_eq!(
-        geometry.velocities().unwrap().values().value(),
-        &[Vector3::new(0.0, 1.0, 0.0)]
-    );
-    assert!(set.get_mut(0).unwrap().take_velocities().is_some());
-    assert_eq!(set.get(0).unwrap().velocities(), None);
-}
-
-/// A V2000 record of one carbon atom at `x` Å, followed by `data`.
-fn carbon_record(x: &str, data: &str) -> String {
-    format!(
-        "\n  kekule            2D\n\n  1  0  0  0  0  0            999 V2000\n\
-         {x:>10}    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\nM  END\n\
-         {data}$$$$\n"
-    )
-}
-
-#[test]
-fn geometry_views_write_the_sdf_records_they_always_wrote() {
-    let options = crate::sdf::SdfWriteOptions::default();
-    // One carbon at x = 0 and 0.1 nm: flat, so 2D, with coordinates in Å
-    // and no data fields.
-    let set = set_at(&[0.0, 0.1]);
-    let views = set.iter().collect::<Vec<_>>();
-    let written = crate::sdf::write(
-        views.iter().map(crate::sdf::SdfRecordSource::structure),
-        options,
-    )
-    .unwrap()
-    .0;
-    assert_eq!(
-        written,
-        carbon_record("0.0000", "") + &carbon_record("1.0000", "")
-    );
-
-    // A geometry on a coordinate order writes its coordinate and its unit
-    // as data fields.
-    let mut scan = set_at(&[0.0]);
-    scan.set_order(Some(Order::Coordinate {
-        unit: DEGREE,
-        values: vec![30.0],
-    }))
-    .unwrap();
-    let views = scan.iter().collect::<Vec<_>>();
-    let written = crate::sdf::write(
-        views.iter().map(crate::sdf::SdfRecordSource::structure),
-        options,
-    )
-    .unwrap()
-    .0;
-    assert_eq!(
-        written,
-        carbon_record(
-            "0.0000",
-            ">  <kekule.coordinate>\n30\n\n>  <kekule.coordinate.unit>\ndeg\n\n"
-        )
-    );
-}
-
-#[test]
-fn replacing_a_geometry_keeps_its_place() {
-    let mut set = set_at(&[0.0, 1.0]);
-    set.set_order(Some(Order::Step(vec![3, 4]))).unwrap();
-    let previous = set.replace(1, Geometry::new(single_position(5.0))).unwrap();
-    assert_eq!(previous, Geometry::new(single_position(1.0)));
-    assert_eq!(xs(&set), [0.0, 5.0]);
-    assert_eq!(set.get(1).unwrap().place(), Some(Place::Step(4)));
-
-    let before = set.clone();
-    // Two atoms do not bind to a one-atom topology.
-    assert!(matches!(
-        set.replace(0, Geometry::new(Positions::zeros(2))),
-        Err(StructureSetError::Geometry(_))
-    ));
-    assert_eq!(
-        set.replace(2, Geometry::new(single_position(0.0))),
-        Err(StructureSetError::IndexOutOfRange(IndexOutOfRange::new(
-            Countable::Geometry,
-            2,
-            2
-        )))
-    );
-    assert!(shares_every_geometry(&set, &before));
-    assert_eq!(set.order(), before.order());
-}
-
-#[test]
 fn places_are_set_only_on_an_order_and_inside_the_set() {
     let mut set = set_at(&[0.0]);
     assert_eq!(set.set_place(0, None), Ok(()));
@@ -408,19 +252,6 @@ fn places_are_set_only_on_an_order_and_inside_the_set() {
 }
 
 #[test]
-fn empty_selections() {
-    let mut frames = set_at(&[0.0, 1.0]);
-    frames.set_order(Some(Order::Step(vec![0, 1]))).unwrap();
-    let none = frames.select([]).unwrap();
-    assert!(none.is_empty());
-    assert_eq!(none.order(), Some(&Order::Step(Vec::new())));
-    frames.remove(1).unwrap();
-    frames.remove(0).unwrap();
-    assert!(frames.is_empty());
-    assert_eq!(frames.order(), Some(&Order::Step(Vec::new())));
-}
-
-#[test]
 fn constructors_refuse_mismatched_geometries_and_layouts() {
     assert!(matches!(
         StructureSet::from_geometries(
@@ -439,119 +270,6 @@ fn constructors_refuse_mismatched_geometries_and_layouts() {
         StructureSet::from_structures([structure, other]).unwrap_err(),
         StructureSetError::TopologyMismatch(TopologyMismatch::Structure)
     );
-}
-
-#[test]
-fn every_error_reads_as_a_sentence() {
-    use StructureSetError as E;
-    let requirements = [
-        (Requirement::TimeOrder, "needs a time order"),
-        (Requirement::AnyOrder, "needs an order"),
-        (Requirement::Times, "needs times"),
-        (Requirement::Cell, "needs a periodic cell on every geometry"),
-        (Requirement::InMemory, "needs its geometries in memory"),
-    ];
-    for (requirement, text) in requirements {
-        assert_eq!(requirement.to_string(), text);
-        assert_eq!(
-            E::Missing(requirement).to_string(),
-            format!("The structure set {text}.")
-        );
-    }
-    let unit = Quantity::new(1.0, ANGSTROM)
-        .value_in(PICOSECOND)
-        .unwrap_err();
-    let errors = [
-        (E::EmptySource, "There are no structures to collect."),
-        (
-            E::IndexOutOfRange(IndexOutOfRange::new(Countable::Geometry, 3, 1)),
-            "Geometry 3 does not exist. There is 1 geometry.",
-        ),
-        (
-            E::TopologyMismatch(TopologyMismatch::Structure),
-            "The structure has a different topology layout.",
-        ),
-        (
-            E::GeometryCountMismatch(LengthMismatch::new(Countable::Geometry, 3, 1)),
-            "There is 1 geometry instead of 3.",
-        ),
-        (
-            E::OrderLengthMismatch(LengthMismatch::new(Countable::OrderValue, 2, 1)),
-            "There is 1 order value instead of 2.",
-        ),
-        (
-            E::TimeAxisMismatch { times: 1, steps: 2 },
-            "The time axis has 1 time and 2 steps.",
-        ),
-        (
-            E::NonFiniteOrderValue { geometry: 1 },
-            "The order value of geometry 1 is not finite.",
-        ),
-        (
-            E::PlaceMismatch { geometry: 1 },
-            "The place of geometry 1 is not on the order of the structure set.",
-        ),
-        (
-            E::MissingTime { geometry: 1 },
-            "Geometry 1 has no time, but the other geometries have one.",
-        ),
-        (
-            E::UnexpectedTime { geometry: 1 },
-            "Geometry 1 has a time, but the other geometries have none.",
-        ),
-        (
-            E::MissingStep { geometry: 1 },
-            "Geometry 1 has no step, but the other geometries have one.",
-        ),
-        (
-            E::UnexpectedStep { geometry: 1 },
-            "Geometry 1 has a step, but the other geometries have none.",
-        ),
-        (
-            E::NonMonotonicTime { geometry: 2 },
-            "Geometry 2 is earlier than the geometry before it.",
-        ),
-        (
-            E::InvalidTemperature,
-            "The temperature is not finite and positive.",
-        ),
-        (
-            E::InvalidPressure,
-            "The pressure is not finite and positive.",
-        ),
-        (E::NonFiniteTime, "The time is not finite."),
-        (
-            E::CoverageMismatch {
-                covered: 2,
-                geometries: 1,
-            },
-            "The description covers 2 geometries, but the structure set has 1.",
-        ),
-        (
-            E::Geometry(GeometryError::CapacityExceeded(CapacityExceeded::new(
-                Countable::Atom,
-            ))),
-            "A geometry is invalid.",
-        ),
-        (
-            E::Subset(crate::topology::TopologySubsetError::EmptySelection),
-            "Cannot subset the structure set.",
-        ),
-    ];
-    for (error, text) in errors {
-        assert_eq!(error.to_string(), text, "{error:?}");
-    }
-    assert_eq!(E::from(unit).to_string(), unit.to_string());
-    // Wrapped causes are the error's source.
-    use std::error::Error;
-    assert!(
-        E::Geometry(GeometryError::CapacityExceeded(CapacityExceeded::new(
-            Countable::Atom
-        )))
-        .source()
-        .is_some()
-    );
-    assert!(E::EmptySource.source().is_none());
 }
 
 #[test]

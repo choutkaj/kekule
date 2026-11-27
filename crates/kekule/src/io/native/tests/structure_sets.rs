@@ -8,12 +8,9 @@ use crate::clustering::Clustering;
 use crate::diagnostics::{DiagnosticKind, Format};
 use crate::math::Point3;
 use crate::native::{self, NativeSource, NativeWriteOptions, StructureSetDescription};
-use crate::properties::{PropertyColumn, PropertyKey};
-use crate::statistics::{WeightSource, Weights};
-use crate::structure::{
-    Geometry, Order, Positions, Sampling, StructureSet, ThermodynamicState, TimeAxis,
-};
-use crate::units::{Quantity, DEGREE, KELVIN, KILOJOULE_PER_MOLE, NANOMETER, PICOSECOND};
+use crate::statistics::Weights;
+use crate::structure::{Geometry, Order, Positions, StructureSet, TimeAxis};
+use crate::units::{Quantity, DEGREE, KELVIN, NANOMETER, PICOSECOND};
 
 /// Steps that mark where the order is stored.
 const STEPS: [u64; 3] = [
@@ -145,35 +142,6 @@ fn stored_weights_are_finite_and_their_source_known() {
         assert_eq!(error.format(), Format::Native);
         let error = read(&bytes[..offset]).unwrap_err();
         assert_eq!(error.format(), Format::Native);
-    }
-}
-
-#[test]
-fn every_weight_source_reads_back() {
-    let mut set = geometries(Order::Step(vec![0, 1, 2]));
-    let energy = PropertyKey::new("energy").unwrap();
-    set.columns_mut()
-        .insert(
-            energy.clone(),
-            PropertyColumn::Real {
-                unit: KILOJOULE_PER_MOLE,
-                values: vec![Some(1.5), Some(0.0), None],
-            },
-        )
-        .unwrap();
-    let state = ThermodynamicState::isothermal_isobaric(
-        Quantity::new(TEMPERATURE, KELVIN),
-        Quantity::new(1.0, crate::units::BAR),
-    )
-    .unwrap();
-    set.set_sampling(Some(Sampling::new(state))).unwrap();
-    let boltzmann = Weights::boltzmann(&set, &energy, Quantity::new(TEMPERATURE, KELVIN)).unwrap();
-    let bias = Weights::from_bias(&set).unwrap().into_weights();
-    assert_eq!(bias.source(), &WeightSource::Bias { state });
-    let untimed = Weights::given(vec![Some(0.5), Some(-0.5)], None).unwrap();
-    for weights in [Weights::equal(3), untimed, boltzmann, bias] {
-        let bytes = native::write(&weights, NativeWriteOptions::default()).unwrap();
-        assert_eq!(read(&bytes).unwrap().into_weights().unwrap(), weights);
     }
 }
 

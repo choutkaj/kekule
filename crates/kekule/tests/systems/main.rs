@@ -21,6 +21,8 @@ mod set_columns;
 mod set_geometries;
 mod settling;
 mod structure_append;
+mod structure_atoms;
+mod structure_sets;
 #[path = "../support/mod.rs"]
 mod support;
 mod topology;
