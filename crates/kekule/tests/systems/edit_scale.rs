@@ -1,15 +1,19 @@
 //! Edits of large systems copy and perceive only what they change, and report
 //! dense source-to-published maps that agree with the handle lookups.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use kekule::math::Point3;
+use kekule::math::{Point3, Vector3};
 use kekule::molecule::{Atom, BondOrder, Element};
+use kekule::structure::placement::AttachmentSite;
 use kekule::structure::{Positions, Structure, StructureEditor};
-use kekule::topology::edit::{EditAtomId, EditBondId, EditCorrespondence, TopologyEditor};
+use kekule::topology::edit::{
+    EditAtomId, EditBondId, EditCorrespondence, EditResidueId, TopologyEditor,
+};
 use kekule::topology::{
-    AtomSiteMetadata, ChainId, ResidueId, Topology, TopologyAtomIndex, TopologyBondIndex,
-    TopologyBuilder,
+    AtomSiteMetadata, AtomView, ChainId, InstanceAtomId, ResidueId, Topology, TopologyAtomIndex,
+    TopologyBondIndex, TopologyBuilder,
 };
 use kekule::units::{Quantity, ANGSTROM, SQUARE_ANGSTROM};
 
@@ -718,8 +722,7 @@ fn appended_perceived_copies_keep_their_perception_profile() {
 /// rest of its chain goes too, which leaves the chain one molecule.
 #[test]
 fn split_fragments_equal_the_molecules_they_publish_as_alone() {
-    use kekule::topology::{InstanceAtomId, MoleculeInstanceId};
-    use std::collections::{BTreeMap, BTreeSet};
+    use kekule::topology::MoleculeInstanceId;
 
     let structure = kekule::mmcif::parse_str(
         include_str!("../fixtures/mmcif/1AKE.cif"),
@@ -925,4 +928,449 @@ fn split_fragments_equal_hand_built_molecules() {
         assert_eq!(molecule.stereo_groups().count(), 1);
         assert_eq!(molecule.properties(), expected.properties());
     }
+}
+
+/// KRas G12C with GDP, Mg2+, its inhibitor and waters (PDB 9UOH),
+/// perceived as a host perceives an import.
+fn perceived_kras() -> Structure {
+    let mut structure = kekule::mmcif::parse_str(
+        include_str!("../fixtures/mmcif/9UOH.cif"),
+        Default::default(),
+    )
+    .unwrap()
+    .interpret(Default::default())
+    .unwrap()
+    .into_structure();
+    structure.perceive().unwrap();
+    structure
+}
+
+/// The publication order of a draft's atoms by the rule the editor
+/// documents, from a scan of every live atom: handle order, except that an
+/// added atom placed in a residue that holds earlier atoms follows the last
+/// of them, in creation order.
+fn documented_order(editor: &TopologyEditor) -> Vec<EditAtomId> {
+    let source = editor
+        .source_topology()
+        .map_or_else(BTreeSet::new, |source| {
+            source
+                .atom_ids()
+                .iter()
+                .filter_map(|&atom| editor.atom_handle(atom))
+                .collect()
+        });
+    let atoms = editor.atom_ids().collect::<Vec<_>>();
+    let mut following = vec![Vec::new(); atoms.len()];
+    let mut stays = vec![true; atoms.len()];
+    let mut last = BTreeMap::<EditResidueId, usize>::new();
+    for (position, &atom) in atoms.iter().enumerate() {
+        let Some(site) = editor.atom_site_for_atom(atom).unwrap() else {
+            continue;
+        };
+        let residue = editor.atom_site(site).unwrap().residue();
+        match last.get(&residue) {
+            Some(&anchor) if !source.contains(&atom) => {
+                following[anchor].push(position);
+                stays[position] = false;
+            }
+            _ => {
+                last.insert(residue, position);
+            }
+        }
+    }
+    let mut order = Vec::with_capacity(atoms.len());
+    for (position, &atom) in atoms.iter().enumerate() {
+        if stays[position] {
+            order.push(atom);
+            order.extend(following[position].iter().map(|&behind| atoms[behind]));
+        }
+    }
+    order
+}
+
+/// What a published atom should be, read from the draft by handle: the atom,
+/// its position, and its chain, residue and site metadata.
+fn drafted_atom(editor: &StructureEditor, atom: EditAtomId) -> String {
+    let topology = editor.topology();
+    let site = topology.atom_site_for_atom(atom).unwrap().map(|site| {
+        let site = topology.atom_site(site).unwrap();
+        let residue = topology.residue(site.residue()).unwrap();
+        let chain = topology.chain(residue.chain()).unwrap();
+        format!(
+            "{} {} {:?} {:?}",
+            chain.label_id(),
+            residue.name(),
+            residue.label_seq_id(),
+            site.metadata()
+        )
+    });
+    let position = editor.position(atom).unwrap().value_in(ANGSTROM).unwrap();
+    format!("{:?} {position:?} {site:?}", topology.atom(atom).unwrap())
+}
+
+/// The same description of a published atom.
+fn published_atom(structure: &Structure, index: usize) -> String {
+    let topology = structure.topology();
+    let atom = topology
+        .atom_at(TopologyAtomIndex::new(index as u32))
+        .unwrap();
+    let site = atom.atom_site().map(|site| {
+        let residue = site.residue();
+        format!(
+            "{} {} {:?} {:?}",
+            residue.chain().label_id(),
+            residue.name(),
+            residue.label_seq_id(),
+            site.metadata()
+        )
+    });
+    let position = structure
+        .position(atom.id())
+        .unwrap()
+        .value_in(ANGSTROM)
+        .unwrap();
+    format!("{:?} {position:?} {site:?}", atom.atom())
+}
+
+/// Publishes `editor`, checking the result against the draft: atoms in the
+/// documented order, each with its draft atom, position and site, bonds
+/// between the atoms their draft bonds join, dense maps that agree with the
+/// handle lookups, and perception equal to perceiving from scratch.
+fn publish_checked(editor: StructureEditor, edit: &str) -> Structure {
+    let order = documented_order(editor.topology());
+    let expected = order
+        .iter()
+        .map(|&atom| drafted_atom(&editor, atom))
+        .collect::<Vec<_>>();
+    let bonds = editor.topology().bonds().collect::<Vec<_>>();
+    let handles = editor
+        .topology()
+        .source_topology()
+        .map(|source| source_handles(source, editor.topology()));
+    let (published, correspondence) = editor.finish_with_correspondence().unwrap();
+    let index = |atom| correspondence.atom(atom).map(|(_, index)| index.index());
+    let published_order = order.iter().map(|&atom| index(atom)).collect::<Vec<_>>();
+    let dense = (0..order.len()).map(Some).collect::<Vec<_>>();
+    assert_eq!(published_order, dense, "{edit}: the publication order");
+    for (dense, expected) in expected.iter().enumerate() {
+        assert_eq!(
+            &published_atom(&published, dense),
+            expected,
+            "{edit}: atom {dense}"
+        );
+    }
+    let topology = published.topology();
+    assert_eq!(topology.bond_count(), bonds.len(), "{edit}: bonds");
+    for (handle, bond) in bonds {
+        let (_, published_bond) = correspondence.bond(handle).unwrap();
+        let view = topology.bond_at(published_bond).unwrap();
+        let mut ends = view.atoms().map(|atom| atom.index().index());
+        let mut drafted = [index(bond.a()).unwrap(), index(bond.b()).unwrap()];
+        ends.sort_unstable();
+        drafted.sort_unstable();
+        assert_eq!(ends, drafted, "{edit}: bond ends");
+        assert_eq!(view.bond().order(), bond.order, "{edit}: bond order");
+    }
+    // The dense maps agree with the handle lookups and with each other.
+    if let Some((atom_handles, bond_handles)) = handles {
+        let atoms = correspondence.atoms();
+        let by_handle = atom_handles
+            .iter()
+            .map(|handle| handle.and_then(|handle| correspondence.atom(handle)))
+            .map(|found| found.map(|(_, index)| index))
+            .collect::<Vec<_>>();
+        assert_eq!(atoms.to_published(), by_handle, "{edit}: atom map");
+        let bonds = correspondence.bonds();
+        let by_handle = bond_handles
+            .iter()
+            .map(|handle| handle.and_then(|handle| correspondence.bond(handle)))
+            .map(|found| found.map(|(_, index)| index))
+            .collect::<Vec<_>>();
+        assert_eq!(bonds.to_published(), by_handle, "{edit}: bond map");
+        for (published, source) in atoms.to_source().iter().enumerate() {
+            if let Some(source) = source {
+                let back = atoms.to_published()[source.index()].map(|index| index.index());
+                assert_eq!(back, Some(published), "{edit}: atom map back");
+            }
+        }
+        let sources = atoms.to_source().iter().flatten().count();
+        let survivors = atoms.to_published().iter().flatten().count();
+        assert_eq!(sources, survivors, "{edit}: atom maps");
+        assert_eq!(atoms.to_source().len(), topology.atom_count());
+        assert_eq!(bonds.to_source().len(), topology.bond_count());
+    }
+    let perceived = topology.perceived().unwrap();
+    for definition in perceived.definitions() {
+        let mut fresh = definition.molecule().clone();
+        fresh.clear_perception();
+        fresh.perceive().unwrap();
+        assert_eq!(
+            definition.molecule().perception(),
+            fresh.perception(),
+            "{edit}: perception"
+        );
+    }
+    published
+}
+
+/// Bonds a carbon to `parent` at its free position nearest a direction, as a
+/// drag in a sketch does; the carbon joins the residue of `parent`.
+fn attach_carbon(editor: &mut StructureEditor, parent: EditAtomId) -> EditAtomId {
+    let direction = AttachmentSite::Toward(Vector3::new(1.0, 0.0, 0.0));
+    let carbon = Atom::new(Element::from_symbol("C").unwrap());
+    editor
+        .attach_atom(parent, carbon, BondOrder::Single, direction)
+        .unwrap()
+        .atom()
+}
+
+/// Adds a carbon at `x` Å as a molecule and residue of its own.
+fn place_carbon(editor: &mut StructureEditor, x: f64) -> EditAtomId {
+    let carbon = Atom::new(Element::from_symbol("C").unwrap());
+    let point = Quantity::new(Point3::new(x, 50.0, 50.0), ANGSTROM);
+    editor.place_atom(carbon, point).unwrap()
+}
+
+/// The residue of an atom that has a site.
+fn residue_of(editor: &StructureEditor, atom: EditAtomId) -> EditResidueId {
+    let topology = editor.topology();
+    let site = topology.atom_site_for_atom(atom).unwrap().unwrap();
+    topology.atom_site(site).unwrap().residue()
+}
+
+const N_END: usize = 0;
+const C_END: usize = 1;
+const LIGAND_RING: usize = 2;
+const PHE_RING: usize = 3;
+const LIGAND_END: usize = 4;
+const CYS_SG: usize = 5;
+const WATER: usize = 6;
+const CA_40: usize = 7;
+const C_40: usize = 8;
+const O_41: usize = 9;
+const CB_41: usize = 10;
+const N_END_CA: usize = 11;
+
+/// The atoms the edits below start from, by the indices above: both ends of
+/// chain A, ring atoms of the inhibitor and of a phenylalanine, the
+/// inhibitor's end, a cysteine's sulfur, a water, atoms inside the chain,
+/// and the first residue's alpha carbon.
+fn kras_atoms(topology: &Topology) -> [InstanceAtomId; 12] {
+    let find = |test: &dyn Fn(&AtomView<'_>) -> bool| {
+        topology.atoms().find(|atom| test(atom)).unwrap().id()
+    };
+    let chain_a = topology
+        .residues()
+        .filter(|residue| residue.chain().label_id() == "A")
+        .filter_map(|residue| residue.label_seq_id())
+        .collect::<Vec<_>>();
+    let site = |seq: i32, name: &str| {
+        find(&|atom| {
+            atom.atom_site().is_some_and(|site| {
+                let residue = site.residue();
+                residue.chain().label_id() == "A"
+                    && residue.label_seq_id() == Some(seq)
+                    && site.metadata().label_atom_id() == Some(name)
+            })
+        })
+    };
+    let named = |residue: &str, name: &str| {
+        find(&|atom| {
+            atom.atom_site().is_some_and(|site| {
+                site.residue().name() == residue && site.metadata().label_atom_id() == Some(name)
+            })
+        })
+    };
+    let inhibitor = |test: &dyn Fn(&AtomView<'_>) -> bool| {
+        find(&|atom| atom.residue().is_some_and(|r| r.name() == "A1L9E") && test(atom))
+    };
+    [
+        site(chain_a[0], "N"),
+        site(*chain_a.last().unwrap(), "CA"),
+        inhibitor(&|atom| {
+            atom.is_aromatic() == Some(true) && atom.implicit_hydrogens().unwrap_or(0) > 0
+        }),
+        named("PHE", "CZ"),
+        inhibitor(&|atom| atom.neighbors().count() == 1),
+        named("CYS", "SG"),
+        named("HOH", "O"),
+        site(40, "CA"),
+        site(40, "C"),
+        site(41, "O"),
+        site(41, "CB"),
+        site(chain_a[0], "CA"),
+    ]
+}
+
+type KrasEdit = fn(&mut StructureEditor, &[EditAtomId; 12]);
+
+/// Edits of every kind: moves, deletions, additions, element and charge
+/// changes, bond changes, and attachments at chain ends, on rings and
+/// across residues.
+const KRAS_EDITS: [(&str, KrasEdit); 17] = [
+    ("move an atom", |editor, atoms| {
+        let point = Quantity::new(Point3::new(1.0, 2.0, 3.0), ANGSTROM);
+        editor.set_position(atoms[PHE_RING], point).unwrap();
+    }),
+    ("delete the inhibitor's end", |editor, atoms| {
+        editor.delete_atom(atoms[LIGAND_END]).unwrap();
+    }),
+    ("delete an atom inside a chain", |editor, atoms| {
+        editor.delete_atom(atoms[CA_40]).unwrap();
+    }),
+    ("add an atom without a site", |editor, atoms| {
+        let point = Quantity::new(Point3::new(9.0, 9.0, 9.0), ANGSTROM);
+        let carbon = Atom::new(Element::from_symbol("C").unwrap());
+        let added = editor.add_atom(carbon, point).unwrap();
+        editor
+            .add_bond(atoms[LIGAND_RING], added, BondOrder::Single)
+            .unwrap();
+    }),
+    ("change an element", |editor, atoms| {
+        let atom = editor.topology().atom(atoms[PHE_RING]).unwrap().clone();
+        let nitrogen = atom.with_element(Element::from_symbol("N").unwrap());
+        editor.replace_atom(atoms[PHE_RING], nitrogen).unwrap();
+    }),
+    ("change a charge", |editor, atoms| {
+        let atom = editor.topology().atom(atoms[WATER]).unwrap().clone();
+        editor
+            .replace_atom(atoms[WATER], atom.with_formal_charge(-1))
+            .unwrap();
+    }),
+    ("bond the inhibitor to a cysteine", |editor, atoms| {
+        editor
+            .add_bond(atoms[LIGAND_END], atoms[CYS_SG], BondOrder::Single)
+            .unwrap();
+    }),
+    ("cut a chain and change a bond order", |editor, atoms| {
+        let topology = editor.topology();
+        let cut = topology.bond_between(atoms[CA_40], atoms[C_40]).unwrap();
+        let carbonyl = topology.incident_bonds(atoms[O_41]).unwrap().next();
+        let carbonyl = carbonyl.unwrap();
+        editor.delete_bond(cut.unwrap()).unwrap();
+        editor.set_bond_order(carbonyl, BondOrder::Single).unwrap();
+    }),
+    ("attach at both ends of a chain", |editor, atoms| {
+        attach_carbon(editor, atoms[N_END]);
+        attach_carbon(editor, atoms[C_END]);
+    }),
+    ("attach to rings", |editor, atoms| {
+        attach_carbon(editor, atoms[LIGAND_RING]);
+        attach_carbon(editor, atoms[PHE_RING]);
+    }),
+    ("attach across residues in turn", |editor, atoms| {
+        // Residues gain atoms out of creation order, and a new residue's
+        // atom anchors the atoms attached to it.
+        let added = attach_carbon(editor, atoms[N_END]);
+        attach_carbon(editor, atoms[WATER]);
+        attach_carbon(editor, added);
+        let placed = place_carbon(editor, 30.0);
+        attach_carbon(editor, atoms[CB_41]);
+        attach_carbon(editor, placed);
+        attach_carbon(editor, atoms[N_END]);
+        attach_carbon(editor, placed);
+    }),
+    (
+        "attach after moving an atom to an earlier residue",
+        |editor, atoms| {
+            // The moved atom is now the earlier residue's last source atom, and
+            // the residue loses its own last atom: added atoms follow the moved
+            // atom.
+            let residue = residue_of(editor, atoms[CA_40]);
+            let site = editor.topology().atom_site_for_atom(atoms[CB_41]).unwrap();
+            editor
+                .set_atom_site_residue(site.unwrap(), residue)
+                .unwrap();
+            let own = editor
+                .topology()
+                .atom_ids()
+                .filter(|&atom| atom != atoms[CB_41])
+                .filter(|&atom| {
+                    let site = editor.topology().atom_site_for_atom(atom).unwrap();
+                    site.is_some() && residue_of(editor, atom) == residue
+                })
+                .last()
+                .unwrap();
+            editor.delete_atom(own).unwrap();
+            attach_carbon(editor, atoms[CA_40]);
+            attach_carbon(editor, atoms[CB_41]);
+        },
+    ),
+    (
+        "attach to a placed atom, then delete it",
+        |editor, atoms| {
+            // The first atom attached to the placed one then begins the new
+            // residue.
+            let placed = place_carbon(editor, 30.0);
+            attach_carbon(editor, placed);
+            attach_carbon(editor, atoms[LIGAND_RING]);
+            attach_carbon(editor, placed);
+            editor.delete_atom(placed).unwrap();
+        },
+    ),
+    (
+        "attach, then move the atom to another residue",
+        |editor, atoms| {
+            let added = attach_carbon(editor, atoms[N_END]);
+            attach_carbon(editor, atoms[WATER]);
+            let residue = residue_of(editor, atoms[WATER]);
+            let site = editor.topology().atom_site_for_atom(added).unwrap();
+            editor
+                .set_atom_site_residue(site.unwrap(), residue)
+                .unwrap();
+        },
+    ),
+    ("attach after deleting the first atom", |editor, atoms| {
+        editor.delete_atom(atoms[N_END]).unwrap();
+        attach_carbon(editor, atoms[N_END_CA]);
+    }),
+    ("attach and settle the hydrogens", |editor, atoms| {
+        let added = attach_carbon(editor, atoms[LIGAND_RING]);
+        editor.settle_atoms([added, atoms[LIGAND_RING]]).unwrap();
+    }),
+    ("attach after clearing the draft", |editor, _| {
+        editor.clear();
+        let (first, second) = (place_carbon(editor, 0.0), place_carbon(editor, 9.0));
+        attach_carbon(editor, first);
+        attach_carbon(editor, second);
+        attach_carbon(editor, first);
+    }),
+];
+
+#[test]
+fn publication_keeps_the_documented_atom_order_through_every_kind_of_edit() {
+    let kras = perceived_kras();
+    let atoms = kras_atoms(kras.topology());
+    for (name, edit) in KRAS_EDITS {
+        let mut editor = kras.to_editor();
+        let handles = atoms.map(|atom| editor.topology().atom_handle(atom).unwrap());
+        edit(&mut editor, &handles);
+        // Each attachment moves atoms out of handle order.
+        let handle_order = editor.topology().atom_ids().collect::<Vec<_>>();
+        let reordered = documented_order(editor.topology()) != handle_order;
+        assert_eq!(reordered, name.starts_with("attach"), "{name}: reordered");
+        let published = publish_checked(editor, name);
+        // The next edit starts from the published order.
+        let mut again = published.to_editor();
+        let first = again.topology().atom_ids().next().unwrap();
+        again.delete_atom(first).unwrap();
+        let next = again.topology().atom_ids().next().unwrap();
+        attach_carbon(&mut again, next);
+        publish_checked(again, name);
+    }
+}
+
+#[test]
+fn a_draft_without_a_source_publishes_in_the_documented_order() {
+    let mut editor = StructureEditor::new();
+    editor.append_structure(&perceived_kras()).unwrap();
+    let placed = [
+        place_carbon(&mut editor, 0.0),
+        place_carbon(&mut editor, 9.0),
+    ];
+    let first = editor.topology().atom_ids().next().unwrap();
+    for parent in [placed[0], first, placed[1], placed[0]] {
+        attach_carbon(&mut editor, parent);
+    }
+    publish_checked(editor, "a draft without a source");
 }
