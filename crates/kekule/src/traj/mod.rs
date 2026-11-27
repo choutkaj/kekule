@@ -119,10 +119,10 @@
 //! [`FrameSuperposer`] superposes streamed frames. Weighted RMSF and contact
 //! occupancy are [`crate::statistics`]; their accumulators observe streamed
 //! frames through `buffer.as_structure_view()` with explicit weights: one for
-//! equally weighted equilibrium frames, or a reweighting factor. Frames read
-//! and fitted in parallel can be observed in parallel too: observe each range
-//! of frames into its own accumulator and merge the accumulators in range
-//! order.
+//! equally weighted equilibrium frames, or each frame's probability under
+//! its weights. Frames read and fitted in parallel can be observed in
+//! parallel too: observe each range of frames into its own accumulator and
+//! merge the accumulators in range order.
 //!
 //! ```
 //! use kekule::statistics::{RmsfAccumulator, RmsfResult};

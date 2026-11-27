@@ -505,8 +505,8 @@ impl XyzInterpretation {
     }
 }
 
-/// Several frames interpreted as one unordered structure set without a
-/// distribution, with one report per geometry.
+/// Several frames interpreted as one unordered structure set, with one report
+/// per geometry.
 #[derive(Debug, Clone)]
 pub struct XyzStructureSetInterpretation {
     set: StructureSet,
@@ -602,8 +602,8 @@ fn unknown_frame(index: usize) -> FormatError {
     })
 }
 
-/// The selected frames as a structure set without a distribution: an XYZ file
-/// states no weights or states.
+/// The selected frames as an unordered structure set: an XYZ file states no
+/// weights or order.
 pub(crate) fn interpret_xyz_structure_set(
     document: &XyzDocument,
     options: &XyzStructureSetInterpretOptions,

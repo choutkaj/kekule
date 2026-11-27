@@ -36,16 +36,10 @@ pub enum Countable {
     Geometry,
     /// Structures of a collection.
     Structure,
-    /// States of a distribution.
-    State,
-    /// Samples of a distribution.
-    Sample,
-    /// Groups of samples, such as the bins of a histogram.
-    Group,
-    /// Weights, one per atom or sample.
+    /// Clusters of a clustering.
+    Cluster,
+    /// Weights, one per atom.
     Weight,
-    /// Log weights, one per sample of a distribution.
-    LogWeight,
     /// Values of an order, one per geometry of a structure set.
     OrderValue,
     /// Resonance contributors.
@@ -84,11 +78,8 @@ impl Countable {
             Self::Position => "position",
             Self::Geometry => "geometry",
             Self::Structure => "structure",
-            Self::State => "state",
-            Self::Sample => "sample",
-            Self::Group => "group",
+            Self::Cluster => "cluster",
             Self::Weight => "weight",
-            Self::LogWeight => "log weight",
             Self::OrderValue => "order value",
             Self::ResonanceContributor => "resonance contributor",
             Self::SoluteRadius => "solute radius",
@@ -117,11 +108,8 @@ impl Countable {
             Self::Position => "positions",
             Self::Geometry => "geometries",
             Self::Structure => "structures",
-            Self::State => "states",
-            Self::Sample => "samples",
-            Self::Group => "groups",
+            Self::Cluster => "clusters",
             Self::Weight => "weights",
-            Self::LogWeight => "log weights",
             Self::OrderValue => "order values",
             Self::ResonanceContributor => "resonance contributors",
             Self::SoluteRadius => "solute radii",

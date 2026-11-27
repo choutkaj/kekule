@@ -24,12 +24,13 @@ use crate::properties::{
     PropertyValue,
 };
 use crate::structure::{
-    Distribution, Geometry, GeometryIndex, GeometryView, Order, Samples, Sampling, Structure,
-    StructureSet, ThermodynamicState, WeightModel,
+    Geometry, GeometryIndex, GeometryView, Order, Sampling, Structure, StructureSet,
+    ThermodynamicState,
 };
 
 use super::StructureSetDescription;
-use crate::statistics::Estimator;
+use crate::clustering::Clustering;
+use crate::statistics::{WeightSource, Weights};
 use crate::topology::{MoleculeClass, ResidueClass, Topology};
 use crate::units::{BaseDimension, Unit};
 
@@ -92,21 +93,8 @@ pub(crate) fn write_native_to<'a>(
             encoder.structure_set_head(SetHead::of_description(description))?;
             encoder.u8(GEOMETRIES_EXTERNAL)?;
         }
-        NativeContent::Ensemble(ensemble) => {
-            let set = ensemble.set();
-            encoder.structure_set_head(SetHead::of_set(set))?;
-            encoder.distribution(ensemble.distribution())?;
-            encoder.geometries(set.iter().map(GeometryView::payload))?;
-        }
-        NativeContent::EnsembleDescription(description) => {
-            encoder.structure_set_head(SetHead::of_description(description.set()))?;
-            encoder.distribution(description.distribution())?;
-            encoder.u8(GEOMETRIES_EXTERNAL)?;
-        }
-        NativeContent::DistributionDescription(description) => {
-            encoder.count(description.geometry_count())?;
-            encoder.distribution(description.distribution())?;
-        }
+        NativeContent::Weights(weights) => encoder.weights(weights)?,
+        NativeContent::Clustering(clustering) => encoder.clustering(clustering)?,
     }
     encoder.finish()
 }
@@ -116,8 +104,8 @@ pub(super) const GEOMETRIES_INLINE: u8 = 0;
 /// The geometries section's tag for geometries stored elsewhere.
 pub(super) const GEOMETRIES_EXTERNAL: u8 = 1;
 
-/// The sections of a structure set or ensemble record that describe its set,
-/// before the distribution and the geometries.
+/// The sections of a structure set record that describe its set, before the
+/// geometries.
 struct SetHead<'a> {
     topology: &'a Topology,
     properties: &'a OwnerProperties,
@@ -861,59 +849,53 @@ impl<W: Write> Encoder<'_, W> {
         Ok(())
     }
 
-    /// An ensemble's distribution: its samples, weights, partition, states,
-    /// and target.
-    fn distribution(&mut self, distribution: &Distribution) -> Result {
-        match distribution.samples() {
-            Samples::All => self.u8(0)?,
-            Samples::Subset(indices) => {
+    /// Weights: the geometry count, the source, and an optional log weight
+    /// per geometry.
+    fn weights(&mut self, weights: &Weights) -> Result {
+        self.count(weights.len())?;
+        match weights.source() {
+            WeightSource::Equal => self.u8(0)?,
+            WeightSource::Given { temperature } => {
                 self.u8(1)?;
-                self.count(indices.len())?;
-                for index in indices {
-                    self.count(*index)?;
-                }
+                self.opt_f64(temperature.map(|temperature| *temperature.value()))?;
             }
-        }
-        match distribution.weight_model() {
-            WeightModel::Equal => self.u8(0)?,
-            WeightModel::LogWeights(log_weights) => {
-                self.u8(1)?;
-                self.f64s(log_weights)?;
-            }
-            WeightModel::Boltzmann(log_weights) => {
+            WeightSource::Boltzmann {
+                temperature,
+                energy,
+            } => {
                 self.u8(2)?;
-                self.f64s(log_weights)?;
+                self.f64(*temperature.value())?;
+                self.str(energy.as_str())?;
             }
-            WeightModel::Reweighted { estimator, reduced } => {
+            WeightSource::Bias { state } => {
                 self.u8(3)?;
-                match estimator {
-                    Estimator::Exponential => self.u8(0)?,
-                    Estimator::Cumulant(order) => {
-                        self.u8(1)?;
-                        self.u8(order as u8)?;
-                    }
+                self.thermodynamic_state(state)?;
+            }
+        }
+        for log_weight in weights.log_weights() {
+            self.opt_f64(*log_weight)?;
+        }
+        Ok(())
+    }
+
+    /// A clustering: the geometry count, the cluster count, an optional
+    /// cluster per geometry, and a representative per cluster.
+    fn clustering(&mut self, clustering: &Clustering) -> Result {
+        self.count(clustering.len())?;
+        self.count(clustering.cluster_count())?;
+        for cluster in clustering.assignments() {
+            match cluster {
+                None => self.u8(0)?,
+                Some(cluster) => {
+                    self.u8(1)?;
+                    self.count(*cluster)?;
                 }
-                self.f64s(reduced)?;
             }
         }
-        let partition = distribution.partition();
-        for state in partition.assignments() {
-            self.count(*state)?;
-        }
-        self.count(distribution.state_count())?;
-        for (index, representative) in partition.representatives().iter().enumerate() {
-            let state = distribution.state(index);
+        for representative in clustering.representatives() {
             self.count(*representative)?;
-            self.opt_f64(state.energy().map(|energy| *energy.value()))?;
-            self.owner(state.properties())?;
         }
-        match distribution.target() {
-            None => self.u8(0),
-            Some(target) => {
-                self.u8(1)?;
-                self.thermodynamic_state(&target)
-            }
-        }
+        Ok(())
     }
 
     /// A thermodynamic state: its temperature and its pressure, if any.

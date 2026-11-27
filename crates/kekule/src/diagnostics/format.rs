@@ -226,8 +226,7 @@ pub enum FormatErrorDetail {
     /// A record title or name cannot be written: an SDF or Molfile title, or
     /// a SMILES record name.
     Title,
-    /// An SDF data field cannot be written, or holds an invalid ensemble
-    /// member value.
+    /// An SDF data field cannot be written, or holds an invalid value.
     DataField {
         /// The field name.
         name: String,

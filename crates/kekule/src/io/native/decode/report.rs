@@ -2,11 +2,7 @@
 
 use std::io::Read;
 
-use super::super::{
-    AROMATIC_TEMPLATE_ORDER, BEYOND_TEMPLATE_BOND_SINCE, BOND_SOURCES_SINCE,
-    DICTIONARY_CHARGES_SINCE, DISULFIDE_SINCE, PDB_NUMBERING_SINCE, PROTONATION_SINCE,
-    SEVERAL_BONDS_SINCE,
-};
+use super::super::AROMATIC_TEMPLATE_ORDER;
 use super::{bond_order, Decoder, Result};
 use crate::diagnostics::{Resource, SourceLocation};
 use crate::io::{
@@ -441,14 +437,7 @@ impl<R: Read> Decoder<'_, R> {
         }
 
         let refs = self.atom_refs(&molecules, &bond_lengths, 2)?;
-        let last_code = if self.version >= PROTONATION_SINCE {
-            8
-        } else if self.version >= DISULFIDE_SINCE {
-            7
-        } else {
-            6
-        };
-        let codes = self.packed_codes(bond_total, last_code, "bond evidence")?;
+        let codes = self.packed_codes(bond_total, 8, "bond evidence")?;
         let templates = codes.iter().filter(|&&code| code == 1).count();
         let mut template_components = self.required_dictionary(templates)?.into_iter();
         let mut template_variants = self.dictionary(templates, false)?.into_iter();
@@ -671,11 +660,7 @@ impl<R: Read> Decoder<'_, R> {
                 residue: self.residue()?,
                 component_id: self.str()?,
                 bonds: self.usize()?,
-                neutral_centres: if self.version >= BOND_SOURCES_SINCE {
-                    self.neutral_centres()?
-                } else {
-                    Vec::new()
-                },
+                neutral_centres: self.neutral_centres()?,
             },
             13 => Issue::HydrogenAttachedByDistance {
                 residue: self.residue()?,
@@ -748,26 +733,26 @@ impl<R: Read> Decoder<'_, R> {
                     line: self.opt_usize()?,
                 }
             }
-            20 if self.version >= DISULFIDE_SINCE => Issue::DisulfideInferred {
+            20 => Issue::DisulfideInferred {
                 residues: [self.residue()?, self.residue()?],
             },
-            21 if self.version >= DISULFIDE_SINCE => Issue::ForceFieldTemplate {
+            21 => Issue::ForceFieldTemplate {
                 residue: self.residue()?,
                 component_id: self.str()?,
                 force_field: self.str()?,
             },
-            22 if self.version >= BOND_SOURCES_SINCE => Issue::ResidueBondOrdersUnstated {
+            22 => Issue::ResidueBondOrdersUnstated {
                 residue: self.residue()?,
                 component_id: self.str()?,
                 bonds: self.usize()?,
                 neutral_centres: self.neutral_centres()?,
             },
-            23 if self.version >= BOND_SOURCES_SINCE => Issue::BondNotInTemplate {
+            23 => Issue::BondNotInTemplate {
                 residue: self.residue()?,
                 component_id: self.str()?,
                 atoms: [self.str()?, self.str()?],
             },
-            24 if self.version >= BOND_SOURCES_SINCE => {
+            24 => {
                 let residue = self.residue()?;
                 let component_id = self.str()?;
                 let atoms = [self.str()?, self.str()?];
@@ -785,52 +770,52 @@ impl<R: Read> Decoder<'_, R> {
                     template_order,
                 }
             }
-            25 if self.version >= BOND_SOURCES_SINCE => Issue::PolymerLinkSkipped {
+            25 => Issue::PolymerLinkSkipped {
                 residue: self.residue()?,
                 next: self.residue()?,
             },
-            26 if self.version >= BOND_SOURCES_SINCE => Issue::LinkingAtomMissing {
+            26 => Issue::LinkingAtomMissing {
                 residue: self.residue()?,
                 next: self.residue()?,
             },
-            27 if self.version >= BOND_SOURCES_SINCE => Issue::ResidueFitsNoTemplate {
+            27 => Issue::ResidueFitsNoTemplate {
                 residue: self.residue()?,
                 component_id: self.str()?,
             },
-            28 if self.version >= BOND_SOURCES_SINCE => Issue::StatedOrdersDisagreeWithHydrogens {
+            28 => Issue::StatedOrdersDisagreeWithHydrogens {
                 residue: self.residue()?,
                 component_id: self.str()?,
             },
-            29 if self.version >= BOND_SOURCES_SINCE => Issue::MetalValenceIncomplete {
+            29 => Issue::MetalValenceIncomplete {
                 residue: self.residue()?,
                 component_id: self.str()?,
                 atom_name: self.str()?,
                 valence: self.u8()?,
             },
-            30 if self.version >= BOND_SOURCES_SINCE => Issue::MetalDonors {
+            30 => Issue::MetalDonors {
                 residue: self.residue()?,
                 component_id: self.str()?,
                 atom_names: self.str_list()?,
             },
-            31 if self.version >= PDB_NUMBERING_SINCE => Issue::ElementsFromTemplates {
+            31 => Issue::ElementsFromTemplates {
                 source_lines: self.usizes()?,
             },
-            32 if self.version >= PDB_NUMBERING_SINCE => Issue::UnsignedCharges {
+            32 => Issue::UnsignedCharges {
                 source_lines: self.usizes()?,
             },
-            33 if self.version >= PDB_NUMBERING_SINCE => Issue::HexadecimalNumbers {
+            33 => Issue::HexadecimalNumbers {
                 field: self.number_field()?,
                 source_line: self.usize()?,
             },
-            34 if self.version >= PDB_NUMBERING_SINCE => Issue::NumbersRestart {
+            34 => Issue::NumbersRestart {
                 field: self.number_field()?,
                 source_line: self.usize()?,
             },
-            35 if self.version >= PDB_NUMBERING_SINCE => Issue::MetalBondsUnstated {
+            35 => Issue::MetalBondsUnstated {
                 residue: self.residue()?,
                 bonds: self.usize()?,
             },
-            36 if self.version >= PROTONATION_SINCE => {
+            36 => {
                 let count = self.items()?;
                 let mut components = Vec::with_capacity(count.min(super::CHUNK_BYTES));
                 for _ in 0..count {
@@ -838,84 +823,84 @@ impl<R: Read> Decoder<'_, R> {
                 }
                 Issue::ProtonationAssumed { components }
             }
-            37 if self.version >= PROTONATION_SINCE => Issue::HydrogensMissing {
+            37 => Issue::HydrogensMissing {
                 residue: self.residue()?,
                 component_id: self.str()?,
                 atoms: self.str_list()?,
             },
-            38 if self.version >= PROTONATION_SINCE => Issue::ZeroOccupancyHydrogens {
+            38 => Issue::ZeroOccupancyHydrogens {
                 residue: self.residue()?,
                 atoms: self.str_list()?,
             },
-            39 if self.version >= PROTONATION_SINCE => Issue::HydrogenReplacedByCoordination {
+            39 => Issue::HydrogenReplacedByCoordination {
                 residue: self.residue()?,
                 component_id: self.str()?,
                 atoms: self.str_list()?,
             },
-            40 if self.version >= PROTONATION_SINCE => Issue::StatedChargeKept {
+            40 => Issue::StatedChargeKept {
                 residue: self.residue()?,
                 component_id: self.str()?,
                 atom_name: self.str()?,
                 stated: i8::from_le_bytes(self.array()?),
                 derived: i8::from_le_bytes(self.array()?),
             },
-            41 if self.version >= PROTONATION_SINCE => Issue::StatedChargeRejected {
+            41 => Issue::StatedChargeRejected {
                 residue: self.residue()?,
                 component_id: self.str()?,
                 atom_name: self.str()?,
                 stated: i8::from_le_bytes(self.array()?),
                 kept: i8::from_le_bytes(self.array()?),
             },
-            42 if self.version >= PROTONATION_SINCE => Issue::TemplateChargeUnknown {
+            42 => Issue::TemplateChargeUnknown {
                 residue: self.residue()?,
                 component_id: self.str()?,
                 atoms: self.str_list()?,
             },
-            43 if self.version >= PROTONATION_SINCE => Issue::TemplateMissing {
+            43 => Issue::TemplateMissing {
                 residue: self.residue()?,
                 component_id: self.str()?,
             },
-            44 if self.version >= PROTONATION_SINCE => Issue::AtomsMissing {
+            44 => Issue::AtomsMissing {
                 residue: self.residue()?,
                 component_id: self.str()?,
                 atoms: self.str_list()?,
             },
-            45 if self.version >= PROTONATION_SINCE => Issue::TerminalAtomMissing {
+            45 => Issue::TerminalAtomMissing {
                 residue: self.residue()?,
                 component_id: self.str()?,
                 atom_name: self.str()?,
                 anchor: self.str()?,
             },
-            46 if self.version >= PROTONATION_SINCE => Issue::PolymerLinkMissing {
+            46 => Issue::PolymerLinkMissing {
                 residue: self.residue()?,
                 component_id: self.str()?,
                 atom_name: self.str()?,
             },
-            47 if self.version >= PROTONATION_SINCE => Issue::StatedChargeResonance {
+            47 => Issue::StatedChargeResonance {
                 residue: self.residue()?,
                 component_id: self.str()?,
                 charged_atoms: self.charged_atoms()?,
             },
-            48 if self.version >= PROTONATION_SINCE => Issue::SequenceNotPlaced {
+            48 => Issue::SequenceNotPlaced {
                 chain_id: self.str()?,
             },
-            49 if self.version >= DICTIONARY_CHARGES_SINCE => Issue::ChargesFromDictionary {
+            49 => Issue::ChargesFromDictionary {
                 residue: self.residue()?,
                 component_id: self.str()?,
                 charged_atoms: self.charged_atoms()?,
                 unheld: self.charged_atoms()?,
             },
-            50 if self.version >= DICTIONARY_CHARGES_SINCE => Issue::DictionaryAtomsUnmatched {
+            50 => Issue::DictionaryAtomsUnmatched {
                 residue: self.residue()?,
                 component_id: self.str()?,
                 atoms: self.str_list()?,
             },
-            51 if self.version >= SEVERAL_BONDS_SINCE => Issue::HydrogenWithSeveralBonds {
+            51 => Issue::HydrogenWithSeveralBonds {
                 residue: self.residue()?,
                 atom_name: self.str()?,
                 bonds: self.usize()?,
             },
-            52 if self.version >= BEYOND_TEMPLATE_BOND_SINCE => Issue::HydrogenBeyondTemplateBond {
+            52 => Issue::HydrogenBeyondTemplateBond {
                 residue: self.residue()?,
                 atom_name: self.str()?,
                 anchor_name: self.str()?,

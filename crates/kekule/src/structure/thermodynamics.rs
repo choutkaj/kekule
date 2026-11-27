@@ -8,10 +8,9 @@ use crate::units::{
 
 /// A temperature and, in the isothermal-isobaric ensemble, a pressure.
 ///
-/// A state is what a weight means something against: the state a run
-/// sampled, or the state an analysis reweights to. A state with a pressure
-/// is isothermal-isobaric (NpT) and one without is canonical (NVT). The
-/// pressure is recorded, not reweighted.
+/// A state is what a weight means something against, such as the state a
+/// run sampled. A state with a pressure is isothermal-isobaric (NpT) and one
+/// without is canonical (NVT).
 ///
 /// The temperature is finite and positive, and so is its thermal energy `RT`;
 /// the pressure is finite and positive. They are stored in

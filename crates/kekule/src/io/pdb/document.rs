@@ -644,8 +644,8 @@ impl PdbDocument {
 
     /// Interprets the coordinate models that `options` selects, by default
     /// all of them, as an unordered structure set with one report per geometry.
-    /// The set has no weights or states;
-    /// [`Ensemble::uniform`](crate::structure::Ensemble::uniform) weighs its
+    /// The set has no weights or clusters;
+    /// [`Weights::equal`](crate::statistics::Weights::equal) weighs its
     /// models the same. Occupancy is not converted into a weight.
     ///
     /// # Errors

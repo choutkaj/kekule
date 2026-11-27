@@ -10,8 +10,7 @@ use kekule::properties::{
     PropertyColumn, PropertyError, PropertyKey, PropertyValue, PropertyValueRef,
 };
 use kekule::structure::{
-    DenseArrayError, Ensemble, Geometry, GeometryError, GeometryIndex, Positions, Structure,
-    StructureSet, StructureSetError,
+    DenseArrayError, Geometry, GeometryError, GeometryIndex, Positions, Structure, StructureSet,
 };
 use kekule::topology::{
     AtomSelection, InstanceAtomId, TopologyAtomIndex, TopologyBondIndex, TopologyBuilder,
@@ -100,18 +99,7 @@ fn detached_geometries_get_bond_rows_only_when_bound() {
 #[test]
 fn geometry_editor_preserves_dimensions_and_validated_values() {
     let (structure, _) = carbon_monoxide();
-    let mut set = Ensemble::uniform(StructureSet::from_structures([structure]).unwrap());
-    let mut distribution = set.distribution_mut();
-    let log_weight = 0.5_f64.ln();
-    distribution.set_log_weight(0, log_weight).unwrap();
-    // Log weights are finite; any sign is a positive weight.
-    for invalid in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
-        assert_eq!(
-            distribution.set_log_weight(0, invalid),
-            Err(StructureSetError::NonFiniteLogWeight { geometry: 0 })
-        );
-        assert_eq!(distribution.log_weight(0), Some(log_weight));
-    }
+    let mut set = StructureSet::from_structures([structure]).unwrap();
     {
         let mut member = set.get_mut(0).unwrap();
         let properties = member.properties().clone();
@@ -132,8 +120,7 @@ fn geometry_editor_preserves_dimensions_and_validated_values() {
         );
         assert_eq!(member.positions().len(), 2);
     }
-    let member = set.set().get(0).unwrap();
-    assert_eq!(set.distribution().log_weight(0), Some(log_weight));
+    let member = set.get(0).unwrap();
     assert_eq!(member.as_structure_view().positions().len(), 2);
     assert_eq!(member.to_structure().properties().bonds().len(), 1);
 }

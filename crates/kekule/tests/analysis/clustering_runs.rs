@@ -1,5 +1,5 @@
 //! Clustering runs on executors: every executor and thread count returns the
-//! single-threaded matrix, partition, or error; progress counts up to the
+//! single-threaded matrix, clustering, or error; progress counts up to the
 //! total; and a cancelled run returns no result.
 
 use std::num::NonZeroUsize;
@@ -7,18 +7,19 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use kekule::alignment::{self, AlignmentError, AlignmentGeometry};
-use kekule::clustering::ClusteringError;
+use kekule::clustering::{Clustering, ClusteringError};
 use kekule::diagnostics::Cancellation;
 use kekule::math::Point3;
 use kekule::parallel::{Executor, Progress, Run, ScopedThreads};
-use kekule::structure::{Ensemble, Geometry, Partition, Positions, StructureSet};
+use kekule::statistics::Weights;
+use kekule::structure::{Geometry, Positions, StructureSet};
 use kekule::topology::{AtomSelection, Topology};
 use kekule::units::{Quantity, ANGSTROM, CANONICAL_LENGTH_UNIT};
 
 use crate::support::{Interleaved, Reversed};
 
 /// Enough atoms that one fit makes a checkpoint and four a work item, so
-/// small ensembles split.
+/// small sets split.
 const ATOMS: usize = 16_384;
 
 /// Deterministic values in `[0, 1)` from a linear congruential generator.
@@ -44,23 +45,22 @@ fn geometry(points: Vec<Point3>, weight: f64) -> (Geometry, f64) {
     (geometry, weight)
 }
 
-/// Weighted geometries, each its own state, with the natural logarithms of
-/// their linear weights.
-fn conformers(topology: Arc<Topology>, members: Vec<(Geometry, f64)>) -> Ensemble {
+/// A set of the geometries and the weights of their linear weights.
+fn conformers(topology: Arc<Topology>, members: Vec<(Geometry, f64)>) -> (StructureSet, Weights) {
     let (geometries, weights): (Vec<_>, Vec<_>) = members.into_iter().unzip();
-    let log_weights = weights.into_iter().map(f64::ln).collect::<Vec<_>>();
-    let partition = Partition::state_per_sample(geometries.len());
+    let log_weights = weights
+        .into_iter()
+        .map(|weight| Some(weight.ln()))
+        .collect();
     let set = StructureSet::from_geometries(topology, geometries).unwrap();
-    let mut ensemble = Ensemble::weighted(set, log_weights).unwrap();
-    ensemble.distribution_mut().regroup(partition).unwrap();
-    ensemble
+    (set, Weights::given(log_weights, None).unwrap())
 }
 
 /// `distinct` random structures, then `copies` of them perturbed by a
 /// hundredth of an angstrom, interleaved, with distinct weights. With
 /// `collinear`, those members lie on a line instead, so no fit to them
 /// succeeds.
-fn ensemble(distinct: usize, copies: usize, collinear: &[usize]) -> Ensemble {
+fn conformer_set(distinct: usize, copies: usize, collinear: &[usize]) -> (StructureSet, Weights) {
     let topology = topology(ATOMS);
     let mut random = Lcg(7);
     let bases = (0..distinct)
@@ -107,7 +107,7 @@ fn ensemble(distinct: usize, copies: usize, collinear: &[usize]) -> Ensemble {
 /// `members` copies of `bases` random structures of `atoms` atoms, each
 /// displaced by up to its own amplitude of zero to two angstroms, with
 /// distinct weights.
-fn jittered(atoms: usize, bases: usize, members: usize) -> Ensemble {
+fn jittered(atoms: usize, bases: usize, members: usize) -> (StructureSet, Weights) {
     let mut random = Lcg(3);
     let bases = (0..bases)
         .map(|_| {
@@ -144,12 +144,17 @@ fn jittered(atoms: usize, bases: usize, members: usize) -> Ensemble {
 /// Leader clustering as documented, one fit at a time: members by
 /// descending weight join the nearest earlier representative within
 /// `radius`, the first on ties, or found a cluster.
-fn naive_leaders(ensemble: &Ensemble, atoms: &AtomSelection, radius: Quantity<f64>) -> Partition {
+fn naive_leaders(
+    set: &StructureSet,
+    weights: &Weights,
+    atoms: &AtomSelection,
+    radius: Quantity<f64>,
+) -> Clustering {
     let radius = radius.value_in(CANONICAL_LENGTH_UNIT).unwrap();
-    let view = |member: usize| ensemble.set().get(member).unwrap().as_structure_view();
-    let mut assignments = vec![0; ensemble.set().len()];
+    let view = |member: usize| set.get(member).unwrap().as_structure_view();
+    let mut assignments = vec![None; set.len()];
     let mut representatives: Vec<usize> = Vec::new();
-    for member in ensemble.distribution().ranked_by_weight() {
+    for member in weights.ranked() {
         let mut nearest: Option<(usize, f64)> = None;
         for (cluster, representative) in representatives.iter().enumerate() {
             let rmsd = alignment::fit(
@@ -166,15 +171,15 @@ fn naive_leaders(ensemble: &Ensemble, atoms: &AtomSelection, radius: Quantity<f6
                 nearest = Some((cluster, rmsd));
             }
         }
-        assignments[member] = match nearest {
+        assignments[member] = Some(match nearest {
             Some((cluster, _)) => cluster,
             None => {
                 representatives.push(member);
                 representatives.len() - 1
             }
-        };
+        });
     }
-    Partition::new(assignments, representatives).unwrap()
+    Clustering::new(assignments, representatives).unwrap()
 }
 
 /// [`ScopedThreads`] that records the most work items one call ran.
@@ -247,10 +252,10 @@ impl Reports {
 
 #[test]
 fn pairwise_rmsd_is_the_serial_matrix_on_every_executor() {
-    let ensemble = ensemble(5, 1, &[]);
-    let atoms = AtomSelection::all(ensemble.set().shared_topology());
-    let serial = ensemble
-        .pairwise_fitted_rmsd(&atoms, Default::default())
+    let (set, weights) = conformer_set(5, 1, &[]);
+    let atoms = AtomSelection::all(set.shared_topology());
+    let serial = set
+        .pairwise_fitted_rmsd(&atoms, Some(&weights), Default::default())
         .unwrap();
     for executor in executors() {
         let reports = Reports::default();
@@ -258,8 +263,8 @@ fn pairwise_rmsd_is_the_serial_matrix_on_every_executor() {
         let run = Run::default()
             .with_executor(executor.as_ref())
             .with_progress(&progress);
-        let matrix = ensemble
-            .pairwise_fitted_rmsd_with(&atoms, Default::default(), run)
+        let matrix = set
+            .pairwise_fitted_rmsd_with(&atoms, Some(&weights), Default::default(), run)
             .unwrap();
         assert_eq!(matrix, serial);
         assert_eq!(reports.checked(15).last(), Some(&15));
@@ -268,8 +273,7 @@ fn pairwise_rmsd_is_the_serial_matrix_on_every_executor() {
     let recording = Recording::new(4);
     let run = Run::default().with_executor(&recording);
     assert_eq!(
-        ensemble
-            .pairwise_fitted_rmsd_with(&atoms, Default::default(), run)
+        set.pairwise_fitted_rmsd_with(&atoms, Some(&weights), Default::default(), run)
             .unwrap(),
         serial
     );
@@ -281,13 +285,13 @@ fn pairwise_rmsd_is_the_serial_matrix_on_every_executor() {
 }
 
 #[test]
-fn radius_clustering_is_the_serial_partition_on_every_executor() {
-    let ensemble = ensemble(9, 2, &[]);
-    let atoms = AtomSelection::all(ensemble.set().shared_topology());
-    let serial = ensemble
-        .cluster_by_radius(radius(), &atoms, Default::default())
+fn radius_clustering_is_the_serial_clustering_on_every_executor() {
+    let (set, weights) = conformer_set(9, 2, &[]);
+    let atoms = AtomSelection::all(set.shared_topology());
+    let serial = set
+        .cluster_by_radius(radius(), &atoms, Some(&weights), Default::default())
         .unwrap();
-    assert_eq!(serial, naive_leaders(&ensemble, &atoms, radius()));
+    assert_eq!(serial, naive_leaders(&set, &weights, &atoms, radius()));
     assert_eq!(serial.representatives().len(), 9);
     for executor in executors() {
         let reports = Reports::default();
@@ -295,18 +299,17 @@ fn radius_clustering_is_the_serial_partition_on_every_executor() {
         let run = Run::default()
             .with_executor(executor.as_ref())
             .with_progress(&progress);
-        let partition = ensemble
-            .cluster_by_radius_with(radius(), &atoms, Default::default(), run)
+        let clustering = set
+            .cluster_by_radius_with(radius(), &atoms, Some(&weights), Default::default(), run)
             .unwrap();
-        assert_eq!(partition, serial);
+        assert_eq!(clustering, serial);
         assert_eq!(reports.checked(11).last(), Some(&11));
     }
 
     let recording = Recording::new(2);
     let run = Run::default().with_executor(&recording);
     assert_eq!(
-        ensemble
-            .cluster_by_radius_with(radius(), &atoms, Default::default(), run)
+        set.cluster_by_radius_with(radius(), &atoms, Some(&weights), Default::default(), run)
             .unwrap(),
         serial
     );
@@ -319,16 +322,15 @@ fn radius_clustering_is_the_serial_partition_on_every_executor() {
 
 #[test]
 fn radius_clustering_places_members_as_one_fit_at_a_time_would() {
-    let ensemble = jittered(6, 7, 120);
-    let atoms = AtomSelection::all(ensemble.set().shared_topology());
+    let (set, weights) = jittered(6, 7, 120);
+    let atoms = AtomSelection::all(set.shared_topology());
     let mut cluster_counts = Vec::new();
     for value in [0.0, 0.4, 0.8, 1.5, 100.0] {
         let radius = Quantity::new(value, ANGSTROM);
-        let expected = naive_leaders(&ensemble, &atoms, radius);
+        let expected = naive_leaders(&set, &weights, &atoms, radius);
         cluster_counts.push(expected.representatives().len());
         assert_eq!(
-            ensemble
-                .cluster_by_radius(radius, &atoms, Default::default())
+            set.cluster_by_radius(radius, &atoms, Some(&weights), Default::default())
                 .unwrap(),
             expected,
             "{value} A"
@@ -336,8 +338,7 @@ fn radius_clustering_places_members_as_one_fit_at_a_time_would() {
         for executor in executors() {
             let run = Run::default().with_executor(executor.as_ref());
             assert_eq!(
-                ensemble
-                    .cluster_by_radius_with(radius, &atoms, Default::default(), run)
+                set.cluster_by_radius_with(radius, &atoms, Some(&weights), Default::default(), run)
                     .unwrap(),
                 expected,
                 "{value} A"
@@ -356,9 +357,9 @@ fn radius_clustering_places_members_as_one_fit_at_a_time_would() {
 
 #[test]
 fn failed_fits_report_the_serial_error_on_every_executor() {
-    let ensemble = ensemble(9, 0, &[4, 7]);
-    let atoms = AtomSelection::all(ensemble.set().shared_topology());
-    let matrix = ensemble.pairwise_fitted_rmsd(&atoms, Default::default());
+    let (set, weights) = conformer_set(9, 0, &[4, 7]);
+    let atoms = AtomSelection::all(set.shared_topology());
+    let matrix = set.pairwise_fitted_rmsd(&atoms, Some(&weights), Default::default());
     assert_eq!(
         matrix,
         Err(ClusteringError::PairFit {
@@ -369,17 +370,17 @@ fn failed_fits_report_the_serial_error_on_every_executor() {
             }),
         })
     );
-    let partition = ensemble.cluster_by_radius(radius(), &atoms, Default::default());
-    assert!(matches!(partition, Err(ClusteringError::Alignment(_))));
+    let clustering = set.cluster_by_radius(radius(), &atoms, Some(&weights), Default::default());
+    assert!(matches!(clustering, Err(ClusteringError::Alignment(_))));
     for executor in executors() {
         let run = Run::default().with_executor(executor.as_ref());
         assert_eq!(
-            ensemble.pairwise_fitted_rmsd_with(&atoms, Default::default(), run),
+            set.pairwise_fitted_rmsd_with(&atoms, Some(&weights), Default::default(), run),
             matrix
         );
         assert_eq!(
-            ensemble.cluster_by_radius_with(radius(), &atoms, Default::default(), run),
-            partition
+            set.cluster_by_radius_with(radius(), &atoms, Some(&weights), Default::default(), run),
+            clustering
         );
     }
 }
@@ -390,8 +391,8 @@ fn cancelled<T>(result: Result<T, ClusteringError>) -> bool {
 
 #[test]
 fn cancelled_runs_return_no_result() {
-    let ensemble = ensemble(5, 1, &[]);
-    let atoms = AtomSelection::all(ensemble.set().shared_topology());
+    let (set, weights) = conformer_set(5, 1, &[]);
+    let atoms = AtomSelection::all(set.shared_topology());
 
     // Requested before the run: nothing is fitted.
     let requested = Cancellation::new(|| true);
@@ -400,21 +401,24 @@ fn cancelled_runs_return_no_result() {
     let run = Run::default()
         .with_cancellation(&requested)
         .with_progress(&progress);
-    assert!(cancelled(ensemble.pairwise_fitted_rmsd_with(
+    assert!(cancelled(set.pairwise_fitted_rmsd_with(
         &atoms,
+        Some(&weights),
         Default::default(),
         run
     )));
     assert_eq!(reports.checked(15), [0]);
-    assert!(cancelled(ensemble.cluster_by_radius_with(
+    assert!(cancelled(set.cluster_by_radius_with(
         radius(),
         &atoms,
+        Some(&weights),
         Default::default(),
         run
     )));
     assert!(cancelled(
-        StructureSet::new(ensemble.set().shared_topology()).pairwise_fitted_rmsd_with(
+        StructureSet::new(set.shared_topology()).pairwise_fitted_rmsd_with(
             &atoms,
+            None,
             Default::default(),
             run
         )
@@ -435,8 +439,9 @@ fn cancelled_runs_return_no_result() {
             .with_executor(executor.as_ref())
             .with_cancellation(&cancellation)
             .with_progress(&progress);
-        assert!(cancelled(ensemble.pairwise_fitted_rmsd_with(
+        assert!(cancelled(set.pairwise_fitted_rmsd_with(
             &atoms,
+            Some(&weights),
             Default::default(),
             run
         )));
@@ -452,9 +457,10 @@ fn cancelled_runs_return_no_result() {
             }
         };
         let run = run.with_progress(&progress);
-        assert!(cancelled(ensemble.cluster_by_radius_with(
+        assert!(cancelled(set.cluster_by_radius_with(
             radius(),
             &atoms,
+            Some(&weights),
             Default::default(),
             run
         )));
@@ -479,15 +485,15 @@ impl Executor for Skipping {
 #[test]
 #[should_panic(expected = "executor skipped work item 2")]
 fn an_executor_that_skips_work_items_panics() {
-    let ensemble = ensemble(5, 1, &[]);
-    let atoms = AtomSelection::all(ensemble.set().shared_topology());
+    let (set, weights) = conformer_set(5, 1, &[]);
+    let atoms = AtomSelection::all(set.shared_topology());
     let run = Run::default().with_executor(&Skipping);
-    let _ = ensemble.pairwise_fitted_rmsd_with(&atoms, Default::default(), run);
+    let _ = set.pairwise_fitted_rmsd_with(&atoms, Some(&weights), Default::default(), run);
 }
 
 /// 1,000 geometries of the first 352 alpha carbons of RCSB 1AKE, each atom
 /// displaced by up to a geometry's own amplitude of 0.2 to 1.5 angstroms.
-fn adenylate_kinase_geometries() -> (Ensemble, AtomSelection) {
+fn adenylate_kinase_geometries() -> (StructureSet, Weights, AtomSelection) {
     let structure = kekule::mmcif::parse_str(
         include_str!("../fixtures/mmcif/1AKE.cif"),
         Default::default(),
@@ -519,7 +525,8 @@ fn adenylate_kinase_geometries() -> (Ensemble, AtomSelection) {
         let positions = Positions::new(Quantity::new(moved, unit)).unwrap();
         geometries.push((Geometry::new(positions), 1.0));
     }
-    (conformers(topology, geometries), atoms)
+    let (set, weights) = conformers(topology, geometries);
+    (set, weights, atoms)
 }
 
 #[test]
@@ -528,14 +535,14 @@ fn clustering_timing_on_a_thousand_geometries_of_352_atoms() {
     use kekule::clustering::{Cut, Linkage};
     use std::time::Instant;
 
-    let (ensemble, atoms) = adenylate_kinase_geometries();
+    let (set, weights, atoms) = adenylate_kinase_geometries();
     let available = std::thread::available_parallelism().map_or(1, NonZeroUsize::get);
-    let serial = ensemble
-        .pairwise_fitted_rmsd(&atoms, Default::default())
+    let serial = set
+        .pairwise_fitted_rmsd(&atoms, Some(&weights), Default::default())
         .unwrap();
     let radius = Quantity::new(1.0, ANGSTROM);
-    let leaders = ensemble
-        .cluster_by_radius(radius, &atoms, Default::default())
+    let leaders = set
+        .cluster_by_radius(radius, &atoms, Some(&weights), Default::default())
         .unwrap();
     let mut report = format!(
         "1,000 geometries of 352 atoms, {} leader clusters within 1 A:",
@@ -545,22 +552,21 @@ fn clustering_timing_on_a_thousand_geometries_of_352_atoms() {
         let executor = ScopedThreads::new(NonZeroUsize::new(threads).unwrap());
         let run = Run::default().with_executor(&executor);
         let start = Instant::now();
-        let matrix = ensemble
-            .pairwise_fitted_rmsd_with(&atoms, Default::default(), run)
+        let matrix = set
+            .pairwise_fitted_rmsd_with(&atoms, Some(&weights), Default::default(), run)
             .unwrap();
         let pairs = start.elapsed();
         assert_eq!(matrix, serial, "{threads} threads");
         let start = Instant::now();
-        ensemble
-            .cluster_hierarchical(&matrix, Linkage::Average, Cut::Count(10))
+        set.cluster_hierarchical(&matrix, Some(&weights), Linkage::Average, Cut::Count(10))
             .unwrap();
         let hierarchical = start.elapsed();
         let start = Instant::now();
-        let partition = ensemble
-            .cluster_by_radius_with(radius, &atoms, Default::default(), run)
+        let clustering = set
+            .cluster_by_radius_with(radius, &atoms, Some(&weights), Default::default(), run)
             .unwrap();
         let leader = start.elapsed();
-        assert_eq!(partition, leaders, "{threads} threads");
+        assert_eq!(clustering, leaders, "{threads} threads");
         report += &format!(
             "\n  {threads} threads: matrix {pairs:.2?}, hierarchical cut {hierarchical:.2?}, leader {leader:.2?}"
         );

@@ -205,9 +205,8 @@ impl MemoryTrajectoryWriter {
         }
     }
 
-    /// The frames written so far, in write order: a set with a time order
-    /// and without a distribution, or an empty, unordered set when no frame
-    /// was written.
+    /// The frames written so far, in write order: a set with a time order, or
+    /// an empty, unordered set when no frame was written.
     pub fn into_structure_set(self) -> StructureSet {
         self.set
     }

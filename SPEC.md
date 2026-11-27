@@ -20,10 +20,10 @@ cross-module rule.
 | `Hierarchy` | Chains, residues, and atom sites over live instance atoms, with source labels and author identifiers | Atoms, bonds, or molecule boundaries |
 | `Geometry` | The one owned coordinate payload, shared and copied on write: one arrangement of a topology's atoms in dense atom order, with positions, optional cell, occupancies, B factors, velocities, forces, and `GeometryProperties` | A topology; a place in an order; a weight; owner values while a set in memory holds it |
 | `Structure` | One shared `Topology` and one `Geometry` bound to it | A second chemical or hierarchy model; a place in an order |
-| `StructureSet` | One shared topology, set properties, `Geometry` values in a stable order, an optional `Order` with one value per geometry, per-geometry columns (`PropertyTable<GeometryIndex>`), the only home of its geometries' scalars, and an optional `Sampling` record | An order value on a geometry; a scalar on a geometry; a weight, a target state, or a distribution; a codec's frame state or a reader's failure types |
-| `Sampling` | The sampled `ThermodynamicState`, the first sampled step, the keys of the set's bias columns and optional potential-energy column, and an optional method label | Column values; a weight or a target state; a method's parameters |
-| `Ensemble` | One `StructureSet` and one `Distribution` over its geometries | Geometries of its own; an energy on a geometry; a stored population |
-| `Distribution` | `Samples` (every geometry of the set or a sorted subset), a weight model (equal, log weights, Boltzmann populations, or reduced biases with an `Estimator`), one `Partition` of the samples into states, one `StateData` per state, and an optional target `ThermodynamicState` | Geometries; per-geometry energies |
+| `StructureSet` | One shared topology, set properties, `Geometry` values in a stable order, an optional `Order` with one value per geometry, per-geometry columns (`PropertyTable<GeometryIndex>`), the only home of its geometries' scalars, and an optional `Sampling` record | An order value on a geometry; a scalar on a geometry; weights or a clustering; a codec's frame state or a reader's failure types |
+| `Sampling` | The sampled `ThermodynamicState`, the first sampled step, the keys of the set's bias columns and optional potential-energy column, and an optional method label | Column values; a weight; a method's parameters |
+| `Weights` | One optional natural-log weight per geometry of a set, and its `WeightSource` | Geometries; the set; a stored population |
+| `Clustering` | One optional cluster per geometry of a set, and one representative geometry per cluster | Geometries; the set; weights or populations |
 | `FrameTable` | A run's per-step records keyed by MD step: typed columns, an optional time column, and an optional `Sampling` record | Geometries; weights |
 | `FrameBuffer` | One `Geometry` bound to its topology plus the frame's time and step, reused across the frames of a stream | A second in-memory trajectory type |
 
@@ -49,18 +49,17 @@ selections, and prepared potentials.
 A **structure set** is one shared topology and many geometries of it, in a
 stable order, with an optional `Order` saying what that order means.
 
-An **ensemble** is a structure set read as draws from a distribution: which of
-its geometries are samples, what each weighs, and how they group into states.
+**Weights** read a structure set as draws: one optional log weight per
+geometry. A **sample** is a geometry that has one. A **cluster** is a group of
+geometries with one representative member, and a **clustering** groups some
+geometries of a set into clusters. Weights and clusterings are values beside
+a set, indexed by its geometries.
 
 A **frame** is a geometry as a trajectory file stores it, with its time and
 step. Frames belong to `kekule::traj` alone.
 
-**Sample**, **partition**, and **state** belong to the statistical reading
-alone. A sample is a geometry an ensemble's distribution covers (`Samples`).
-A partition groups the samples into states (`Partition`). A state is one such
-group with one representative sample; what a distribution stores for it, an
-energy and properties, is its `StateData`, and `StateView` reads a state whole:
-its samples, representative, data, and population.
+An **ensemble** is only a thermodynamic ensemble, and a **state** only a
+`ThermodynamicState`.
 
 `Model` never names a structure. It stays for perception models
 (`AromaticityModel`, `ValenceModel`), physical and machine-learning models
@@ -345,7 +344,6 @@ every repeated entity.
 | Topology | `TopologyProperties` | Instances, dense atoms and bonds, chains, residues, atom sites |
 | Geometry | `GeometryProperties` (owner values only outside a set) | Dense atoms and bonds |
 | Structure set | `OwnerProperties`, `PropertyTable<GeometryIndex>` | Geometries of the set |
-| State of a distribution | `OwnerProperties` | Owner values only |
 
 Unsupported domains are unrepresentable rather than rejected at runtime. Reads
 take the table's row type. Writes go through one length-preserving table guard,
@@ -390,8 +388,7 @@ geometry, a structure set is a topology plus many, and a frame buffer holds
 one for a stream. A geometry is shared and copied on write, so moving one
 between owners (`Structure::into_parts`, `from_parts`, `to_structure`,
 `from_structures`) copies no coordinates. A place in an order belongs to the
-set and a weight to the ensemble, never to a geometry; an energy belongs to a
-state, except as a geometry's own property. Coordinate kernels share code
+set and a weight to the weights beside it, never to a geometry. Coordinate kernels share code
 through the borrowed `StructureView`.
 
 A structure or structure set owns its shared topology once. A detached
@@ -421,7 +418,7 @@ with that atom's geometry state. Mutation goes through explicit,
 dimension-preserving setters on detached geometries, the `GeometryMut` guard
 an owner lends for a geometry it keeps bound (`Structure::geometry_mut`,
 `FrameBuffer::geometry_mut`), the `SetGeometryMut` guard of a set in memory
-(`StructureSet::get_mut`, `Ensemble::get_mut`), which edits everything but
+(`StructureSet::get_mut`), which edits everything but
 owner values and offers the atom and bond tables, and `properties_mut()`
 (`topology_properties_mut()` on structures and sets, which replaces a shared
 topology with a snapshot of it). The owner checks lengths, property domains,
@@ -443,13 +440,14 @@ or periodic imaging. See
 [measurements](crates/kekule/src/structure/measure.rs), and the
 [geometry editing contract](crates/kekule/src/structure/geometry_edit.rs).
 
-## Structure sets and ensembles
+## Structure sets, weights, and clusterings
 
 `StructureSet` is the one container for many geometries of one topology. What
-makes a set a trajectory, a scan, or an ensemble is stated beside the
+makes a set a trajectory, a scan, or a weighted sample is stated beside the
 geometries, never carried by its type. Sources differ along two independent
-axes and real ones combine them: an MCMC chain is ordered and a distribution, a
-metadynamics run is time-ordered and weighted, a clustered trajectory is both.
+axes and real ones combine them: an MCMC chain is ordered and its draws weigh
+the same, a metadynamics run is time-ordered and weighted, a clustered
+trajectory is ordered and clustered.
 A reader cannot know which it has — a multi-model PDB may be an NMR bundle or
 an MD run, a multi-frame XYZ conformers or an optimization history — so a
 reader loads geometries and the caller states what they mean, which is an
@@ -484,7 +482,7 @@ takes its row; a geometry added later, pushed or appended to a growing file,
 has missing cells unless it brings values. A geometry read from a file
 (`StructureSet<IndexedFile>`) keeps its codec's per-frame values, such as a
 TRR frame's lambda, as its own; they are no columns until `from_reader` moves
-them. `columns_mut`, on the set or its `Ensemble`, edits them without changing the
+them. `columns_mut` edits them without changing the
 row count, `row` reads one geometry's cells, and `column_values` reads a real or integer column, or the order's
 times, steps, or coordinates (`ColumnRef`), as one number per geometry. The
 native format stores them; SDF writes a geometry's cells as data fields of its
@@ -505,118 +503,74 @@ without values reads as missing energies, since selecting may leave one
 empty. Removing a named column fails until the record is removed. The
 operations that keep columns keep the record.
 
-A distribution is inferred, so it belongs to `Ensemble` and never to the set.
-Reweighting a biased run, MBAR, clustering into states, and Boltzmann
-populations from energies are interpretations, and one set often carries
-several at once. An `Ensemble` owns one `StructureSet` and one `Distribution`,
-validated together; `Ensemble::into_parts` returns both without copying. It
-lends the set but never mutably, so everything that changes which geometries
-exist goes through the ensemble, which remaps the samples. Several readings of
-one set are several ensembles sharing every coordinate.
+Weights and clusterings are inferred, so they are values beside the set and
+never fields of it. Reweighting a biased run, Boltzmann weights from
+energies, and clustering are interpretations, and one set often carries
+several at once. Both are indexed by geometry. `Weights` holds an optional
+natural-log weight per geometry, and a geometry without one is not a sample.
+`Clustering` holds an optional cluster per geometry and a representative
+geometry per cluster; every cluster has members, and its representative is
+one of them. A host that selects geometries of the set selects them in each
+value too (`Weights::select`, `Clustering::select`). Weights of a set that
+grew extend to it (`Weights::extended_to`), and the new geometries are not
+samples. A method that reads a set with weights refuses weights of another
+geometry count.
 
-A distribution covers every geometry of its set or a sorted subset, its
-samples. Its weight model, read as a `WeightModel`, says how they are weighed:
-equally, by log weights the caller gives, by log weights assigned as
-Boltzmann populations of the state energies at the target, or reweighted:
-each sample's reduced bias, derived from the set's sampling record against the
-target, with the `Estimator` that sums them into populations. Weights are
-stored as natural logarithms, one finite value per sample: weights from
-reweighting span hundreds of orders of magnitude, and a linear weight would
-underflow. Normalized weights and probabilities are derived on request. Log
-weights and the partition are indexed by sample position. The Boltzmann tag
-records provenance: later edits to samples, states, or energies keep it, and
-setting weights or a target at another temperature replaces it with plain log
-weights of the same values. The target is the `ThermodynamicState` the
-populations describe; changing weights never clears it, and Boltzmann and
-reweighted weights always have one. Every sample is in exactly one state and
-every state has a representative sample. Only states have energies, on
-one scale per distribution — a conformer's minimized energy or a computed free
-energy, never a snapshot's instantaneous energy, which stays a property of its
-geometry. Selecting and removing geometries remap the samples; a selection
-keeps the energy and properties of the states it keeps whole.
+Weights are natural logarithms, and any finite value is one: weights of a
+biased run span hundreds of orders of magnitude, beyond what a linear weight
+holds. Their `WeightSource` says where they come from: equal
+(`Weights::equal`, `Weights::equal_over`), given with an optional temperature
+(`Weights::given`), Boltzmann factors of an energy column at a temperature
+(`Weights::boltzmann`), or the bias of a biased run (`Weights::from_bias`).
+Probabilities are derived on request and never stored. Every population is
+exact, the log-sum-exp of its samples' log weights, so the populations of a
+group's parts add up to the group's (`Weights::log_population`). The
+effective sample size is Kish's over the exact weights, exactly the sample
+count for equal weights. `Weights::ranked` orders the samples by descending
+weight, the first of equal ones by index, and `Weights::covering` takes the
+fewest heaviest samples that reach a fraction of the total population.
 
-Any group of samples, such as a state, a histogram bin, or a map cell, has a
-population: the distribution's estimator over the exact log weights of its
-samples. It is the exponential sum `ln Σ exp(ℓ_i)` for every model but
-reweighted weights, which name their own estimator. A sample's share within
-any group is exact, `exp(ℓ_i) / Σ exp(ℓ_j)` over the group. A sample's
-probability is its state's probability times its share within the state, so
-the probabilities of a state's samples sum to the state's, and weighted means
-within a state are exponential averages. State probabilities are the state
-populations normalized to sum to one. `Distribution::log_population` gives any
-group's probability on that scale, and `group_log_populations` normalizes the
-groups of a grouping, such as histogram bins, among themselves. A group that
-holds exactly one state's samples has that state's population, so in
-`log_population` it has the state's probability; in `group_log_populations`
-it does only when the groups cover all samples as the states do. Under a
-cumulant estimator the populations of a group's parts need not sum to the
-group's; that is inherent to the method. Cumulant populations also need
-well-populated groups: a group of two samples whose reduced biases differ by
-`d` is inflated by about `exp(d²/8)`, which is why PyReweighting masks bins
-under 10 frames. The effective sample size, of the
-distribution or of a group, is Kish's over the exact weights whatever the
-estimator, so it shows how far a reweighting degenerates. Populations are
-derived and never stored.
+Boltzmann weights are `ln w = −(E − E_min) / RT` of a real energy column,
+relative to the lowest energy. The energies are of one scale, such as
+conformers' minimized energies. A snapshot's instantaneous energy is no such
+scale: samples drawn from a simulation already follow their distribution and
+weigh the same. A geometry without an energy is not a sample.
 
-A weight means something only against a target, so it is never a field of a
-geometry or of a set. What the engine recorded per geometry — a bias
-potential, collective-variable values, an instantaneous energy, a repeat count
-— is a set column or a geometry property, and the weights an analysis uses are
-derived from those. `Ensemble::uniform` and `Ensemble::weighted` build the one-state
-readings, so weighting a trajectory needs no partition.
+Bias weights come from the set's sampling record: `ln w = β ΣΔV` at the
+sampled temperature, with `β = 1/RT` and the sum `ΣΔV` of the bias columns.
+They describe the sampled state, and kekule reweights to no other
+temperature. One rule decides which geometries can be weighed. A geometry
+cannot be when its step lies before the record's first step or when a bias
+cell is missing; the first reason that applies is its `Unweighable`.
+`BiasWeights` holds the weights and each left-out geometry with its reason
+(`LeftOut`), and hosts word them. When no geometry can be weighed,
+`Weights::from_bias` fails with `NoWeighableSample`, whose reason is that of
+the geometry that got furthest through the checks.
 
-Reweighting derives weights from the sampling record and its columns:
-`Distribution::reweighted` for given samples and states, `Ensemble::reweight`
-for an ensemble's samples and states, at another temperature or with another
-estimator, and `Ensemble::reweighted` for every geometry of a set, as one
-state. Without a temperature, `Ensemble::reweight` keeps the target's. A
-sample's reduced bias is `b = β_s (U + ΣΔV) − β_t U`, with `β = 1/RT` at the sampled temperature `s`
-and the target temperature `t`, the potential energy `U`, and the sum `ΣΔV`
-of the bias columns. At the sampled temperature `b = β_s ΣΔV`, so only the
-bias columns are read; another temperature also needs the potential-energy
-column. Reweighting changes the temperature only. The target is the sampled
-state at the target temperature, and the `pV` term is neglected, which is
-negligible near ambient pressure.
-
-One rule decides which geometries can be weighed. A geometry cannot be when
-its step lies before the record's first step, when a bias cell is missing, or,
-at another temperature, when its potential-energy cell is missing; the first
-reason that applies is its `Unweighable`. `Distribution::weighable` reports,
-for proposed samples, the weighable ones and each left-out one with its
-reason, and hosts word them. `Distribution::reweighted` refuses the first
-left-out sample. `Ensemble::reweight` leaves them out: a state keeps its data
-while it keeps a sample, its representative or else its first kept sample
-represents it, a state left empty goes, and the kept states keep their order.
-Its `Reweighting` report lists the left-out samples and each old state's new
-index. When samples are proposed and none can be weighed, the query and the
-ensemble fail with `NoWeighableSample`, whose reason is that of the first
-sample that got furthest through the checks.
-
-Reweighting the potential energy of a run in explicit solvent to another temperature collapses: with 10⁴ waters the
-reduced bias spreads by `σ_b ≈ 8` for 300 → 310 K, and a few frames carry
-nearly all the weight. Reweighted weights belong to their target, so setting
-another target fails; reweight instead. Selecting keeps each kept sample's
-reduced bias, regrouping changes none, normalizing shifts them all together,
-collapsing gives each representative
-its state's population as a log weight and keeps the target, and a new
-sample cannot join. A growing file's new frames therefore stay outside the
-distribution; a new reweighted ensemble of the set takes them.
+A cluster's population needs weights. It is the exact population of the
+cluster's samples, normalized among the clusters
+(`Clustering::log_populations`), and its free energy is `-RT ln(p / p_max)`
+at the weights' temperature (`Clustering::free_energies`).
+`Clustering::ranked_by_population` and `Clustering::covering` order and take
+clusters by population. `Clustering::collapse` gives each cluster's
+representative, with the cluster's population as its given log weight.
 
 A `ThermodynamicState` is the state a weight refers to: a finite, positive
 temperature and, in the isothermal-isobaric ensemble, a finite, positive
 pressure, in bar. A state with a pressure is NpT and one without is NVT;
 nothing else records the ensemble.
 
-A geometry is shared through `Arc` and copied on write, so regrouping,
-reweighting, selecting, and collapsing copy no coordinates, and editing one
-geometry copies that geometry alone. Set and ensemble operations fail with one
-`StructureSetError`, whose `Missing` variant names the `Requirement` an
-operation lacks; a geometry's own edits fail with `GeometryError`.
+A geometry is shared through `Arc` and copied on write, so selecting copies
+no coordinates, and editing one geometry copies that geometry alone. Set
+operations fail with one `StructureSetError`, whose `Missing` variant names
+the `Requirement` an operation lacks; a geometry's own edits fail with
+`GeometryError`. Weights fail with `WeightsError` and clusterings with
+`ClusteringError`.
 
 A set has one sampling record, so it holds one run's sampling. Pooling
 replica-exchange replicas, metadynamics walkers, umbrella windows, or repeated
-runs will name a per-geometry state column; kekule records none yet, and a
-pooled weighting is still one ensemble. `Order`
+runs will name a per-geometry state column; kekule records none yet, and
+pooled weights are still one `Weights`. `Order`
 holds one coordinate, so a multi-dimensional scan uses `Order::Step` with the
 coordinate values as set columns.
 
@@ -634,15 +588,15 @@ trajectory file's `TrajectoryIoError` or a processing step's
 Kekule keeps no geometries a reader read and starts no threads: caching,
 read-ahead, and parallel observation belong to the host.
 
-A reader describes geometries and their order and never a distribution.
+A reader describes geometries and their order and never weights.
 `StructureSet::from_reader` loads chosen geometries of any reader, in any
 order, as a faithful copy with the reader's order values, column rows, and set properties; a repeated index is
 read once and shared. The host changes what geometries mean with `set_order`
-and by building an `Ensemble`; `Ensemble::select` restricts a distribution to
-the geometries it keeps. See
+and by building weights and clusterings beside the set. See
 [structure sets](crates/kekule/src/structure/structure_set.rs),
-[readers](crates/kekule/src/structure/structure_set/read.rs), and
-[ensembles](crates/kekule/src/structure/ensemble/mod.rs).
+[readers](crates/kekule/src/structure/structure_set/read.rs),
+[weights](crates/kekule/src/statistics/weights.rs), and
+[clusterings](crates/kekule/src/clustering/clusters.rs).
 
 ## Trajectories and streaming
 
@@ -720,15 +674,16 @@ file handle: `IndexedFile::release` closes it for all of them once the reads
 running finish, and `IndexedFile::reopen` opens the file at a path again for
 all of them when it begins with the bytes any of them indexed, keeping the
 index. A refresh takes a replaced file under the same check. In between,
-reads and refreshes fail as released. An `Ensemble` over the set refreshes
-through `Ensemble::refresh`, and appended frames are not samples.
-`StructureSet::from_reader` reads listed geometries into a set in memory; an
-ensemble's `load` also restricts the distribution. See
+reads and refreshes fail as released. Weights of the set extend over
+appended frames, which are not samples (`Weights::extended_to`).
+`StructureSet::from_reader` reads listed geometries into a set in memory, and
+`Weights::select` selects the same geometries in weights. See
 [structure sets read from files](crates/kekule/src/traj/io/indexed_file.rs).
 
 `Processed` reads another `StructureSetRead` and runs `ProcessingSteps` on each
 geometry as it is read, in a fixed order. Processing neither removes nor
-reorders geometries, so indices are preserved, and it carries no distribution.
+reorders geometries, so indices are preserved, and weights of the source
+weigh the processed geometries.
 Its steps call the same kernels as the in-memory functions and give the same
 bits. See [lazy processing](crates/kekule/src/traj/processed.rs).
 
@@ -755,9 +710,10 @@ result or error for every executor and thread count.
 
 RMSF and contact occupancy are weighted statistics in `kekule::statistics`.
 Every observation is a borrowed structure with an explicit, finite, positive
-weight, so no structure is reduced with an implied weight. `Ensemble` methods
-observe each sample with its probability and leave other geometries out;
-`StructureSet` methods observe every geometry with weight one. Streamed frames
+weight, so no structure is reduced with an implied weight. `StructureSet`
+methods take optional `Weights`: with them they observe each sample with its
+probability and leave other geometries out, and without them every geometry
+with weight one. Streamed frames
 reach the same accumulators through their buffer's `StructureView`. Accumulator
 memory is bounded by the selected atoms, pairs, or groups, not by observation
 count. Failed observations leave accumulators unchanged. Accumulators of the
@@ -766,30 +722,31 @@ in range order with the same result on every executor. Results keep their atom
 and pair associations; observation indices are diagnostic labels. See
 [weighted statistics](crates/kekule/src/statistics.rs).
 
-A reweighting `Estimator` gives the population of a group of samples, such as
-a state or a histogram bin, as `ln Σ exp(b_i)` from dimensionless reduced
-values `b_i`, the samples' log importance weights: the exact exponential sum,
-or the cumulant expansion to first, second (the default), or third order. It
-estimates group totals only; a sample's share within its group is always
-`exp(b_i) / Σ exp(b_j)`. An empty group, or reduced values whose estimate is
-not finite, has no population. A distribution sums its states, and the bins
-or cells a host groups its samples into, with its estimator, and measures its
-effective sample size over the exact weights. See
-[estimators](crates/kekule/src/statistics/estimators.rs).
+An `Estimator` gives a landscape cell's population from the log weights
+`ℓ_i` of its samples, `ln Σ exp(ℓ_i)`: the exact exponential sum, the
+default, or the cumulant expansion to first, second, or third order. It
+estimates cell totals only; a sample's share within its cell is always
+`exp(ℓ_i) / Σ exp(ℓ_j)`. An empty cell, or log weights whose estimate is not
+finite, has no population. Under a cumulant estimator the populations of a
+group's parts need not sum to the group's; that is inherent to the method.
+Cumulant populations also need well-populated cells: a cell of two samples
+whose log weights differ by `d` is inflated by about `exp(d²/8)`, which is
+why PyReweighting masks bins under 10 frames. Every other population is
+exact. See [estimators](crates/kekule/src/statistics/estimators.rs).
 
-A `Landscape` bins a distribution's samples on one or two axes, each a value
+A `Landscape` bins the samples of `Weights` on one or two axes, each a value
 per geometry with its unit and its `Binning`, and gives a free energy or a
 mean value per cell. A binning divides the span between two edges into equal
 bins; a periodic one wraps values into that span, and one may cover given
 values instead. The values a mean maps carry their unit, which its cells
 keep. Cell totals follow the estimator contract: a cell's
-population is the distribution's estimator over its samples, the cells are
+population is the options' estimator over its samples, the cells are
 normalized among themselves into the weighted histogram, and within a cell
-each sample's share is exact, so a mean weighs its samples exactly and a cell
-that is a state has the state's population. The free energy is
-`-RT ln(P_cell / P_max)` at the distribution's target temperature, or a given
-one when it has no target; a given temperature that differs from the target
-is refused. `P_max` is the population of the most populated cell that has a
+each sample's share is exact. A mean therefore weighs its samples exactly,
+and under the exact estimator a cell that is a cluster has the cluster's
+population. The free energy is `-RT ln(P_cell / P_max)` at the weights'
+temperature, or a given one for weights without one; a given temperature that
+differs from the weights' is refused. `P_max` is the population of the most populated cell that has a
 value, so the lowest free energy is 0. The landscape's lowest cell is the one with
 the lowest value, the first of equal ones. A cell with fewer samples than a
 threshold has no value but keeps its count, effective count, population,
@@ -803,26 +760,21 @@ structure. Samples without an axis value, or outside the bins, are
 in no cell and counted. See
 [landscapes](crates/kekule/src/statistics/landscape.rs).
 
-Clustering groups the samples of an ensemble's distribution, weighted by their
-exact log weights so that the current states' estimates do not steer the new
-grouping, or every geometry of a structure set, unweighted. It returns a `Partition`, the
-grouping type a distribution owns, and never changes the set.
-`DistributionMut::regroup` installs a partition without changing any weight or
-sample order. A new state that is one old state keeps its energy; one merged
-from several whole old states has their free energy at the target's
-temperature, `-RT ln Σ exp(-E_i / RT)`, so that with Boltzmann populations
-energy differences match `-RT ln(p_a / p_b)`, and none without a target or
-when a merged state has no energy. A new state keeps its representative's
-old state's properties when that state stays whole, and a state split apart
-loses its energy and properties. Collapsing
-makes a new collection of each state's representative carrying the state's
-population. Pairwise distances are a separate `DistanceMatrix` result. See
+Clustering groups the geometries of a structure set into a `Clustering` and
+never changes the set. With weights, it groups the samples and leaves other
+geometries in no cluster: radius clustering visits the samples by descending
+weight, the first of equal ones by index, and medoids minimize the exactly
+weighted distances. Without weights, it groups every geometry equally, in
+index order. Hierarchical clustering cuts a `Dendrogram` of a
+`DistanceMatrix`, a separate result. The weighted medoids represent its
+clusters; `Dendrogram::clustering`, which has no distances, represents each by
+its heaviest member, the first of equal ones. See
 [clustering](crates/kekule/src/clustering.rs).
 
 Superposition and RMSD are methods of structure sets, against one of the set's
 geometries or an independent view, and act on every geometry. RMSD reads a set
 of any storage through one loop over `StructureSetRead`; superposition changes
-a set in memory, or the set of an ensemble without touching its distribution.
+a set in memory.
 Geometric correspondence explicitly pairs selected atoms from two exact
 snapshots, one to one, without claiming chemical equivalence; pairing by
 hierarchy labels reads one namespace and reports unpaired atoms.
@@ -936,9 +888,9 @@ its residue's template, else from its name by the column convention. A name
 that reads as two elements fails, unless it starts with `H`, which makes it a
 hydrogen; the report names the atoms either way. Water and ion residue
 names of the PDB and of simulation programs are never polymer. Multiple coordinate models do not imply a time order, and the
-formats state no distribution: every coordinate model becomes a geometry, a
-host that reads the models as draws builds an `Ensemble`, and occupancy is
-never converted into a weight. Interpretation selects whole alternate-location
+formats state no weights: every coordinate model becomes a geometry, a host
+that reads the models as draws builds `Weights` beside the set, and occupancy
+is never converted into a weight. Interpretation selects whole alternate-location
 alternatives and records its choices in the report; occupancy ranks
 representatives, not structure probabilities.
 

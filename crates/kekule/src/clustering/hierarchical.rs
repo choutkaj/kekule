@@ -1,27 +1,19 @@
 //! Pairwise distance matrices and agglomerative hierarchical clustering.
 
 use crate::alignment::{
-    best_kabsch, check_fit_count, AlignmentOptions, Coordinates, FitAtoms, NormalizedWeights,
-    Pairs, PeriodicPolicy,
+    best_kabsch, AlignmentOptions, Coordinates, FitAtoms, NormalizedWeights, Pairs, PeriodicPolicy,
 };
-use crate::fixed_u32_id::FixedId;
-use crate::math::Point3;
-use crate::parallel::{map_ranges, FirstFailure, Stop};
-use crate::structure::{
-    visit_geometry, Ensemble, GeometryStorage, Partition, Samples, StructureSet, StructureSetRead,
-};
-use crate::topology::TopologyAtomIndex;
+use crate::parallel::{map_ranges, FirstFailure, Run, Stop};
+use crate::statistics::Weights;
+use crate::structure::{GeometryStorage, StructureSet, StructureSetRead};
 use crate::units::{Quantity, CANONICAL_LENGTH_UNIT};
 
-use super::driver::{sample_index, undirected, Clustered};
+use super::driver::{undirected, Clustered, FittedAtoms};
 use super::run::Tracker;
-use super::ClusteringError;
-use crate::parallel::Run;
+use super::{Clustering, ClusteringError};
 
-/// Symmetric pairwise distances between the samples of one ensemble's
-/// distribution, or the geometries of one structure set, stored once per
-/// unordered pair in
-/// [`CANONICAL_LENGTH_UNIT`].
+/// Symmetric pairwise distances between the members of one clustering,
+/// stored once per unordered pair in [`CANONICAL_LENGTH_UNIT`].
 ///
 /// Members are numbered by member position, from zero. The condensed order
 /// lists the pairs `(i, j)` with `i < j` row by row:
@@ -286,6 +278,38 @@ impl Dendrogram {
         Ok(assignments)
     }
 
+    /// The clustering of a set after `cut`, each cluster represented by its
+    /// heaviest member, the lowest of equal weights. The members are the
+    /// samples of `weights` by increasing index, and the clustering covers
+    /// the weights' geometries; without weights, the members are the
+    /// geometries `0..member_count`. It needs no distances, so a dendrogram
+    /// kept from [`DistanceMatrix::dendrogram`] cuts again cheaply.
+    ///
+    /// # Errors
+    ///
+    /// The errors of [`Self::cut`], and
+    /// [`ClusteringError::MatrixMismatch`] when the dendrogram has another
+    /// number of members than `weights` has samples.
+    pub fn clustering(
+        &self,
+        cut: Cut,
+        weights: Option<&Weights>,
+    ) -> Result<Clustering, ClusteringError> {
+        let clustered = Clustered::new(weights.map_or(self.members, Weights::len), weights)?;
+        clustered.check_matrix(self.members)?;
+        let assignments = self.cut(cut)?;
+        let clusters = assignments.iter().max().map_or(0, |last| last + 1);
+        let mut members = vec![Vec::new(); clusters];
+        for (member, cluster) in assignments.iter().enumerate() {
+            members[*cluster].push(member);
+        }
+        let representatives = members
+            .iter()
+            .map(|members| clustered.heaviest(members))
+            .collect::<Vec<_>>();
+        Ok(clustered.clustering(&assignments, &representatives))
+    }
+
     /// Numbers merges found in any order, given as joined members and
     /// heights, after a stable sort by height.
     fn from_joins(members: usize, mut joins: Vec<(usize, usize, f64)>) -> Self {
@@ -315,39 +339,39 @@ impl Dendrogram {
     }
 }
 
-impl Clustered<'_> {
+impl Clustered {
     fn pairwise_fitted_rmsd(
         &self,
+        reader: &dyn StructureSetRead,
         atoms: FitAtoms<'_>,
         options: AlignmentOptions<'_>,
         run: Run<'_>,
     ) -> Result<DistanceMatrix, ClusteringError> {
         let atoms = undirected(atoms)?;
-        let views = &self.views;
-        let members = views.len();
-        let expected = condensed_len(members)?;
-        let Some(first) = views.first() else {
+        let count = self.len();
+        let expected = condensed_len(count)?;
+        let Some(&first) = self.members.first() else {
             Tracker::start(run, 0, 0)?;
             return Ok(DistanceMatrix {
-                members,
+                members: 0,
                 values: Vec::new(),
             });
         };
-        let sets = atoms.pair_sets(*first, *first)?;
-        check_fit_count(atoms.pair_count())?;
+        let fitted = FittedAtoms::new(reader, first, atoms)?;
         let weights = NormalizedWeights::new(options.weighting(), atoms.pair_count())?;
         let tracker = Tracker::start(run, expected, atoms.pair_count())?;
-        let coordinates = views
-            .iter()
-            .map(|view| Coordinates::from(*view))
-            .collect::<Vec<_>>();
+        let loaded = fitted.load(reader, &self.members, &tracker)?;
         let fits = PairFits {
-            sets: &sets,
+            sets: &fitted.sets,
             weights,
             policy: options.periodic_policy(),
         };
-        let values = fits.all_pairs(&coordinates, self.samples, &tracker)?;
-        Ok(DistanceMatrix { members, values })
+        let coordinates = FittedAtoms::coordinates(&loaded);
+        let values = fits.all_pairs(&coordinates, &self.members, &tracker)?;
+        Ok(DistanceMatrix {
+            members: count,
+            values,
+        })
     }
 
     fn cluster_hierarchical(
@@ -355,25 +379,11 @@ impl Clustered<'_> {
         distances: &DistanceMatrix,
         linkage: Linkage,
         cut: Cut,
-    ) -> Result<Partition, ClusteringError> {
-        self.check_matrix(distances)?;
+    ) -> Result<Clustering, ClusteringError> {
+        self.check_matrix(distances.member_count())?;
         let assignments = distances.dendrogram(linkage).cut(cut)?;
         let representatives = weighted_medoids(&self.scaled_weights(), distances, &assignments);
-        Ok(Partition::from_parts_unchecked(
-            assignments,
-            representatives,
-        ))
-    }
-
-    /// Checks that `distances` covers the members.
-    pub(super) fn check_matrix(&self, distances: &DistanceMatrix) -> Result<(), ClusteringError> {
-        if distances.member_count() != self.len() {
-            return Err(ClusteringError::MatrixMismatch {
-                expected: self.len(),
-                actual: distances.member_count(),
-            });
-        }
-        Ok(())
+        Ok(self.clustering(&assignments, &representatives))
     }
 }
 
@@ -387,12 +397,12 @@ struct PairFits<'s, 'w> {
 
 impl PairFits<'_, '_> {
     /// The fitted RMSD of every unordered pair of `members`, in condensed
-    /// order, with failures naming sample indices of `samples`; the one loop
-    /// behind every pairwise matrix.
+    /// order, with failures naming the geometries `geometries` lists; the
+    /// one loop behind every pairwise matrix.
     fn all_pairs(
         &self,
         members: &[Coordinates<'_>],
-        samples: &Samples,
+        geometries: &[usize],
         tracker: &Tracker<'_>,
     ) -> Result<Vec<f64>, ClusteringError> {
         let count = members.len();
@@ -420,8 +430,8 @@ impl PairFits<'_, '_> {
                     .map_err(|source| {
                         failure.record(pair);
                         ClusteringError::PairFit {
-                            first: sample_index(samples, moving),
-                            second: sample_index(samples, reference),
+                            first: geometries[moving],
+                            second: geometries[reference],
                             source: Box::new(source),
                         }
                     })?;
@@ -449,23 +459,11 @@ impl PairFits<'_, '_> {
     }
 }
 
-/// Members loaded by one work item at least: reading a geometry costs
-/// about as much as many fits.
-const MEMBERS_PER_WORK_ITEM: usize = 16;
-
-/// Fitted RMSD between every pair of geometries of `reader`, as
-/// [`StructureSet::pairwise_fitted_rmsd`] computes it for a set in memory,
-/// with the same matrix and errors.
-///
-/// Only the fitted atoms of each geometry are kept: every geometry is lent
-/// or read once and its fitted positions copied out, so memory grows with
-/// the geometries times the fitted atoms rather than with whole geometries.
-/// The first geometry is read once more to check `atoms`.
-///
-/// To fit some of the geometries, such as the frames after equilibration,
-/// read them as the samples of an [`Ensemble`] ([`Samples::Subset`]) and
-/// use [`Ensemble::pairwise_fitted_rmsd`], which reads them through this
-/// loop.
+/// Fitted RMSD between every pair of members of `reader`, as
+/// [`StructureSet::pairwise_fitted_rmsd`] computes it for a set, with the
+/// same matrix and errors: the samples of `weights`, or every geometry
+/// without weights. It fits any reader, such as a
+/// [`Processed`](crate::traj::Processed) one.
 ///
 /// ```
 /// use kekule::clustering::pairwise_fitted_rmsd;
@@ -485,29 +483,25 @@ const MEMBERS_PER_WORK_ITEM: usize = 16;
 ///     set.push(Geometry::new(Positions::new(Quantity::new(points, ANGSTROM))?), None)?;
 /// }
 /// let atoms = AtomSelection::all(topology);
-/// let matrix = pairwise_fitted_rmsd(&set, &atoms, Default::default())?;
-/// assert_eq!(matrix, set.pairwise_fitted_rmsd(&atoms, Default::default())?);
+/// let matrix = pairwise_fitted_rmsd(&set, &atoms, None, Default::default())?;
+/// assert_eq!(matrix, set.pairwise_fitted_rmsd(&atoms, None, Default::default())?);
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 ///
 /// # Errors
 ///
-/// As [`StructureSet::pairwise_fitted_rmsd`], and
-/// [`ClusteringError::Read`] when a geometry cannot be read; a failed read
-/// reports the first failing geometry in order.
+/// As [`StructureSet::pairwise_fitted_rmsd`].
 pub fn pairwise_fitted_rmsd<'a>(
     reader: &dyn StructureSetRead,
     atoms: impl Into<FitAtoms<'a>>,
+    weights: Option<&Weights>,
     options: AlignmentOptions<'_>,
 ) -> Result<DistanceMatrix, ClusteringError> {
-    pairwise_fitted_rmsd_with(reader, atoms, options, Run::default())
+    pairwise_fitted_rmsd_with(reader, atoms, weights, options, Run::default())
 }
 
-/// [`pairwise_fitted_rmsd`] under a [`Run`]: geometries load and pairs fit
-/// on its executor, with the matrix and errors of
-/// [`StructureSet::pairwise_fitted_rmsd_with`]. Progress counts pairs
-/// fitted once the geometries are loaded; cancellation is also polled
-/// before each geometry is loaded.
+/// [`pairwise_fitted_rmsd`] under a [`Run`], as
+/// [`StructureSet::pairwise_fitted_rmsd_with`] runs.
 ///
 /// # Errors
 ///
@@ -516,114 +510,11 @@ pub fn pairwise_fitted_rmsd<'a>(
 pub fn pairwise_fitted_rmsd_with<'a>(
     reader: &dyn StructureSetRead,
     atoms: impl Into<FitAtoms<'a>>,
+    weights: Option<&Weights>,
     options: AlignmentOptions<'_>,
     run: Run<'_>,
 ) -> Result<DistanceMatrix, ClusteringError> {
-    fitted_rmsd_of(
-        reader,
-        &Samples::All,
-        reader.len(),
-        atoms.into(),
-        options,
-        run,
-    )
-}
-
-/// Fitted RMSD between every pair of the `count` geometries `samples`
-/// lists of `reader`, read through the loop of [`pairwise_fitted_rmsd`].
-fn fitted_rmsd_of(
-    reader: &dyn StructureSetRead,
-    samples: &Samples,
-    count: usize,
-    atoms: FitAtoms<'_>,
-    options: AlignmentOptions<'_>,
-    run: Run<'_>,
-) -> Result<DistanceMatrix, ClusteringError> {
-    let atoms = undirected(atoms)?;
-    let expected = condensed_len(count)?;
-    if count == 0 {
-        Tracker::start(run, 0, 0)?;
-        return Ok(DistanceMatrix {
-            members: 0,
-            values: Vec::new(),
-        });
-    }
-    let read_error = |error| ClusteringError::Read(error);
-    let sets = visit_geometry(reader, sample_index(samples, 0), read_error, |first| {
-        Ok(atoms.pair_sets(first, first)?)
-    })?;
-    check_fit_count(atoms.pair_count())?;
-    let weights = NormalizedWeights::new(options.weighting(), atoms.pair_count())?;
-    // The fitted atoms, sorted, and the pair sets in their order.
-    let mut fitted = sets
-        .iter()
-        .flatten()
-        .flat_map(|(moving, reference)| [moving.index(), reference.index()])
-        .collect::<Vec<_>>();
-    fitted.sort_unstable();
-    fitted.dedup();
-    let compact = |atom: TopologyAtomIndex| {
-        let position = fitted
-            .binary_search(&atom.index())
-            .expect("every paired atom is fitted");
-        TopologyAtomIndex::from_index(position)
-    };
-    let sets = sets
-        .iter()
-        .map(|pairs| {
-            pairs
-                .iter()
-                .map(|(moving, reference)| (compact(*moving), compact(*reference)))
-                .collect()
-        })
-        .collect::<Vec<Pairs>>();
-    let tracker = Tracker::start(run, expected, atoms.pair_count())?;
-    let loaded = map_ranges(
-        tracker.executor(),
-        count,
-        MEMBERS_PER_WORK_ITEM,
-        |positions| {
-            positions
-                .map(|position| {
-                    tracker.poll()?;
-                    visit_geometry(
-                        reader,
-                        sample_index(samples, position),
-                        read_error,
-                        |view| {
-                            let points = *view.positions().values().value();
-                            let points = fitted
-                                .iter()
-                                .map(|atom| points[*atom])
-                                .collect::<Vec<Point3>>();
-                            Ok((points, view.cell().is_some()))
-                        },
-                    )
-                })
-                .collect::<Result<Vec<_>, ClusteringError>>()
-        },
-    );
-    let mut members = Vec::with_capacity(count);
-    for range in loaded {
-        members.extend(range?);
-    }
-    let coordinates = members
-        .iter()
-        .map(|(points, periodic)| Coordinates {
-            points,
-            periodic: *periodic,
-        })
-        .collect::<Vec<_>>();
-    let fits = PairFits {
-        sets: &sets,
-        weights,
-        policy: options.periodic_policy(),
-    };
-    let values = fits.all_pairs(&coordinates, samples, &tracker)?;
-    Ok(DistanceMatrix {
-        members: count,
-        values,
-    })
+    Clustered::new(reader.len(), weights)?.pairwise_fitted_rmsd(reader, atoms.into(), options, run)
 }
 
 /// The weighted medoid of every cluster of `assignments`, whose clusters
@@ -657,25 +548,66 @@ fn weighted_medoids(
         .collect()
 }
 
-impl StructureSet {
-    /// Fitted RMSD between every pair of geometries of the set, after a
+impl<S: GeometryStorage> StructureSet<S>
+where
+    StructureSet<S>: StructureSetRead,
+{
+    /// Fitted RMSD between every pair of members, after a
     /// [`fit`](crate::alignment::fit) over `atoms` with the weights and
-    /// periodic policy of `options`.
+    /// periodic policy of `options`: the samples of `weights` by increasing
+    /// index, or every geometry without weights.
     ///
-    /// The matrix is indexed by geometry, so it fits
-    /// [`Self::cluster_hierarchical`] and [`Self::cluster_k_medoids`] of this
-    /// set; [`Ensemble::pairwise_fitted_rmsd`] fits the samples of a
-    /// distribution.
+    /// The matrix is indexed by member position: its member `i` is the
+    /// `i`th sample, or geometry `i`. It fits [`Self::cluster_hierarchical`]
+    /// and [`Self::cluster_k_medoids`] with the same weights.
     ///
     /// `atoms` is a selection or a
     /// [`SymmetricSelection`](crate::alignment::SymmetricSelection) of this
-    /// set's layout, so each distance is the same whichever geometry moves;
-    /// an [`AtomCorrespondence`](crate::alignment::AtomCorrespondence) is
-    /// rejected. Each unordered pair is fitted once, lower geometry moving,
-    /// so the cost is `n (n - 1) / 2` fits (times symmetry permutations).
+    /// set's layout, so each distance is the same whichever member moves; an
+    /// [`AtomCorrespondence`](crate::alignment::AtomCorrespondence) is
+    /// rejected. Each unordered pair is fitted once, lower member moving, so
+    /// the cost is `n (n - 1) / 2` fits (times symmetry permutations). Each
+    /// member is lent or read once and only its fitted atoms are kept, so
+    /// memory grows with the members times the fitted atoms, and a set over
+    /// a file fits too.
+    ///
+    /// ```
+    /// use kekule::clustering::{Cut, Linkage};
+    /// use kekule::math::Point3;
+    /// use kekule::statistics::Weights;
+    /// use kekule::structure::{Geometry, Positions, StructureSet};
+    /// use kekule::topology::AtomSelection;
+    /// use kekule::units::{Quantity, ANGSTROM};
+    ///
+    /// let topology = kekule::smiles::to_topology("CCO")?;
+    /// let mut set = StructureSet::new(topology.clone());
+    /// for stretch in [1.0, 1.0, 1.01, 1.3, 1.31] {
+    ///     let points = [
+    ///         Point3::new(0.0, 0.0, 0.0),
+    ///         Point3::new(1.5 * stretch, 0.0, 0.0),
+    ///         Point3::new(2.0, 1.2, 0.0),
+    ///     ];
+    ///     set.push(Geometry::new(Positions::new(Quantity::new(points, ANGSTROM))?), None)?;
+    /// }
+    /// // Geometries 1 to 4 are the samples; geometry 0 is left out.
+    /// let weights = Weights::equal_over(5, [1, 2, 3, 4])?;
+    ///
+    /// let atoms = AtomSelection::all(topology);
+    /// let matrix = set.pairwise_fitted_rmsd(&atoms, Some(&weights), Default::default())?;
+    /// assert_eq!(matrix.member_count(), 4);
+    /// let cut = Cut::Height(Quantity::new(0.1, ANGSTROM));
+    /// let clustering = set.cluster_hierarchical(&matrix, Some(&weights), Linkage::Complete, cut)?;
+    /// // By geometry: geometries 1 and 2, then 3 and 4.
+    /// assert_eq!(clustering.cluster_of(2), Some(0));
+    /// assert_eq!(clustering.cluster_of(3), Some(1));
+    /// assert_eq!(clustering.cluster_of(0), None);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     ///
     /// # Errors
     ///
+    /// - [`ClusteringError::Weights`] when `weights` cover another number of
+    ///   geometries.
     /// - [`ClusteringError::DirectedCorrespondence`] when `atoms` is an
     ///   [`AtomCorrespondence`](crate::alignment::AtomCorrespondence).
     /// - [`ClusteringError::Alignment`] when `atoms` does not belong to this
@@ -684,22 +616,26 @@ impl StructureSet {
     /// - [`ClusteringError::PairFit`] naming both geometries when a fit
     ///   fails.
     /// - [`ClusteringError::MatrixTooLarge`] when the pair count overflows.
+    /// - [`ClusteringError::Read`] when a member cannot be read; the first
+    ///   failing member in order is reported.
     pub fn pairwise_fitted_rmsd<'a>(
         &self,
         atoms: impl Into<FitAtoms<'a>>,
+        weights: Option<&Weights>,
         options: AlignmentOptions<'_>,
     ) -> Result<DistanceMatrix, ClusteringError> {
-        self.pairwise_fitted_rmsd_with(atoms, options, Run::default())
+        self.pairwise_fitted_rmsd_with(atoms, weights, options, Run::default())
     }
 
     /// [`Self::pairwise_fitted_rmsd`] under a [`Run`].
     ///
-    /// The pairs split, in condensed order, into contiguous ranges on
-    /// `run`'s executor, whose distances join in order. Each distance is one
-    /// fit whatever thread makes it, and a failed fit reports the first
-    /// failing pair in condensed order, so the matrix and any error are the
-    /// ones [`Self::pairwise_fitted_rmsd`] returns. Progress counts pairs
-    /// fitted, of `n (n - 1) / 2`.
+    /// Members load in ranges on `run`'s executor, and the pairs split, in
+    /// condensed order, into contiguous ranges whose distances join in
+    /// order. Each distance is one fit whatever thread makes it, and a
+    /// failed fit reports the first failing pair in condensed order, so the
+    /// matrix and any error are the ones [`Self::pairwise_fitted_rmsd`]
+    /// returns. Progress counts pairs fitted, of `n (n - 1) / 2`;
+    /// cancellation is also polled before each member is loaded.
     ///
     /// ```
     /// use std::num::NonZeroUsize;
@@ -730,8 +666,8 @@ impl StructureSet {
     /// let run = Run::default()
     ///     .with_executor(&threads)
     ///     .with_progress(&progress);
-    /// let matrix = set.pairwise_fitted_rmsd_with(&atoms, Default::default(), run)?;
-    /// assert_eq!(matrix, set.pairwise_fitted_rmsd(&atoms, Default::default())?);
+    /// let matrix = set.pairwise_fitted_rmsd_with(&atoms, None, Default::default(), run)?;
+    /// assert_eq!(matrix, set.pairwise_fitted_rmsd(&atoms, None, Default::default())?);
     /// assert_eq!(fitted.into_inner(), 6);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
@@ -743,150 +679,42 @@ impl StructureSet {
     pub fn pairwise_fitted_rmsd_with<'a>(
         &self,
         atoms: impl Into<FitAtoms<'a>>,
+        weights: Option<&Weights>,
         options: AlignmentOptions<'_>,
         run: Run<'_>,
     ) -> Result<DistanceMatrix, ClusteringError> {
-        Clustered::new(self, None).pairwise_fitted_rmsd(atoms.into(), options, run)
+        pairwise_fitted_rmsd_with(self, atoms, weights, options, run)
     }
 }
 
 impl<S: GeometryStorage> StructureSet<S> {
-    /// Hierarchical clustering of every geometry of the set, each weighing
-    /// the same, on `distances` indexed by geometry
-    /// ([`Self::pairwise_fitted_rmsd`]), as
-    /// [`Ensemble::cluster_hierarchical`] does. Install the partition as a
-    /// new distribution of every geometry, `Distribution::new(Samples::All,
-    /// partition)`, in [`Ensemble::new`].
-    ///
-    /// # Errors
-    ///
-    /// As [`Ensemble::cluster_hierarchical`].
-    pub fn cluster_hierarchical(
-        &self,
-        distances: &DistanceMatrix,
-        linkage: Linkage,
-        cut: Cut,
-    ) -> Result<Partition, ClusteringError> {
-        Clustered::of_members(self.len(), None).cluster_hierarchical(distances, linkage, cut)
-    }
-}
-
-impl<S: GeometryStorage> Ensemble<S>
-where
-    StructureSet<S>: StructureSetRead,
-{
-    /// Fitted RMSD between every pair of samples of the distribution, after
-    /// a [`fit`](crate::alignment::fit) over `atoms` with the weights and
-    /// periodic policy of `options`, as
-    /// [`StructureSet::pairwise_fitted_rmsd`] fits geometries.
-    ///
-    /// The matrix is indexed by member position: its member `i` is the `i`th
-    /// sample ([`Distribution::samples`](crate::structure::Distribution::samples)),
-    /// so it fits [`Self::cluster_hierarchical`] and
-    /// [`Self::cluster_k_medoids`] of this ensemble. Geometries that are not
-    /// samples are left out. The samples are read through the loop of
-    /// [`pairwise_fitted_rmsd`], so an ensemble over a file fits them too.
-    ///
-    /// ```
-    /// use kekule::math::Point3;
-    /// use kekule::structure::{
-    ///     Distribution, Ensemble, Geometry, Partition, Positions, Samples, StructureSet,
-    /// };
-    /// use kekule::clustering::{Cut, Linkage};
-    /// use kekule::topology::AtomSelection;
-    /// use kekule::units::{Quantity, ANGSTROM};
-    ///
-    /// let topology = kekule::smiles::to_topology("CCO")?;
-    /// let mut set = StructureSet::new(topology.clone());
-    /// for stretch in [1.0, 1.0, 1.01, 1.3, 1.31] {
-    ///     let points = [
-    ///         Point3::new(0.0, 0.0, 0.0),
-    ///         Point3::new(1.5 * stretch, 0.0, 0.0),
-    ///         Point3::new(2.0, 1.2, 0.0),
-    ///     ];
-    ///     set.push(Geometry::new(Positions::new(Quantity::new(points, ANGSTROM))?), None)?;
-    /// }
-    /// // Geometries 1 to 4 are the samples; geometry 0 is left out.
-    /// let samples = Samples::Subset(vec![1, 2, 3, 4]);
-    /// let mut ensemble = Ensemble::new(set, Distribution::new(samples, Partition::one_state(4))?)?;
-    ///
-    /// let atoms = AtomSelection::all(topology);
-    /// let matrix = ensemble.pairwise_fitted_rmsd(&atoms, Default::default())?;
-    /// assert_eq!(matrix.member_count(), 4);
-    /// let cut = Cut::Height(Quantity::new(0.1, ANGSTROM));
-    /// let states = ensemble.cluster_hierarchical(&matrix, Linkage::Complete, cut)?;
-    /// // By member position: members 0 and 1 (geometries 1 and 2), then 2 and 3.
-    /// assert_eq!(states.assignments(), [0, 0, 1, 1]);
-    /// ensemble.distribution_mut().regroup(states)?;
-    /// assert_eq!(ensemble.distribution().state_of(3), Some(1));
-    /// assert_eq!(ensemble.distribution().state_of(0), None);
-    /// # Ok::<(), Box<dyn std::error::Error>>(())
-    /// ```
-    ///
-    /// # Errors
-    ///
-    /// As [`StructureSet::pairwise_fitted_rmsd`], naming geometries by
-    /// index, and [`ClusteringError::Read`] when a sample cannot be read.
-    pub fn pairwise_fitted_rmsd<'a>(
-        &self,
-        atoms: impl Into<FitAtoms<'a>>,
-        options: AlignmentOptions<'_>,
-    ) -> Result<DistanceMatrix, ClusteringError> {
-        self.pairwise_fitted_rmsd_with(atoms, options, Run::default())
-    }
-
-    /// [`Self::pairwise_fitted_rmsd`] under a [`Run`], with its samples
-    /// read and fitted as [`pairwise_fitted_rmsd_with`] reads and fits.
-    ///
-    /// # Errors
-    ///
-    /// As [`Self::pairwise_fitted_rmsd`], and [`ClusteringError::Cancelled`]
-    /// once `run`'s cancellation is requested.
-    pub fn pairwise_fitted_rmsd_with<'a>(
-        &self,
-        atoms: impl Into<FitAtoms<'a>>,
-        options: AlignmentOptions<'_>,
-        run: Run<'_>,
-    ) -> Result<DistanceMatrix, ClusteringError> {
-        let distribution = self.distribution();
-        fitted_rmsd_of(
-            self.set(),
-            distribution.samples(),
-            distribution.sample_count(),
-            atoms.into(),
-            options,
-            run,
-        )
-    }
-}
-
-impl<S: GeometryStorage> Ensemble<S> {
-    /// Hierarchical clustering of the samples of the distribution, on
-    /// `distances` indexed by member position
-    /// ([`Self::pairwise_fitted_rmsd`]), cut into flat clusters, each
-    /// represented by its weighted medoid.
+    /// Hierarchical clustering of the members, on `distances` indexed by
+    /// member position ([`Self::pairwise_fitted_rmsd`] with the same
+    /// weights), cut into flat clusters, each represented by its weighted
+    /// medoid: the samples of `weights`, or every geometry, each weighing
+    /// the same, without weights.
     ///
     /// The dendrogram depends on distances only; see
     /// [`DistanceMatrix::dendrogram`]. The representative of a cluster is
     /// the member minimizing the weight-summed distance to the cluster's
-    /// members, `sum_j w_j d(i, j)`, with the members' weights (equal
-    /// without weights) and ties to the lowest index. Clusters are numbered
-    /// in order of their lowest member. The partition groups the samples by
-    /// member position; install it with
-    /// [`DistributionMut::regroup`](crate::structure::DistributionMut::regroup).
+    /// members, `sum_j w_j d(i, j)`, with exact weights, ties to the lowest
+    /// index. Clusters are numbered in order of their lowest member.
+    /// Geometries that are not samples are in no cluster.
     ///
     /// # Errors
     ///
-    /// [`ClusteringError::MatrixMismatch`] when the matrix covers a different
-    /// member count, and the errors of [`Dendrogram::cut`] for `cut`.
+    /// [`ClusteringError::Weights`] when `weights` cover another number of
+    /// geometries, [`ClusteringError::MatrixMismatch`] when the matrix
+    /// covers a different member count, and the errors of
+    /// [`Dendrogram::cut`] for `cut`.
     pub fn cluster_hierarchical(
         &self,
         distances: &DistanceMatrix,
+        weights: Option<&Weights>,
         linkage: Linkage,
         cut: Cut,
-    ) -> Result<Partition, ClusteringError> {
-        Clustered::of_members(self.set().len(), Some(self.distribution()))
-            .cluster_hierarchical(distances, linkage, cut)
+    ) -> Result<Clustering, ClusteringError> {
+        Clustered::new(self.len(), weights)?.cluster_hierarchical(distances, linkage, cut)
     }
 }
 

@@ -35,8 +35,8 @@ use super::{
 /// that keep a geometry bound hand out a [`GeometryMut`] to edit it.
 ///
 /// A geometry has no place and no weight: an order's values belong to the
-/// set and a distribution's weights to an
-/// [`Ensemble`](crate::structure::Ensemble), so a geometry taken out of its
+/// set and weights are a value beside it
+/// ([`Weights`](crate::statistics::Weights)), so a geometry taken out of its
 /// set claims neither. The geometry carries no topology. It is *bound* to one when
 /// it has a property row per atom and bond of that topology: a set binds the
 /// geometries it takes, and [`Self::bind`] binds a geometry outside a set, as a
@@ -449,9 +449,8 @@ impl Geometry {
 /// the atom count or the bond rows; replace a whole geometry through its
 /// owner, such as [`super::StructureSet::replace`] or
 /// [`Structure::from_parts`]. A set geometry's place belongs to the set
-/// ([`super::StructureSet::set_place`]), its scalars to the set's columns,
-/// and its weight to an ensemble
-/// ([`DistributionMut::set_log_weight`](crate::structure::DistributionMut::set_log_weight)).
+/// ([`super::StructureSet::set_place`]) and its scalars to the set's
+/// columns; it has no weight.
 #[derive(Debug)]
 pub struct GeometryMut<'a> {
     geometry: &'a mut Geometry,

@@ -62,10 +62,10 @@ pub use molfile::{
 };
 pub(crate) use native::{read_native, write_native, write_native_to};
 pub use native::{
-    DistributionDescription, EnsembleDescription, NativeKind, NativeObject, NativeReadOptions,
-    NativeSource, NativeWriteOptions, StructureSetDescription, DEFAULT_NATIVE_MAX_ATOMS,
-    DEFAULT_NATIVE_MAX_BONDS, DEFAULT_NATIVE_MAX_INPUT_BYTES, DEFAULT_NATIVE_MAX_ITEMS,
-    DEFAULT_NATIVE_MAX_STRING_BYTES, NATIVE_FORMAT_OLDEST, NATIVE_FORMAT_VERSION, NATIVE_MAGIC,
+    NativeKind, NativeObject, NativeReadOptions, NativeSource, NativeWriteOptions,
+    StructureSetDescription, DEFAULT_NATIVE_MAX_ATOMS, DEFAULT_NATIVE_MAX_BONDS,
+    DEFAULT_NATIVE_MAX_INPUT_BYTES, DEFAULT_NATIVE_MAX_ITEMS, DEFAULT_NATIVE_MAX_STRING_BYTES,
+    NATIVE_FORMAT_OLDEST, NATIVE_FORMAT_VERSION, NATIVE_MAGIC,
 };
 pub use normalization::UnrepresentableStereoReason;
 pub(crate) use normalization::{

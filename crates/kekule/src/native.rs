@@ -4,12 +4,12 @@
 //! persistence. The native format stores one [`Molecule`](crate::molecule::Molecule),
 //! [`Topology`](crate::topology::Topology), [`Structure`](crate::structure::Structure),
 //! [`StructureSet`](crate::structure::StructureSet),
-//! [`Ensemble`](crate::structure::Ensemble), or
-//! [`Distribution`](crate::structure::Distribution) losslessly: represented
+//! [`Weights`](crate::statistics::Weights), or
+//! [`Clustering`](crate::clustering::Clustering) losslessly: represented
 //! chemistry, definitions and instances, semantic IDs, dense order,
 //! hierarchy, classifications with their explicit or inferred assignment,
 //! properties at every scope with units, coordinates as exact bits, and every
-//! structure, geometry, order, and ensemble distribution field. A structure or structure
+//! structure, geometry, order, weight, and cluster field. A structure or structure
 //! set may carry its structure interpretation
 //! reports: write a
 //! [`StructureInterpretation`](crate::macromolecular::StructureInterpretation)
@@ -22,10 +22,8 @@
 //! or [`NativeObject::into_structure_set_interpretation`].
 //! A [`StructureSetDescription`] stores a structure
 //! set whose geometries are kept elsewhere: its topology, properties, order,
-//! and the number of its geometries; an
-//! [`EnsembleDescription`] adds a distribution. A
-//! [`DistributionDescription`] stores a distribution alone, with the number of
-//! geometries it partitions.
+//! and the number of its geometries. Weights and a clustering beside such a
+//! set are records of their own.
 //! Installed perception is stored with its provenance unless
 //! [`NativeWriteOptions::with_perception`]
 //! omits it.
@@ -56,8 +54,8 @@
 
 pub use crate::io::native::entry_points::{read, write, write_to};
 pub use crate::io::{
-    DistributionDescription, EnsembleDescription, NativeKind, NativeObject, NativeReadOptions,
-    NativeSource, NativeWriteOptions, StructureSetDescription, DEFAULT_NATIVE_MAX_ATOMS,
-    DEFAULT_NATIVE_MAX_BONDS, DEFAULT_NATIVE_MAX_INPUT_BYTES, DEFAULT_NATIVE_MAX_ITEMS,
-    DEFAULT_NATIVE_MAX_STRING_BYTES, NATIVE_FORMAT_OLDEST, NATIVE_FORMAT_VERSION, NATIVE_MAGIC,
+    NativeKind, NativeObject, NativeReadOptions, NativeSource, NativeWriteOptions,
+    StructureSetDescription, DEFAULT_NATIVE_MAX_ATOMS, DEFAULT_NATIVE_MAX_BONDS,
+    DEFAULT_NATIVE_MAX_INPUT_BYTES, DEFAULT_NATIVE_MAX_ITEMS, DEFAULT_NATIVE_MAX_STRING_BYTES,
+    NATIVE_FORMAT_OLDEST, NATIVE_FORMAT_VERSION, NATIVE_MAGIC,
 };

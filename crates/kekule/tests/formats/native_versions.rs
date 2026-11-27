@@ -20,12 +20,12 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use kekule::clustering::Clustering;
 use kekule::math::{PeriodicCell, Point3, Vector3};
 use kekule::molecule::{AtomId, BondId, Molecule};
 use kekule::native::{
-    self, DistributionDescription, EnsembleDescription, NativeKind, NativeObject,
-    NativeReadOptions, NativeSource, NativeWriteOptions, StructureSetDescription,
-    NATIVE_FORMAT_OLDEST, NATIVE_FORMAT_VERSION,
+    self, NativeKind, NativeObject, NativeReadOptions, NativeSource, NativeWriteOptions,
+    StructureSetDescription, NATIVE_FORMAT_OLDEST, NATIVE_FORMAT_VERSION,
 };
 use kekule::pdb;
 use kekule::perception::aromaticity::AromaticityModel;
@@ -34,10 +34,10 @@ use kekule::perception::valence::{ValenceModel, ValenceValidation};
 use kekule::perception::Perception;
 use kekule::properties::{PropertyColumn, PropertyKey, PropertyTable, PropertyValue};
 use kekule::smiles;
-use kekule::statistics::{CumulantOrder, Estimator};
+use kekule::statistics::Weights;
 use kekule::structure::{
-    Distribution, Ensemble, Forces, Geometry, GeometryIndex, Order, Partition, Positions, Samples,
-    Sampling, StateData, Structure, StructureSet, ThermodynamicState, TimeAxis, Velocities,
+    Forces, Geometry, GeometryIndex, Order, Positions, Sampling, Structure, StructureSet,
+    ThermodynamicState, TimeAxis, Velocities,
 };
 use kekule::topology::{AtomSiteMetadata, InstanceAtomId, Topology, TopologyBuilder};
 use kekule::units::{
@@ -70,42 +70,42 @@ enum Build {
 const FIXTURES: &[Fixture] = &[
     Fixture {
         name: "molecule",
-        since: 7,
+        since: 10,
         kind: NativeKind::Molecule,
         perception: true,
         build: Build::Stable(|| write(&perceived_molecule(), true)),
     },
     Fixture {
         name: "molecule_plain",
-        since: 7,
+        since: 10,
         kind: NativeKind::Molecule,
         perception: false,
         build: Build::Stable(|| write(&plain_molecule(), false)),
     },
     Fixture {
         name: "molecule_perceived",
-        since: 8,
+        since: 10,
         kind: NativeKind::Molecule,
         perception: true,
         build: Build::Recorded(|| write(&fully_perceived_molecule(), true)),
     },
     Fixture {
         name: "topology",
-        since: 7,
+        since: 10,
         kind: NativeKind::Topology,
         perception: true,
         build: Build::Stable(|| write(&topology(), true)),
     },
     Fixture {
         name: "structure",
-        since: 7,
+        since: 10,
         kind: NativeKind::Structure,
         perception: true,
         build: Build::Stable(|| write(&structure(), true)),
     },
     Fixture {
         name: "interpreted_structure",
-        since: 7,
+        since: 10,
         kind: NativeKind::StructureInterpretation,
         perception: true,
         build: Build::Recorded(|| {
@@ -115,7 +115,7 @@ const FIXTURES: &[Fixture] = &[
     },
     Fixture {
         name: "interpreted_structure_assemblies",
-        since: 8,
+        since: 10,
         kind: NativeKind::StructureInterpretation,
         perception: true,
         build: Build::Recorded(|| {
@@ -130,35 +130,35 @@ const FIXTURES: &[Fixture] = &[
     },
     Fixture {
         name: "structure_set",
-        since: 7,
+        since: 10,
         kind: NativeKind::StructureSet,
         perception: true,
         build: Build::Stable(|| write(&structure_set(), true)),
     },
     Fixture {
         name: "structure_set_steps",
-        since: 8,
+        since: 10,
         kind: NativeKind::StructureSet,
         perception: true,
         build: Build::Stable(|| write(&structure_set_steps(), true)),
     },
     Fixture {
         name: "structure_set_columns",
-        since: 9,
+        since: 10,
         kind: NativeKind::StructureSet,
         perception: true,
         build: Build::Stable(|| write(&structure_set_columns(), true)),
     },
     Fixture {
         name: "structure_set_sampling",
-        since: 9,
+        since: 10,
         kind: NativeKind::StructureSet,
         perception: true,
         build: Build::Stable(|| write(&structure_set_sampling(), true)),
     },
     Fixture {
         name: "interpreted_structure_set",
-        since: 7,
+        since: 10,
         kind: NativeKind::StructureSetInterpretation,
         perception: true,
         build: Build::Recorded(|| {
@@ -170,52 +170,45 @@ const FIXTURES: &[Fixture] = &[
     },
     Fixture {
         name: "structure_set_description",
-        since: 7,
+        since: 10,
         kind: NativeKind::StructureSet,
         perception: true,
         build: Build::Stable(|| write(&structure_set_description(), true)),
     },
     Fixture {
         name: "structure_set_description_columns",
-        since: 9,
+        since: 10,
         kind: NativeKind::StructureSet,
         perception: true,
         build: Build::Stable(|| write(&structure_set_description_columns(), true)),
     },
     Fixture {
-        name: "ensemble",
-        since: 7,
-        kind: NativeKind::Ensemble,
-        perception: true,
-        build: Build::Stable(|| write(&ensemble(), true)),
-    },
-    Fixture {
-        name: "ensemble_description",
-        since: 7,
-        kind: NativeKind::Ensemble,
-        perception: true,
-        build: Build::Stable(|| write(&ensemble_description(), true)),
-    },
-    Fixture {
-        name: "distribution",
-        since: 8,
-        kind: NativeKind::Distribution,
+        name: "weights",
+        since: 10,
+        kind: NativeKind::Weights,
         perception: false,
-        build: Build::Stable(|| write(&distribution(), false)),
+        build: Build::Stable(|| write(&given_weights(), false)),
     },
     Fixture {
-        name: "distribution_boltzmann",
-        since: 9,
-        kind: NativeKind::Distribution,
+        name: "weights_boltzmann",
+        since: 10,
+        kind: NativeKind::Weights,
         perception: false,
-        build: Build::Stable(|| write(&boltzmann_distribution(), false)),
+        build: Build::Stable(|| write(&boltzmann_weights(), false)),
     },
     Fixture {
-        name: "distribution_reweighted",
-        since: 9,
-        kind: NativeKind::Distribution,
+        name: "weights_bias",
+        since: 10,
+        kind: NativeKind::Weights,
         perception: false,
-        build: Build::Stable(|| write(&reweighted_distribution(), false)),
+        build: Build::Stable(|| write(&bias_weights(), false)),
+    },
+    Fixture {
+        name: "clustering",
+        since: 10,
+        kind: NativeKind::Clustering,
+        perception: false,
+        build: Build::Stable(|| write(&clustering(), false)),
     },
 ];
 
@@ -237,9 +230,8 @@ fn encode(object: &NativeObject, perception: bool) -> Vec<u8> {
         NativeObject::StructureSet(value) => write(value, perception),
         NativeObject::StructureSetInterpretation(value) => write(value.as_ref(), perception),
         NativeObject::StructureSetDescription(value) => write(value.as_ref(), perception),
-        NativeObject::Ensemble(value) => write(value.as_ref(), perception),
-        NativeObject::EnsembleDescription(value) => write(value.as_ref(), perception),
-        NativeObject::DistributionDescription(value) => write(value.as_ref(), perception),
+        NativeObject::Weights(value) => write(value.as_ref(), perception),
+        NativeObject::Clustering(value) => write(value.as_ref(), perception),
         _ => unreachable!("every kind is listed"),
     }
 }
@@ -336,46 +328,6 @@ fn stable_builders_build_the_current_files() {
     }
 }
 
-#[test]
-fn sets_of_versions_before_9_move_geometry_values_into_columns() {
-    for version in NATIVE_FORMAT_OLDEST..9 {
-        let set = decode(version, named("structure_set"))
-            .into_structure_set()
-            .unwrap();
-        // The first geometry's own value is its row's cell.
-        assert_eq!(set.columns().len(), set.len(), "v{version}");
-        assert_eq!(
-            set.columns().get(&key("replica")),
-            Some(&PropertyColumn::Int(vec![Some(4), None, None])),
-            "v{version}"
-        );
-        assert!(set
-            .iter()
-            .all(|geometry| geometry.properties().owner().is_empty()));
-        assert!(set.sampling().is_none(), "v{version}");
-        let description = decode(version, named("structure_set_description"))
-            .into_structure_set_description()
-            .unwrap();
-        assert_eq!(description.columns().len(), 4, "v{version}");
-        assert!(!description.columns().has_data(), "v{version}");
-    }
-    let columns = decode(9, named("structure_set_columns"))
-        .into_structure_set()
-        .unwrap();
-    assert_eq!(columns.columns(), structure_set_columns().columns());
-    let sampled = decode(9, named("structure_set_sampling"))
-        .into_structure_set()
-        .unwrap();
-    assert_eq!(sampled.sampling(), structure_set_sampling().sampling());
-}
-
-fn named(name: &str) -> &'static Fixture {
-    FIXTURES
-        .iter()
-        .find(|fixture| fixture.name == name)
-        .unwrap()
-}
-
 /// Writes every file of the current version, and the same files as seeds
 /// of the `native` fuzz target. A file whose content the previous version
 /// has is that version's file encoded by the current writer.
@@ -384,10 +336,12 @@ fn named(name: &str) -> &'static Fixture {
 fn record() {
     let version = NATIVE_FORMAT_VERSION;
     let previous = version - 1;
+    let readable = NATIVE_FORMAT_OLDEST <= previous;
     let seeds = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fuzz/corpus/native");
     std::fs::create_dir_all(directory(version)).unwrap();
+    std::fs::create_dir_all(&seeds).unwrap();
     for fixture in fixtures(version) {
-        let bytes = if fixture.since <= previous {
+        let bytes = if readable && fixture.since <= previous {
             encode(&decode(previous, fixture), fixture.perception)
         } else {
             match fixture.build {
@@ -753,113 +707,65 @@ fn structure_set_description_columns() -> StructureSetDescription {
         .unwrap()
 }
 
-/// Two states with energies and properties, log weights, and a canonical
-/// target.
-fn clustered_distribution(samples: Samples, sample_count: usize) -> Distribution {
-    let assignments = (0..sample_count).map(|sample| sample % 2).collect();
-    let mut open = StateData::new()
-        .with_energy(Quantity::new(-12.5, KILOJOULE_PER_MOLE))
-        .unwrap();
-    open.properties_mut()
-        .insert(key("cluster"), PropertyValue::String("open".into()))
-        .unwrap();
-    let log_weights = (0..sample_count)
-        .map(|sample| -0.5 * sample as f64)
-        .collect();
-    Distribution::new(samples, Partition::new(assignments, vec![0, 1]).unwrap())
-        .unwrap()
-        .with_log_weights(log_weights)
-        .unwrap()
-        .with_states(vec![open, StateData::new()])
-        .unwrap()
-        .with_target(ThermodynamicState::canonical(Quantity::new(298.15, KELVIN)).unwrap())
-        .unwrap()
-}
-
-fn ensemble() -> Ensemble {
-    Ensemble::new(structure_set(), clustered_distribution(Samples::All, 3)).unwrap()
-}
-
-/// The last three of four geometries kept elsewhere, as two states.
-fn ensemble_description() -> EnsembleDescription {
-    EnsembleDescription::new(
-        structure_set_description(),
-        clustered_distribution(Samples::Subset(vec![1, 2, 3]), 3),
+/// Log weights of four of five geometries kept elsewhere, of either sign, at
+/// a temperature.
+fn given_weights() -> Weights {
+    Weights::given(
+        vec![Some(-0.5), None, Some(0.0), Some(1.25), Some(-41.0)],
+        Some(Quantity::new(298.15, KELVIN)),
     )
     .unwrap()
 }
 
-/// Every other geometry of five kept elsewhere, as two states.
-fn distribution() -> DistributionDescription {
-    DistributionDescription::new(5, clustered_distribution(Samples::Subset(vec![0, 2, 4]), 3))
-        .unwrap()
-}
-
-/// Four geometries as two states with Boltzmann populations at an
-/// isothermal-isobaric target.
-fn boltzmann_distribution() -> DistributionDescription {
-    let target = ThermodynamicState::isothermal_isobaric(
-        Quantity::new(310.0, KELVIN),
-        Quantity::new(1.013_25, BAR),
-    )
-    .unwrap();
-    let states = [0.0, 2.5].map(|energy| {
-        StateData::new()
-            .with_energy(Quantity::new(energy, KILOJOULE_PER_MOLE))
-            .unwrap()
-    });
+/// Four geometries with Boltzmann weights of their energy column at 310 K,
+/// one without an energy.
+fn boltzmann_weights() -> Weights {
     let geometries = [0.5, 1.0, 1.5, 2.0].map(|seed| Geometry::new(positions(seed)));
-    let set = StructureSet::from_geometries(water_topology(), Vec::from(geometries)).unwrap();
-    let distribution = Distribution::new(
-        Samples::All,
-        Partition::new(vec![0, 1, 0, 1], vec![0, 1]).unwrap(),
-    )
-    .unwrap()
-    .with_states(Vec::from(states))
-    .unwrap();
-    let mut ensemble = Ensemble::new(set, distribution).unwrap();
-    ensemble
-        .distribution_mut()
-        .assign_boltzmann_populations(target)
+    let mut set = StructureSet::from_geometries(water_topology(), Vec::from(geometries)).unwrap();
+    set.columns_mut()
+        .insert(
+            key("energy"),
+            PropertyColumn::Real {
+                unit: KILOJOULE_PER_MOLE,
+                values: vec![Some(0.0), Some(2.5), None, Some(-1.25)],
+            },
+        )
         .unwrap();
-    DistributionDescription::new(4, ensemble.into_parts().1).unwrap()
+    Weights::boltzmann(&set, &key("energy"), Quantity::new(310.0, KELVIN)).unwrap()
 }
 
-/// Three of four geometries of a biased run at 300 K, reweighted to 310 K
-/// with the second-order cumulant, as two states.
-fn reweighted_distribution() -> DistributionDescription {
+/// Four geometries of a biased run in the isothermal-isobaric ensemble,
+/// sampled from step 500 on, weighted by their boost.
+fn bias_weights() -> Weights {
     let geometries = [0.5, 1.0, 1.5, 2.0].map(|seed| Geometry::new(positions(seed)));
     let mut set = StructureSet::from_geometries(water_topology(), Vec::from(geometries)).unwrap();
     set.set_order(Some(Order::Step(vec![0, 500, 1_000, 1_500])))
         .unwrap();
-    let energies = |values: [f64; 4]| PropertyColumn::Real {
-        unit: KILOJOULE_PER_MOLE,
-        values: values.map(Some).to_vec(),
-    };
-    let mut columns = set.columns_mut();
-    columns
-        .insert(key("potential"), energies([-41.0, -40.25, -42.5, -39.75]))
+    set.columns_mut()
+        .insert(
+            key("boost"),
+            PropertyColumn::Real {
+                unit: KILOJOULE_PER_MOLE,
+                values: [3.0, 1.25, 0.5, 2.75].map(Some).to_vec(),
+            },
+        )
         .unwrap();
-    columns
-        .insert(key("boost"), energies([3.0, 1.25, 0.5, 2.75]))
-        .unwrap();
-    let state = ThermodynamicState::canonical(Quantity::new(300.0, KELVIN)).unwrap();
+    let state = ThermodynamicState::isothermal_isobaric(
+        Quantity::new(300.0, KELVIN),
+        Quantity::new(1.013_25, BAR),
+    )
+    .unwrap();
     let sampling = Sampling::new(state)
         .with_from_step(500)
-        .with_potential_energy(key("potential"))
-        .unwrap()
         .with_bias([key("boost")])
         .unwrap();
     set.set_sampling(Some(sampling)).unwrap();
-    let distribution = Distribution::reweighted(
-        &set,
-        Samples::Subset(vec![1, 2, 3]),
-        Partition::new(vec![0, 1, 0], vec![0, 1]).unwrap(),
-        Some(Quantity::new(310.0, KELVIN)),
-        Estimator::Cumulant(CumulantOrder::Second),
-    )
-    .unwrap();
-    DistributionDescription::new(4, distribution).unwrap()
+    Weights::from_bias(&set).unwrap().into_weights()
+}
+
+/// Five geometries in two clusters, one geometry in none.
+fn clustering() -> Clustering {
+    Clustering::new(vec![Some(1), Some(0), None, Some(1), Some(0)], vec![4, 3]).unwrap()
 }
 
 /// A peptide of two glycines and a water, in one model or in two.

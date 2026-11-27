@@ -40,13 +40,13 @@ fn reused_streaming_buffers_agree_with_loaded_trajectory_statistics() {
     }
     assert_eq!(
         rmsf.finish().unwrap().values(),
-        t.rmsf(&all).unwrap().values()
+        t.rmsf(&all, None).unwrap().values()
     );
     let contacts = contacts.finish().unwrap();
     assert_eq!(contacts.contact_weights(), &[2.0, 0.0]);
     assert_eq!(
         contacts.contact_weights(),
-        t.contact_occupancy(pairs, cutoff)
+        t.contact_occupancy(pairs, cutoff, None)
             .unwrap()
             .contact_weights()
     );

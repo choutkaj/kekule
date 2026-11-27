@@ -256,9 +256,9 @@ impl XyzDocument {
     }
 
     /// Interprets several frames over the same atoms as an unordered
-    /// [`StructureSet`](crate::structure::StructureSet) without a distribution,
-    /// one geometry per selected frame with one report each: an XYZ file
-    /// states no weights, states, or order. Each frame infers its own
+    /// [`StructureSet`](crate::structure::StructureSet), one geometry per
+    /// selected frame with one report each: an XYZ file states no weights or
+    /// order. Each frame infers its own
     /// connectivity, and every frame must infer the same bonds as the first.
     ///
     /// # Errors

@@ -25,9 +25,9 @@ use crate::io::{
 /// constant holds reals in that unit, as [`write()`] writes them. SDF
 /// carries no types: a text cell that reads as a number or a boolean comes
 /// back as one, and [`write()`] leaves a missing cell's field out of its
-/// record. No field says how much a geometry weighs or which state it
-/// belongs to, which an [`Ensemble`](crate::structure::Ensemble) of the set
-/// states.
+/// record. No field says how much a geometry weighs or which cluster it
+/// belongs to: [`Weights`](crate::statistics::Weights) and a
+/// [`Clustering`](crate::clustering::Clustering) of the set say that.
 ///
 /// When the records carry [`STEP_FIELD`](crate::sdf::STEP_FIELD), or
 /// [`COORDINATE_FIELD`](crate::sdf::COORDINATE_FIELD) with

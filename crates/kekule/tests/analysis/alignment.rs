@@ -15,8 +15,7 @@ use kekule::math::{Matrix3, PeriodicCell, Point3, RigidTransform, Vector3};
 use kekule::molecule::{Atom, BondOrder, Element, MoleculeEditor};
 use kekule::properties::{PropertyKey, PropertyValue, PropertyValueRef};
 use kekule::structure::{
-    Distribution, Ensemble, Forces, Geometry, Order, Partition, Place, Positions, Samples,
-    Structure, StructureSet, TimeAxis, Velocities,
+    Forces, Geometry, Order, Place, Positions, Structure, StructureSet, TimeAxis, Velocities,
 };
 use kekule::topology::{AtomSelection, Topology, TopologyAtomIndex};
 use kekule::units::{
@@ -628,7 +627,7 @@ fn sets_share_the_collection_contract() {
 }
 
 #[test]
-fn ensembles_superpose_every_geometry_as_their_set_does() {
+fn a_degenerate_geometry_fails_the_superposition_and_changes_no_geometry() {
     let topology = chain(4);
     let reference = spread();
     let mut set = StructureSet::from_geometries(
@@ -640,26 +639,12 @@ fn ensembles_superpose_every_geometry_as_their_set_does() {
         ],
     )
     .unwrap();
-    let distribution = Distribution::new(Samples::Subset(vec![0, 1]), Partition::one_state(2));
-    let mut ensemble = Ensemble::new(set.clone(), distribution.unwrap()).unwrap();
     let all = AtomSelection::all(Arc::clone(&topology));
-
-    // A degenerate geometry fails both, naming it, and changes neither.
-    let failure = set.superpose(0, &all, Default::default()).unwrap_err();
-    assert_eq!(
-        ensemble.superpose(0, &all, Default::default()),
-        Err(failure)
-    );
-    assert_eq!(payloads(ensemble.set()), payloads(&set));
-
+    let before = payloads(&set);
+    assert!(set.superpose(0, &all, Default::default()).is_err());
+    assert_eq!(payloads(&set), before);
     set.remove(2).unwrap();
-    ensemble.remove(2).unwrap();
-    let expected = set.superpose(0, &all, Default::default()).unwrap();
-    let before = ensemble.distribution().clone();
-    let report = ensemble.superpose(0, &all, Default::default()).unwrap();
-    assert_eq!(report, expected);
-    assert_eq!(payloads(ensemble.set()), payloads(&set));
-    assert_eq!(ensemble.distribution(), &before);
+    assert!(set.superpose(0, &all, Default::default()).is_ok());
 }
 
 fn moved(point: Point3) -> Point3 {

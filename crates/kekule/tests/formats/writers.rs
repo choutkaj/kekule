@@ -15,13 +15,13 @@ use kekule::pdb::{self, PdbWriteOptions};
 use kekule::sdf::{self, SdfDataField, SdfRecordInterpretation, SdfWriteOptions};
 use kekule::smiles::{self, SmilesWriteMode, SmilesWriteOptions};
 use kekule::structure::{
-    Distribution, Ensemble, Forces, Geometry, Order, Partition, Positions, Samples, StateData,
-    Structure, StructureSet, StructureView, ThermodynamicState, TimeAxis, Velocities,
+    Forces, Geometry, Order, Positions, Structure, StructureSet, StructureView, TimeAxis,
+    Velocities,
 };
 use kekule::topology::{Topology, TopologyBuilder};
 use kekule::traj::FrameView;
 use kekule::units::{
-    Quantity, ANGSTROM, KELVIN, KILOJOULE_PER_MOLE, KILOJOULE_PER_MOLE_PER_NANOMETER, NANOMETER,
+    Quantity, ANGSTROM, KILOJOULE_PER_MOLE, KILOJOULE_PER_MOLE_PER_NANOMETER, NANOMETER,
     NANOMETER_PER_PICOSECOND, PICOSECOND,
 };
 
@@ -543,25 +543,6 @@ fn conformer_set() -> StructureSet {
     StructureSet::from_structures([first, later]).unwrap()
 }
 
-/// The conformers as one state each, weighted 1:3 (log weights 0 and ln 3),
-/// with state energies 0 and 5 kJ/mol.
-fn weighted_ensemble() -> Ensemble {
-    let states = [0.0, 5.0]
-        .map(|energy| {
-            StateData::new()
-                .with_energy(Quantity::new(energy, KILOJOULE_PER_MOLE))
-                .unwrap()
-        })
-        .to_vec();
-    let distribution = Distribution::new(Samples::All, Partition::state_per_sample(2))
-        .unwrap()
-        .with_log_weights(vec![0.0, 3.0_f64.ln()])
-        .unwrap()
-        .with_states(states)
-        .unwrap();
-    Ensemble::new(conformer_set(), distribution).unwrap()
-}
-
 fn data_fields(records: &[SdfRecordInterpretation]) -> Vec<Vec<(String, String)>> {
     records
         .iter()
@@ -576,32 +557,20 @@ fn data_fields(records: &[SdfRecordInterpretation]) -> Vec<Vec<(String, String)>
 }
 
 #[test]
-fn sdf_never_writes_a_distribution() {
-    // The geometries of an ensemble's set write no weight, state, energy, or
-    // temperature, whatever the distribution over them.
-    let mut ensemble = weighted_ensemble();
-    ensemble
-        .distribution_mut()
-        .set_target(Some(
-            ThermodynamicState::canonical(Quantity::new(300.0, KELVIN)).unwrap(),
-        ))
-        .unwrap();
-    let (text, report) = sdf::write(ensemble.set(), SdfWriteOptions::default()).unwrap();
+fn sdf_writes_an_unordered_set_without_fields() {
+    // The geometries of an unordered set write no field.
+    let set = conformer_set();
+    let (text, report) = sdf::write(&set, SdfWriteOptions::default()).unwrap();
     assert!(report.is_empty());
     assert!(!text.contains("kekule."), "{text}");
     let records = interpret_records(&text);
     assert_eq!(data_fields(&records), [Vec::new(), Vec::new()]);
-    let plain = sdf::write(&conformer_set(), SdfWriteOptions::default())
-        .unwrap()
-        .0;
-    assert_eq!(text, plain);
     // So does each geometry alone, and a Molfile of it loses nothing.
-    let (single, report) =
-        sdf::write([ensemble.set().get(1).unwrap()], SdfWriteOptions::default()).unwrap();
+    let (single, report) = sdf::write([set.get(1).unwrap()], SdfWriteOptions::default()).unwrap();
     assert!(report.is_empty());
     assert!(!single.contains("kekule."), "{single}");
     let (_, report) = molfile::write(
-        molfile::MolfileSource::structure(&ensemble.set().get(1).unwrap()),
+        molfile::MolfileSource::structure(&set.get(1).unwrap()),
         MolfileWriteOptions::default(),
     )
     .unwrap();
@@ -2776,29 +2745,17 @@ fn structure_sets_report_or_refuse_the_state_pdb_and_mmcif_cannot_hold() {
 }
 
 #[test]
-fn a_geometry_of_an_ensemble_with_a_place_writes_only_its_place_in_sdf() {
+fn a_geometry_with_a_place_writes_only_its_place_in_sdf() {
     let mut set = StructureSet::from_structures([structure("C", &[[0.0; 3]])]).unwrap();
     set.set_order(Some(Order::Step(vec![7]))).unwrap();
-    let state = StateData::new()
-        .with_energy(Quantity::new(-1.5, KILOJOULE_PER_MOLE))
-        .unwrap();
-    let distribution = Distribution::new(Samples::All, Partition::one_state(1))
-        .unwrap()
-        .with_log_weights(vec![2.5_f64.ln()])
-        .unwrap()
-        .with_states(vec![state])
-        .unwrap()
-        .with_target(ThermodynamicState::canonical(Quantity::new(300.0, KELVIN)).unwrap())
-        .unwrap();
-    let ensemble = Ensemble::new(set, distribution).unwrap();
-    let view = ensemble.set().get(0).unwrap();
+    let view = set.get(0).unwrap();
     let text = sdf::write(
         [sdf::SdfRecordSource::structure(&view)],
         SdfWriteOptions::default(),
     )
     .unwrap()
     .0;
-    // The place's field alone: the distribution belongs to the ensemble.
+    // The place's field alone.
     let expected = "
   kekule            2D
 

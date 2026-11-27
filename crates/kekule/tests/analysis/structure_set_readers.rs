@@ -1,6 +1,6 @@
 //! Reductions over any geometry reader, such as a set read from a file: equal
 //! to the same reductions of the set in memory, for every geometry, a range
-//! with a stride, and a distribution over part of the set.
+//! with a stride, and weights over part of the set.
 
 use kekule::diagnostics::Countable;
 use kekule::diagnostics::IndexOutOfRange;
@@ -15,12 +15,11 @@ use kekule::math::{Matrix3, Point3, RigidTransform, Vector3};
 use kekule::parallel::{Run, ScopedThreads};
 use kekule::statistics::{
     ContactOccupancyAccumulator, GroupContactOccupancyAccumulator, RmsfAccumulator,
-    SampleObservations, StatisticsError,
+    SampleObservations, StatisticsError, Weights,
 };
-use kekule::statistics::{ContactOccupancyResult, GroupContactOccupancyResult, RmsfResult};
 use kekule::structure::{
-    Distribution, Ensemble, Geometry, Order, Partition, Positions, Samples, Structure,
-    StructureSet, StructureSetRead, StructureSetReadError, TimeAxis,
+    Geometry, Order, Positions, Structure, StructureSet, StructureSetRead, StructureSetReadError,
+    TimeAxis,
 };
 use kekule::topology::{AtomSelection, InstanceAtomId, Topology};
 use kekule::traj::io::trr::{TrrLambdaPolicy, TrrWriteOptions};
@@ -106,16 +105,16 @@ fn file_and_memory(scratch: &str) -> (Scratch, StructureSet<IndexedFile>, Struct
     (Scratch(directory), file, memory)
 }
 
-/// A distribution over geometries 1, 2, 4, 5, 7, and 8, weighted, in two
-/// states.
-fn partial() -> Distribution {
-    Distribution::new(
-        Samples::Subset(vec![1, 2, 4, 5, 7, 8]),
-        Partition::new(vec![0, 1, 0, 1, 1, 0], vec![0, 1]).unwrap(),
-    )
-    .unwrap()
-    .with_log_weights([1.0, 2.0, 3.0, 0.5, 1.5, 4.0].map(f64::ln).to_vec())
-    .unwrap()
+/// Weights of geometries 1, 2, 4, 5, 7, and 8 of ten.
+fn partial() -> Weights {
+    let mut log_weights = vec![None; 10];
+    for (geometry, weight) in [1, 2, 4, 5, 7, 8]
+        .into_iter()
+        .zip([1.0, 2.0, 3.0, 0.5, 1.5, 4.0])
+    {
+        log_weights[geometry] = Some(f64::ln(weight));
+    }
+    Weights::given(log_weights, None).unwrap()
 }
 
 fn selection(topology: &Arc<Topology>, atoms: &[usize]) -> AtomSelection {
@@ -143,76 +142,14 @@ fn bits(values: &[f64]) -> Vec<u64> {
 
 const CUTOFF: f64 = 0.45;
 
-/// The statistics of a structure set, unweighted, or of an ensemble,
-/// weighted by its distribution.
-trait Statistics {
-    fn rmsf(&self, atoms: &AtomSelection) -> RmsfResult;
-    fn contact_occupancy(
-        &self,
-        pairs: Vec<(InstanceAtomId, InstanceAtomId)>,
-        cutoff: Quantity<f64>,
-    ) -> ContactOccupancyResult;
-    fn group_contact_occupancy(
-        &self,
-        groups: Vec<AtomSelection>,
-        pairs: Vec<(usize, usize)>,
-        cutoff: Quantity<f64>,
-    ) -> GroupContactOccupancyResult;
-}
-
-impl Statistics for StructureSet {
-    fn rmsf(&self, atoms: &AtomSelection) -> RmsfResult {
-        StructureSet::rmsf(self, atoms).unwrap()
-    }
-
-    fn contact_occupancy(
-        &self,
-        pairs: Vec<(InstanceAtomId, InstanceAtomId)>,
-        cutoff: Quantity<f64>,
-    ) -> ContactOccupancyResult {
-        StructureSet::contact_occupancy(self, pairs, cutoff).unwrap()
-    }
-
-    fn group_contact_occupancy(
-        &self,
-        groups: Vec<AtomSelection>,
-        pairs: Vec<(usize, usize)>,
-        cutoff: Quantity<f64>,
-    ) -> GroupContactOccupancyResult {
-        StructureSet::group_contact_occupancy(self, groups, pairs, cutoff).unwrap()
-    }
-}
-
-impl Statistics for Ensemble {
-    fn rmsf(&self, atoms: &AtomSelection) -> RmsfResult {
-        Ensemble::rmsf(self, atoms).unwrap()
-    }
-
-    fn contact_occupancy(
-        &self,
-        pairs: Vec<(InstanceAtomId, InstanceAtomId)>,
-        cutoff: Quantity<f64>,
-    ) -> ContactOccupancyResult {
-        Ensemble::contact_occupancy(self, pairs, cutoff).unwrap()
-    }
-
-    fn group_contact_occupancy(
-        &self,
-        groups: Vec<AtomSelection>,
-        pairs: Vec<(usize, usize)>,
-        cutoff: Quantity<f64>,
-    ) -> GroupContactOccupancyResult {
-        Ensemble::group_contact_occupancy(self, groups, pairs, cutoff).unwrap()
-    }
-}
-
 /// Checks that every statistic of `observations` of `reader` equals the
-/// statistic of `expected`, a set or ensemble in memory holding just those
-/// geometries.
+/// statistic of `expected`, a set in memory holding just those geometries,
+/// with `weights`.
 fn statistics_match(
     reader: &dyn StructureSetRead,
     observations: &SampleObservations,
-    expected: &impl Statistics,
+    expected: &StructureSet,
+    weights: Option<&Weights>,
 ) {
     let topology = Arc::clone(reader.topology());
     let cutoff = Quantity::new(CUTOFF, NANOMETER);
@@ -226,7 +163,7 @@ fn statistics_match(
             .observe_samples(reader, observations, all.clone())
             .unwrap();
         let read = accumulator.finish().unwrap();
-        let held = expected.rmsf(&atoms);
+        let held = expected.rmsf(&atoms, weights).unwrap();
         assert_eq!(bits(read.values().value()), bits(held.values().value()));
         assert_eq!(read.observation_count(), held.observation_count());
         assert_eq!(read.total_weight().to_bits(), held.total_weight().to_bits());
@@ -238,7 +175,9 @@ fn statistics_match(
         .observe_samples(reader, observations, all.clone())
         .unwrap();
     let read = contacts.finish().unwrap();
-    let held = expected.contact_occupancy(pairs(&topology), cutoff);
+    let held = expected
+        .contact_occupancy(pairs(&topology), cutoff, weights)
+        .unwrap();
     assert_eq!(bits(read.contact_weights()), bits(held.contact_weights()));
     assert_eq!(read.observation_count(), held.observation_count());
     assert_eq!(read.total_weight().to_bits(), held.total_weight().to_bits());
@@ -253,7 +192,9 @@ fn statistics_match(
     .unwrap();
     contacts.observe_samples(reader, observations, all).unwrap();
     let read = contacts.finish().unwrap();
-    let held = expected.group_contact_occupancy(group_atoms, group_pairs, cutoff);
+    let held = expected
+        .group_contact_occupancy(group_atoms, group_pairs, cutoff, weights)
+        .unwrap();
     assert_eq!(bits(read.contact_weights()), bits(held.contact_weights()));
     assert_eq!(read.observation_count(), held.observation_count());
     assert_eq!(read.total_weight().to_bits(), held.total_weight().to_bits());
@@ -268,17 +209,17 @@ fn statistics_over_a_reader_equal_the_set_in_memory() {
         let observations = SampleObservations::all(reader);
         assert_eq!(observations.samples(), (0..10).collect::<Vec<_>>());
         assert_eq!(observations.weights(), [1.0; 10]);
-        statistics_match(reader, &observations, &memory);
+        statistics_match(reader, &observations, &memory, None);
         // A range with a stride.
         let listed = (1..9).step_by(3);
         let observations = SampleObservations::of(reader, listed.clone()).unwrap();
         assert_eq!(observations.samples(), [1, 4, 7]);
-        statistics_match(reader, &observations, &memory.select(listed).unwrap());
+        statistics_match(reader, &observations, &memory.select(listed).unwrap(), None);
     }
     // The set's own statistics read the same.
     assert_eq!(
-        bits(file.rmsf(&atoms).unwrap().values().value()),
-        bits(memory.rmsf(&atoms).unwrap().values().value())
+        bits(file.rmsf(&atoms, None).unwrap().values().value()),
+        bits(memory.rmsf(&atoms, None).unwrap().values().value())
     );
     assert_eq!(
         SampleObservations::of(&file, [2, 10]),
@@ -291,44 +232,37 @@ fn statistics_over_a_reader_equal_the_set_in_memory() {
         ))
     );
 
-    // Every sample of a distribution over part of the set, with its
-    // probability, as the ensemble's own statistics.
-    let file = Ensemble::new(file, partial()).unwrap();
-    let memory = Ensemble::new(memory, partial()).unwrap();
-    for (reader, observations) in [
-        (
-            file.set() as &dyn StructureSetRead,
-            SampleObservations::weighted(&file),
-        ),
-        (memory.set(), SampleObservations::weighted(&memory)),
-    ] {
-        assert_eq!(observations.samples(), [1, 2, 4, 5, 7, 8]);
-        statistics_match(reader, &observations, &memory);
+    // Every sample of weights over part of the set, with its probability,
+    // as the set's own weighted statistics.
+    let weights = partial();
+    let observations = SampleObservations::weighted(&weights);
+    assert_eq!(observations.samples(), [1, 2, 4, 5, 7, 8]);
+    for reader in [&file as &dyn StructureSetRead, &memory] {
+        statistics_match(reader, &observations, &memory, Some(&weights));
     }
     let listed = (1..9).step_by(3);
-    for (reader, observations) in [
-        (
-            file.set() as &dyn StructureSetRead,
-            SampleObservations::weighted_of(&file, listed.clone()).unwrap(),
-        ),
-        (
-            memory.set(),
-            SampleObservations::weighted_of(&memory, listed.clone()).unwrap(),
-        ),
-    ] {
-        // Geometries 1, 4, and 7 are samples.
-        assert_eq!(observations.samples(), [1, 4, 7]);
+    let observations = SampleObservations::weighted_of(&weights, listed.clone()).unwrap();
+    // Geometries 1, 4, and 7 are samples.
+    assert_eq!(observations.samples(), [1, 4, 7]);
+    for reader in [&file as &dyn StructureSetRead, &memory] {
         statistics_match(
             reader,
             &observations,
             &memory.select(listed.clone()).unwrap(),
+            Some(&weights.select(listed.clone()).unwrap()),
         );
     }
     assert_eq!(
-        bits(file.rmsf(&atoms).unwrap().values().value()),
-        bits(memory.rmsf(&atoms).unwrap().values().value())
+        bits(file.rmsf(&atoms, Some(&weights)).unwrap().values().value()),
+        bits(
+            memory
+                .rmsf(&atoms, Some(&weights))
+                .unwrap()
+                .values()
+                .value()
+        )
     );
-    let observations = SampleObservations::weighted_of(&file, [8, 1, 4]).unwrap();
+    let observations = SampleObservations::weighted_of(&weights, [8, 1, 4]).unwrap();
     assert_eq!(observations.samples(), [8, 1, 4]);
     let probabilities = [4.0, 1.0, 3.0].map(|weight: f64| weight / 8.0);
     for (weight, expected) in observations.weights().iter().zip(probabilities) {
@@ -336,13 +270,13 @@ fn statistics_over_a_reader_equal_the_set_in_memory() {
     }
     // Non-samples are left out.
     assert_eq!(
-        SampleObservations::weighted_of(&file, [0, 3, 6])
+        SampleObservations::weighted_of(&weights, [0, 3, 6])
             .unwrap()
             .len(),
         0
     );
     assert_eq!(
-        SampleObservations::weighted_of(&file, [2, 10]),
+        SampleObservations::weighted_of(&weights, [2, 10]),
         Err(StatisticsError::Read(
             StructureSetReadError::IndexOutOfRange(IndexOutOfRange::new(
                 Countable::Geometry,
@@ -365,29 +299,20 @@ fn a_sample_listed_twice_is_observed_twice() {
             bits(observations.weights()),
             bits(SampleObservations::all(&selected).weights())
         );
-        statistics_match(reader, &observations, &selected);
+        statistics_match(reader, &observations, &selected, None);
     }
 
     // Weighted, each listing of a sample is observed with its share.
-    let file = Ensemble::new(file, partial()).unwrap();
-    let memory = Ensemble::new(memory, partial()).unwrap();
-    let selected = memory.select(listed).unwrap();
-    for (reader, observations) in [
-        (
-            file.set() as &dyn StructureSetRead,
-            SampleObservations::weighted_of(&file, listed).unwrap(),
-        ),
-        (
-            memory.set(),
-            SampleObservations::weighted_of(&memory, listed).unwrap(),
-        ),
-    ] {
-        assert_eq!(observations.samples(), listed);
-        assert_eq!(
-            bits(observations.weights()),
-            bits(SampleObservations::weighted(&selected).weights())
-        );
-        statistics_match(reader, &observations, &selected);
+    let weights = partial();
+    let selected_weights = weights.select(listed).unwrap();
+    let observations = SampleObservations::weighted_of(&weights, listed).unwrap();
+    assert_eq!(observations.samples(), listed);
+    assert_eq!(
+        bits(observations.weights()),
+        bits(SampleObservations::weighted(&selected_weights).weights())
+    );
+    for reader in [&file as &dyn StructureSetRead, &memory] {
+        statistics_match(reader, &observations, &selected, Some(&selected_weights));
     }
 }
 
@@ -404,7 +329,7 @@ fn split_observations_merge_and_cancelled_ones_change_nothing() {
         .unwrap();
     first.merge(&second).unwrap();
     let merged = first.finish().unwrap();
-    let whole = memory.rmsf(&atoms).unwrap();
+    let whole = memory.rmsf(&atoms, None).unwrap();
     assert_eq!(merged.observation_count(), whole.observation_count());
     for (merged, whole) in merged.values().value().iter().zip(whole.values().value()) {
         assert!((merged - whole).abs() < 1.0e-12);
@@ -553,66 +478,80 @@ fn pairwise_fitted_rmsd_over_a_reader_equals_the_set_in_memory() {
     let (_scratch, file, memory) = file_and_memory("pairwise");
     let topology = file.shared_topology();
     let threads = ScopedThreads::new(NonZeroUsize::new(3).unwrap());
-    let file_ensemble = Ensemble::new(file.clone(), partial()).unwrap();
-    let memory_ensemble = Ensemble::new(memory.clone(), partial()).unwrap();
+    let weights = partial();
     for atoms in [
         AtomSelection::all(Arc::clone(&topology)),
         selection(&topology, &[1, 2, 4, 5]),
     ] {
         let held = memory
-            .pairwise_fitted_rmsd(&atoms, Default::default())
+            .pairwise_fitted_rmsd(&atoms, None, Default::default())
             .unwrap();
         assert_eq!(held.member_count(), 10);
         for run in [Run::default(), Run::default().with_executor(&threads)] {
             for reader in [&file as &dyn StructureSetRead, &memory] {
-                let read =
-                    clustering::pairwise_fitted_rmsd_with(reader, &atoms, Default::default(), run)
-                        .unwrap();
+                let read = clustering::pairwise_fitted_rmsd_with(
+                    reader,
+                    &atoms,
+                    None,
+                    Default::default(),
+                    run,
+                )
+                .unwrap();
                 assert_eq!(read, held);
             }
         }
         // The file's geometries cluster as the set in memory does.
         for linkage in [Linkage::Single, Linkage::Average] {
             assert_eq!(
-                file.cluster_hierarchical(&held, linkage, Cut::Count(2)),
-                memory.cluster_hierarchical(&held, linkage, Cut::Count(2))
+                file.cluster_hierarchical(&held, None, linkage, Cut::Count(2)),
+                memory.cluster_hierarchical(&held, None, linkage, Cut::Count(2))
             );
         }
         assert_eq!(
-            file.cluster_k_medoids(&held, 2),
-            memory.cluster_k_medoids(&held, 2)
+            file.cluster_k_medoids(&held, None, 2),
+            memory.cluster_k_medoids(&held, None, 2)
         );
 
-        // An ensemble over the file fits and clusters its samples as the
-        // ensemble in memory does.
-        let held = memory_ensemble
-            .pairwise_fitted_rmsd(&atoms, Default::default())
+        // With weights, the file fits and clusters its samples as the set in
+        // memory does.
+        let held = memory
+            .pairwise_fitted_rmsd(&atoms, Some(&weights), Default::default())
             .unwrap();
         assert_eq!(held.member_count(), 6);
         for run in [Run::default(), Run::default().with_executor(&threads)] {
             assert_eq!(
-                file_ensemble
-                    .pairwise_fitted_rmsd_with(&atoms, Default::default(), run)
+                file.pairwise_fitted_rmsd_with(&atoms, Some(&weights), Default::default(), run)
                     .unwrap(),
+                held
+            );
+            assert_eq!(
+                clustering::pairwise_fitted_rmsd_with(
+                    &file,
+                    &atoms,
+                    Some(&weights),
+                    Default::default(),
+                    run
+                )
+                .unwrap(),
                 held
             );
         }
         for linkage in [Linkage::Single, Linkage::Average] {
             assert_eq!(
-                file_ensemble.cluster_hierarchical(&held, linkage, Cut::Count(2)),
-                memory_ensemble.cluster_hierarchical(&held, linkage, Cut::Count(2))
+                file.cluster_hierarchical(&held, Some(&weights), linkage, Cut::Count(2)),
+                memory.cluster_hierarchical(&held, Some(&weights), linkage, Cut::Count(2))
             );
         }
         assert_eq!(
-            file_ensemble.cluster_k_medoids(&held, 2),
-            memory_ensemble.cluster_k_medoids(&held, 2)
+            file.cluster_k_medoids(&held, Some(&weights), 2),
+            memory.cluster_k_medoids(&held, Some(&weights), 2)
         );
     }
     let cancelled = Cancellation::new(|| true);
     let run = Run::default().with_cancellation(&cancelled);
     let atoms = AtomSelection::all(Arc::clone(&topology));
     assert!(matches!(
-        clustering::pairwise_fitted_rmsd_with(&file, &atoms, Default::default(), run),
+        clustering::pairwise_fitted_rmsd_with(&file, &atoms, None, Default::default(), run),
         Err(ClusteringError::Cancelled(_))
     ));
 }
@@ -630,15 +569,21 @@ fn pairwise_fitted_rmsd_over_processed_geometries_runs_from_several_threads() {
     let file = Processed::new(file, steps.clone()).unwrap();
     let memory = Processed::new(memory, steps).unwrap();
     let atoms = selection(&topology, &[1, 2, 4, 5]);
-    let held = clustering::pairwise_fitted_rmsd(&memory, &atoms, Default::default()).unwrap();
+    let held = clustering::pairwise_fitted_rmsd(&memory, &atoms, None, Default::default()).unwrap();
     std::thread::scope(|scope| {
         let runs = (0..4)
             .map(|_| {
                 scope.spawn(|| {
                     let threads = ScopedThreads::new(NonZeroUsize::new(3).unwrap());
                     let run = Run::default().with_executor(&threads);
-                    clustering::pairwise_fitted_rmsd_with(&file, &atoms, Default::default(), run)
-                        .unwrap()
+                    clustering::pairwise_fitted_rmsd_with(
+                        &file,
+                        &atoms,
+                        None,
+                        Default::default(),
+                        run,
+                    )
+                    .unwrap()
                 })
             })
             .collect::<Vec<_>>();
