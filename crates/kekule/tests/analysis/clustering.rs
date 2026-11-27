@@ -2,6 +2,7 @@
 //! weighted or not, and the populations, free energies, and collapse of the
 //! clusterings.
 
+use std::f64::consts::E;
 use std::sync::Arc;
 
 use kekule::alignment::{
@@ -293,6 +294,23 @@ fn symmetric_radius_clustering_merges_rotamers() {
     assert_eq!(representatives, [0]);
     // The one cluster holds the whole population.
     assert_eq!(collapsed.log_weight(0), Some(0.0));
+}
+
+#[test]
+fn a_heavier_sample_in_no_cluster_leaves_the_cluster_populations_exact() {
+    // Geometry 2 outweighs the clustered ones by e^(10^16) and is in no
+    // cluster, so the clusters weigh 1 and e among themselves.
+    let clustering = Clustering::new(vec![Some(0), Some(1), None], vec![0, 1]).unwrap();
+    let weights = Weights::given(vec![Some(0.0), Some(1.0), Some(1e16)], None).unwrap();
+    let expected = [1.0 / (1.0 + E), E / (1.0 + E)];
+    let probabilities = log_populations(&clustering, &weights)
+        .into_iter()
+        .map(f64::exp)
+        .collect::<Vec<_>>();
+    assert_close(&probabilities, &expected);
+    let (representatives, collapsed) = clustering.collapse(&weights).unwrap();
+    assert_eq!(representatives, [0, 1]);
+    assert_close(&collapsed.probabilities().unwrap(), &expected);
 }
 
 #[test]

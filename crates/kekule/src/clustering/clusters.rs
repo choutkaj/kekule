@@ -169,14 +169,22 @@ impl Clustering {
     /// number of geometries.
     pub fn log_populations(&self, weights: &Weights) -> Result<Vec<Option<f64>>, ClusteringError> {
         weights.check_len(self.len())?;
-        // Shifted by the largest log weight, normalizations keep their digits
-        // under a large common offset.
-        let shift = weights.maximum().unwrap_or(0.0);
+        let clustered = || {
+            self.cluster_of
+                .iter()
+                .zip(weights.log_weights())
+                .filter_map(|(cluster, log_weight)| cluster.zip(*log_weight))
+        };
+        // Shifted by the largest log weight in a cluster, normalizations keep
+        // their digits under a large common offset, and a heavier sample in
+        // no cluster takes none.
+        let shift = clustered()
+            .map(|(_, log_weight)| log_weight)
+            .reduce(f64::max)
+            .unwrap_or(0.0);
         let mut values = vec![Vec::new(); self.cluster_count()];
-        for (cluster, log_weight) in self.cluster_of.iter().zip(weights.log_weights()) {
-            if let (Some(cluster), Some(log_weight)) = (cluster, log_weight) {
-                values[*cluster].push(log_weight - shift);
-            }
+        for (cluster, log_weight) in clustered() {
+            values[cluster].push(log_weight - shift);
         }
         let sums = values
             .into_iter()

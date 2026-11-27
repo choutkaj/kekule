@@ -554,9 +554,6 @@ impl Landscape {
             .map_err(LandscapeError::TooManyCells)?;
 
         let samples = weights.samples().collect::<Vec<_>>();
-        // Shifted by the largest log weight, cell populations keep their
-        // digits under a large common offset.
-        let shift = weights.maximum().unwrap_or(0.0);
         let log_weights = samples
             .iter()
             .map(|&geometry| weights.log_weight(geometry).expect("a sample"))
@@ -576,6 +573,16 @@ impl Landscape {
                 }
             }
         }
+        // Shifted by the largest log weight in a cell, cell populations keep
+        // their digits under a large common offset, and a heavier sample in
+        // no cell takes none.
+        let shift = cell_of
+            .iter()
+            .zip(&log_weights)
+            .filter(|(cell, _)| cell.is_some())
+            .map(|(_, &log_weight)| log_weight)
+            .reduce(f64::max)
+            .unwrap_or(0.0);
         let grouping = Grouping::new(&cell_of, cell_count);
         let estimates = (0..cell_count)
             .map(|cell| {

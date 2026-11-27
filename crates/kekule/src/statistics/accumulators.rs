@@ -326,11 +326,17 @@ impl SampleObservations {
     /// probabilities; those that underflow to zero are left out.
     fn of_log_weights(weighted: impl Iterator<Item = (usize, f64)>) -> Self {
         let (samples, log_weights): (Vec<_>, Vec<_>) = weighted.unzip();
-        let total = log_sum_exp(log_weights.iter().copied());
+        // Shifted by the largest observed log weight, probabilities keep
+        // their digits under a large common offset.
+        let shift = log_weights
+            .iter()
+            .copied()
+            .fold(f64::NEG_INFINITY, f64::max);
+        let total = log_sum_exp(log_weights.iter().map(|log_weight| log_weight - shift));
         let (samples, weights) = samples
             .into_iter()
             .zip(log_weights)
-            .map(|(geometry, log_weight)| (geometry, (log_weight - total).exp()))
+            .map(|(geometry, log_weight)| (geometry, (log_weight - shift - total).exp()))
             .filter(|(_, probability)| *probability > 0.0)
             .unzip();
         Self { samples, weights }

@@ -842,4 +842,12 @@ fn weighted_observations_join_samples_and_probabilities() {
     assert_eq!(listed.samples(), [2]);
     assert_close(listed.weights(), &[1.0]);
     assert!(SampleObservations::weighted_of(&weights, [3]).is_err());
+    // Probabilities keep their digits under a large common offset.
+    let offset = 2.0_f64.powi(40);
+    let weights = Weights::given(vec![Some(offset), Some(offset + 1.5)], None).unwrap();
+    let heavier = 1.0 / (1.0 + (-1.5_f64).exp());
+    let observed = SampleObservations::weighted(&weights);
+    for (weight, expected) in observed.weights().iter().zip([1.0 - heavier, heavier]) {
+        assert!((weight - expected).abs() < 1e-15, "{weight} != {expected}");
+    }
 }

@@ -537,6 +537,25 @@ fn samples_without_a_cell_are_counted() -> Result<(), LandscapeError> {
 }
 
 #[test]
+fn a_heavier_sample_in_no_cell_leaves_the_cell_populations_exact() -> Result<(), LandscapeError> {
+    // Geometry 2 outweighs the others by e^(10^16) and lies outside the bins,
+    // so the cells weigh 1 and e among themselves.
+    let values = [Some(0.5), Some(1.5), Some(9.0)];
+    let weights = given(&[0.0, 1.0, 1e16]);
+    let axis = GridAxis::new(Quantity::new(&values, NANOMETER), unit_bins(2));
+    for estimator in ESTIMATORS {
+        let options = at_300().with_estimator(estimator);
+        let surface = Landscape::free_energy(&weights, &[axis], &options)?;
+        assert_eq!(surface.outside(), 1);
+        let e = std::f64::consts::E;
+        for (cell, expected) in surface.cells().iter().zip([1.0 / (1.0 + e), e / (1.0 + e)]) {
+            assert_close(cell.log_population().unwrap().exp(), expected);
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn inputs_must_cover_the_samples() {
     let short = [Some(0.5), Some(0.5)];
     let full = [Some(0.5); 3];
