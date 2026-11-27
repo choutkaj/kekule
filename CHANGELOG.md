@@ -788,6 +788,9 @@ the main branch migrates by the table under "From the SampleSet API".
   skips the correspondence it drops. Appended residues and sites share their
   source's labels, or copies of them when the source's tables hold many more
   rows. The sites a chain rename changes get their new rows in one table.
+  An atom added to a residue finds its place from the added sites and their
+  residues, without a scan of every atom: attaching one atom to a ligand of
+  a structure of 100,716 atoms publishes in 5.6 ms instead of 15.7 ms.
 - Native files read and write faster, with the same bytes and equal results.
   The reader takes atoms, bonds, and value columns in bulk, and residues and
   sites that store equal labels share one row of them. The writer finds each

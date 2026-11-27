@@ -471,50 +471,47 @@ impl TopologyEditor {
             residues: self.hierarchy.residues.block(),
         }
     }
-    /// The live atom locations in publication order, when it differs from
-    /// handle order, which is slot order: an added atom placed in a residue
-    /// that holds atoms before it follows the last of them, in creation
-    /// order, so the residue stays contiguous. Only publication reorders;
-    /// the editor's own per-atom APIs keep handle order.
-    pub(super) fn residue_order(&self) -> Option<Vec<(EditAtomId, Location<AtomId>)>> {
-        if self.hierarchy.added_atom_sites.is_empty() {
-            return None;
-        }
-        let atoms = self.atom_locations().collect::<Vec<_>>();
+    /// The added atoms publication moves, as `(anchor, follower)` slot
+    /// pairs sorted by anchor, then follower. Publication order is handle
+    /// order, which is slot order, except that an added atom placed in a
+    /// residue that holds atoms before it follows the last of them, in
+    /// creation order, so the residue stays contiguous. The anchor is the
+    /// residue's last source atom, or else its first added atom. Only
+    /// publication reorders; the editor's own per-atom APIs keep handle
+    /// order. This costs what the added sites and their residues hold.
+    pub(super) fn residue_followers(&self) -> Vec<(usize, usize)> {
         let block = self.atoms.block();
-        // Each atom that stays in place, with the added atoms that follow it.
-        let mut following = vec![Vec::<usize>::new(); atoms.len()];
-        let mut stays = vec![true; atoms.len()];
-        let mut last = std::collections::HashMap::<EditResidueId, usize>::new();
-        let mut moved = false;
-        for (position, &(atom, _)) in atoms.iter().enumerate() {
-            let Some(site) = self.site_of_atom(atom) else {
-                continue;
-            };
+        let slot = |atom| self.atom_location(atom).expect("live site atom").slot;
+        let mut anchors = BTreeMap::<EditResidueId, usize>::new();
+        let mut followers = Vec::new();
+        for (&atom, &site) in self.hierarchy.added_atom_sites.iter() {
             let residue = self.require_atom_site(site).expect("live site").residue;
-            match last.get(&residue) {
-                Some(&anchor) if block.source(atom).is_none() => {
-                    let behind = following[anchor].last().copied().unwrap_or(anchor);
-                    moved |= behind + 1 != position;
-                    following[anchor].push(position);
-                    stays[position] = false;
+            let follower = slot(atom);
+            match anchors.entry(residue) {
+                std::collections::btree_map::Entry::Occupied(anchor) => {
+                    followers.push((*anchor.get(), follower));
                 }
-                _ => {
-                    last.insert(residue, position);
+                std::collections::btree_map::Entry::Vacant(entry) => {
+                    // Residue atoms are in handle order, source atoms first.
+                    let last_source = self
+                        .residue_atom_list(residue)
+                        .into_iter()
+                        .rfind(|&atom| block.source(atom).is_some());
+                    match last_source {
+                        Some(anchor) => {
+                            let anchor = slot(anchor);
+                            entry.insert(anchor);
+                            followers.push((anchor, follower));
+                        }
+                        None => {
+                            entry.insert(follower);
+                        }
+                    }
                 }
             }
         }
-        if !moved {
-            return None;
-        }
-        let mut order = Vec::with_capacity(atoms.len());
-        for (position, &atom) in atoms.iter().enumerate() {
-            if stays[position] {
-                order.push(atom);
-                order.extend(following[position].iter().map(|&behind| atoms[behind]));
-            }
-        }
-        Some(order)
+        followers.sort_unstable();
+        followers
     }
     /// Replaces a chain's label and author identifiers. Its sites that named
     /// the old identifiers take the new ones, so writers name the chain as it

@@ -1,7 +1,8 @@
 //! Informational cost of one edit of a ligand in a large structure: deleting
-//! one atom of a ligand, attaching one, or changing one's element or formal
-//! charge, then publishing the edited draft and perceiving the result, while
-//! an earlier snapshot stays alive.
+//! one atom of a ligand, attaching one with or without a site in its
+//! residue, or changing one's element or formal charge, then publishing the
+//! edited draft and perceiving the result, while an earlier snapshot stays
+//! alive.
 //!
 //! The structure is 66 merged copies of an externally supplied mmCIF entry,
 //! each perceived and appended as separate chains and molecules; the merged
@@ -22,9 +23,10 @@ use std::error::Error;
 use std::hint::black_box;
 use std::time::{Duration, Instant};
 
-use kekule::math::Point3;
+use kekule::math::{Point3, Vector3};
 use kekule::mmcif;
 use kekule::molecule::{Atom, BondOrder, Element};
+use kekule::structure::placement::AttachmentSite;
 use kekule::structure::StructureEditor;
 use kekule::topology::{InstanceAtomId, TopologyAtomIndex};
 use kekule::units::{Quantity, ANGSTROM};
@@ -89,9 +91,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("| edit | phase | min ms | median ms |");
     println!("|---|---|---:|---:|");
 
-    let edits: [(&str, Edit); 4] = [
+    let edits: [(&str, Edit); 5] = [
         ("delete one ligand atom", delete_atom),
         ("attach one ligand atom", add_atom),
+        ("place one ligand atom in its residue", place_atom),
         ("set one ligand atom's element", set_element),
         ("set one ligand atom's charge", set_charge),
     ];
@@ -188,6 +191,22 @@ fn add_atom(editor: &mut StructureEditor, atom: InstanceAtomId) -> Result<(), Bo
         Quantity::new(Point3::new(near.x + 1.5, near.y, near.z), ANGSTROM),
     )?;
     editor.add_bond(handle, added, BondOrder::Single)?;
+    Ok(())
+}
+
+/// Bonds a carbon to `atom` at its free position nearest a direction, as a
+/// drag in a sketch does: the carbon joins the residue of `atom`.
+fn place_atom(editor: &mut StructureEditor, atom: InstanceAtomId) -> Result<(), Box<dyn Error>> {
+    let handle = editor
+        .topology()
+        .atom_handle(atom)
+        .ok_or("no source atom")?;
+    editor.attach_atom(
+        handle,
+        Atom::new(Element::from_symbol("C").ok_or("no carbon")?),
+        BondOrder::Single,
+        AttachmentSite::Toward(Vector3::new(1.0, 0.0, 0.0)),
+    )?;
     Ok(())
 }
 
